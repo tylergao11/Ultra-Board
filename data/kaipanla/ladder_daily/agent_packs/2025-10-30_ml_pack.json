@@ -1,0 +1,128 @@
+{
+  "stage": "ml_then_sentiment_agent",
+  "T": "2025-10-30",
+  "T1": "2025-10-31",
+  "node": {
+    "dead_h": 5,
+    "dead": [
+      "平潭发展5"
+    ],
+    "ladder_anchor_type": "anchor_nat_yizi",
+    "ladder_height": 3,
+    "ladder_anchor_name": "瑞尔特"
+  },
+  "market_T": {
+    "sentiment": {
+      "ZT": "61",
+      "DT": "10",
+      "SJZT": "46",
+      "SJDT": "8",
+      "STZT": "15",
+      "STDT": "2",
+      "SZJS": "1258",
+      "XDJS": "4084",
+      "sign": "市场人气一般",
+      "szln": 107005858,
+      "qscln": 242167681
+    },
+    "expression": [
+      34,
+      7,
+      3,
+      2,
+      14.5833,
+      33.3333,
+      66.6667,
+      31.3433,
+      1.11,
+      2.445,
+      -0.372,
+      "题材存在炒作机会"
+    ],
+    "zt_count": 46,
+    "n_themes_with_first_board": 12
+  },
+  "market_T1_hint": {
+    "sentiment": {
+      "ZT": "76",
+      "DT": "17",
+      "SJZT": "57",
+      "SJDT": "12",
+      "STZT": "19",
+      "STDT": "5",
+      "SZJS": "3769",
+      "XDJS": "1545",
+      "sign": "市场人气高涨",
+      "szln": 103110461,
+      "qscln": 231779239
+    },
+    "expression": [
+      48,
+      5,
+      1,
+      3,
+      14.7059,
+      14.2857,
+      60,
+      39.3617,
+      1.496,
+      0.385,
+      1.268,
+      "题材存在炒作机会"
+    ]
+  },
+  "ml_candidates": [
+    {
+      "code": "002790",
+      "name": "瑞尔特",
+      "boards": 3,
+      "theme_field": "福建",
+      "ferment_rank_field": 3,
+      "ferment_fb_field": 3,
+      "yizi": true,
+      "amount_yi": 1.04,
+      "first_limit": "09:25:00",
+      "is_ladder_anchor": true,
+      "ml_score": 66.63,
+      "ml_prob": 0.6663,
+      "next_day": {
+        "date": "2025-10-31",
+        "open_pct": 9.97,
+        "in_zt": true,
+        "boards": 4,
+        "continued": true
+      }
+    },
+    {
+      "code": "603122",
+      "name": "合富中国",
+      "boards": 3,
+      "theme_field": "医药零售",
+      "ferment_rank_field": 13,
+      "ferment_fb_field": 0,
+      "yizi": false,
+      "amount_yi": 7.01,
+      "first_limit": "09:39:17",
+      "is_ladder_anchor": false,
+      "ml_score": 38.24,
+      "ml_prob": 0.3824,
+      "next_day": {
+        "date": "2025-10-31",
+        "open_pct": 7.42,
+        "in_zt": true,
+        "boards": 4,
+        "continued": true
+      }
+    }
+  ],
+  "human_principles": [
+    "only_best_in_ladder",
+    "no_zero_ferment_near_limit_open",
+    "abandon_if_cannot_touch_or_fill",
+    "use_true_theme_story_not_raw_field_only",
+    "ferment_ok_allows_yizi_path",
+    "weak_open_instant_board_can_beat_yizi_anchor"
+  ],
+  "agent_spec_path": "scripts\\_scratch\\agents\\sentiment_theme_scorer.md",
+  "instructions": "Read scripts/_scratch/agents/sentiment_theme_scorer.md. Correct true themes, ferment rank, pick best-only, output agent_score JSON."
+}

@@ -137,8 +137,8 @@ def parse_stock(row: list, pid: int) -> tuple[dict[str, Any] | None, str | None]
         "name": name,
         "boards": boards,               # 真实连板数，唯一权威
         "boards_desc": row[18] or "",   # "7连板" / "3天2板"，仅备注
-        "theme": row[5] or "",
-        "concepts": row[12] or "",
+        "theme": row[5] or "",  # 开盘啦主属性（业务唯一题材口径）
+        # row[12] 为接口概念堆，勿当主属性/公告依据；需要时看 raw[12]
         "sector_code": str(row[19] or ""),
         "first_limit_ts": row[4],
         "turnover_rate": row[14],

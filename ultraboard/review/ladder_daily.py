@@ -2,7 +2,7 @@
 """涨停梯队逐日变化（高度梯队 + 昨→今变化）。
 
 组织轴 = 连板高度与日间变化，不是主属性归纳。
-主属性 = 开盘啦 theme；公告板类标 主属性=xx[公告板]。
+主属性 = 开盘啦 theme（禁止用 concepts 概念堆）；公告板只认主属性。
 
 产物 data/kaipanla/ladder_daily/：
   by_day/YYYY-MM-DD.md|.json
@@ -166,7 +166,6 @@ def _stock_brief(s: dict) -> dict[str, Any]:
         "theme": theme,  # 开盘啦主属性原文
         "theme_display": format_theme(theme),
         "is_gonggao": gonggao,
-        "concepts": s.get("concepts") or "",
         "sector_code": s.get("sector_code") or "",
         "is_fanbao": bool(s.get("is_fanbao")),
         "first_limit_ts": s.get("first_limit_ts"),
