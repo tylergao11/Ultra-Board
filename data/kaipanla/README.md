@@ -1,47 +1,35 @@
-# 开盘啦历史数据
-
-目录：`D:\Ultra-Board\data\kaipanla`
+# 开盘啦主源与派生
 
 ## 结构
 
 ```
 data/kaipanla/
-  device_id.txt            # 固定设备号，勿删勿改
-  backfill_state.json      # 回灌进度
-  non_trading_days.json    # 已确认假期（无日期目录）
-  raw/
-    YYYY-MM-DD/            # 仅交易日；假期不建目录
-      HisZhangFuDetail.json
-      ZhangTingExpression.json
-      ladder.json
-      _DONE
+  device_id.txt              # 开盘啦 DeviceID，固定复用
+  backfill_state.json
+  ohlc_cache/                # 日 K 按代码缓存（gitignore）
+  raw/YYYY-MM-DD/            # 主源日目录
+    zt_pool.json             # 涨停池（≥2 可含 open/open_pct）
+    ohlc.json                # 当日 ≥2 板 OHLC（可选，ohlc 步骤生成）
+    sector_ladder.json
+    sentiment.json
+    expression.json
+    _DONE | _MISMATCH
+  ladder_daily/              # 复盘派生：梯队逐日变化（可重跑覆盖）
 ```
 
-## 回灌
+## 主命令（在仓库根执行）
 
 ```bash
-python -m ultraboard.kaipanla.backfill
+python -m ultraboard.kaipanla.backfill   # 回灌 raw
+python -m ultraboard.kaipanla.ohlc       # 补 ≥2 板开盘价（首板不写）
+python -m ultraboard.review.ladder_daily # 生成 ladder_daily/
 ```
 
-- 区间：2025-10-01 ~ 今天
-- 间隔：1~2 秒随机
-- 支持断点续传：已有 `_DONE` 的日期自动跳过
-- 失败即停；修好后重新运行即可续拉
+## 口径摘要
 
-## 字段提示
+- 主属性 = 开盘啦 `theme`；公告板（举牌/实控人变更/并购重组/股权转让）标 `[公告板]` 并可带成交额
+- 梯队材料只列 **≥2 板**；首板只作发酵计数
+- **开盘%** 仅 ≥2 板；来自日 K 挂载，非开盘啦 raw 自带
+- 跟随链：≥2→断→反包→再连板，按日跟随高标高度
 
-`ladder.json` 里每只股票是位置数组，关键下标：
-
-| 下标 | 含义 |
-|---|---|
-| 0 | 代码 |
-| 1 | 名称 |
-| 4 | 首封时间戳 |
-| 5 | 主题材 |
-| 12 | 概念标签 |
-| 15 | 连板高度 |
-| 19 | 板块代码 |
-| 21 | 涨停价附近价位 |
-| 22 | 涨幅 |
-
-`ladder["1"]` 是首板（气氛组），`ladder["2"]` 及以上是连板梯队。
+扩展约定见仓库根 `README.md`。
