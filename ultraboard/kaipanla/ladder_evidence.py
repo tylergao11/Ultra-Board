@@ -369,15 +369,57 @@ def announcement_identity(
     }
 
 
-def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
+@lru_cache(maxsize=None)
+def daily_stock_context(day: str) -> dict[str, Any]:
+    """构造同日全涨停池的连续路径与公告身份。
+
+    节点证据和第二阶段初始评分共用这一入口，避免两处分别解释公告身份。
+    返回内容严格截止 ``day``，不寻找下一交易日。
+    """
     by_day = load_json(BY_DAY_DIR / f"{day}.json")
     if by_day.get("information_cutoff") != day:
         raise ValueError(
             f"{day} 的派生快照没有同日信息截止标记；请先重建 ladder_daily"
         )
+
     pool = raw_pool(day)
-    all_stocks = pool.get("stocks") or []
+    stocks = pool.get("stocks") or []
     meta_map = by_day_stock_map(by_day)
+    routes = {
+        code_of(row.get("code")): stock_theme_path(
+            day,
+            code_of(row.get("code")),
+            as_int(row.get("boards")) or 0,
+        )
+        for row in stocks
+    }
+    identities = {
+        code_of(row.get("code")): announcement_identity(
+            day,
+            row,
+            meta_map.get(code_of(row.get("code"))) or {},
+            routes[code_of(row.get("code"))],
+        )
+        for row in stocks
+    }
+    return {
+        "day": day,
+        "information_cutoff": day,
+        "by_day": by_day,
+        "pool": pool,
+        "stocks": stocks,
+        "meta_map": meta_map,
+        "routes": routes,
+        "identities": identities,
+    }
+
+
+def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
+    context = daily_stock_context(day)
+    by_day = context["by_day"]
+    pool = context["pool"]
+    all_stocks = context["stocks"]
+    meta_map = context["meta_map"]
     ladder_rows = [
         row
         for row in all_stocks
@@ -385,23 +427,8 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
         and not is_chinext(code_of(row.get("code")))
     ]
     theme_counts = (by_day.get("market") or {}).get("theme_first_board_counts") or {}
-    all_routes = {
-        code_of(row.get("code")): stock_theme_path(
-            day,
-            code_of(row.get("code")),
-            as_int(row.get("boards")) or 0,
-        )
-        for row in all_stocks
-    }
-    identities = {
-        code_of(row.get("code")): announcement_identity(
-            day,
-            row,
-            meta_map.get(code_of(row.get("code"))) or {},
-            all_routes[code_of(row.get("code"))],
-        )
-        for row in all_stocks
-    }
+    all_routes = context["routes"]
+    identities = context["identities"]
     routes = {
         code_of(row.get("code")): all_routes[code_of(row.get("code"))]
         for row in ladder_rows

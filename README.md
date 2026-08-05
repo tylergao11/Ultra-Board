@@ -2,7 +2,7 @@
 
 连板复盘辅助：开盘啦历史涨停池 → 开盘价补全 → 涨停梯队逐日变化材料 → 人工主升判断证据包。
 
-## 主链路（四入口）
+## 主链路
 
 在仓库根目录执行：
 
@@ -26,6 +26,13 @@ python -m ultraboard.review.ladder_selector select 2025-12-12
 
 # 显式事后回测；普通 select 不读取标签
 python -m ultraboard.review.ladder_selector backtest --labels .blind-test-quarantine/labels/stage1_locked.json
+
+# 6) 第二阶段节点日竞价预期分 E（含冻结层内预期 PK，仍严格不读 T+1）
+python -m ultraboard.review.candidate_initial_score 2025-12-24
+
+# 7) 显式后验：T+1 实际竞价 A、超预期差 Δ 与收盘晋级校准
+python -m ultraboard.review.auction_score review 2025-12-24 --fetch-missing
+python -m ultraboard.review.auction_score backtest --labels .blind-test-quarantine/labels/stage1_locked.json --fetch-missing
 ```
 
 依赖：
@@ -39,7 +46,7 @@ pip install -r requirements.txt
 | 路径 | 角色 |
 |---|---|
 | `ultraboard/kaipanla/` | **采集 / 补全**：接口客户端、回灌、日 K 开盘价 |
-| `ultraboard/review/` | **复盘派生与一阶段选层**：读 raw，写梯队日材料，节点日统一选层 |
+| `ultraboard/review/` | **复盘派生与决策**：节点日统一选层、竞价预期 E，以及显式后验 A/Δ 校准 |
 | `ultraboard/limits.py` | 涨跌幅 / 一字等**校验**工具（非主采集） |
 | `data/kaipanla/raw/YYYY-MM-DD/` | **主源日目录**（只增不乱改语义） |
 | `data/kaipanla/ladder_daily/` | **派生日录**（可随时重生成） |
@@ -51,7 +58,7 @@ pip install -r requirements.txt
 
 - 客观数据与人工标签共同组成真相库，但事前证据接口禁止读取人工标签。
 - `docs/主升梯队资金迁移与逐日个股PK经验.md` 是唯一判断经验源。
-- 第一阶段选层由 `ladder_selector` 按唯一规则自动完成；第二阶段选票与买卖状态仍不自动宣判。
+- 第一阶段选层由 `ladder_selector` 按唯一规则自动完成；第二阶段生成节点日竞价预期 E，并对同梯队自然票做预期／实际 PK，再由显式后验入口计算实际 A 与 Δ。单票梯队不伪造 PK，最终选票、放弃与买卖状态仍不自动宣判。
 - README 与命令参数构成薄接口契约；临时赛马、排名和收益报告不长期保存。
 - 节点日盲测只走 `ladder_evidence node DATE`；隔离区仅在用户明确授权事后研究时开放。
 
@@ -67,7 +74,7 @@ pip install -r requirements.txt
    - 价位规则校验 → `ultraboard/limits.py` 或同级小模块
 4. **正式入口唯一**：正式能力放在 `ultraboard/`，临时探针用完即删。
 
-后续可加（当前未做门禁）：爆量规则、修全量 `_MISMATCH`、全历史 OHLC 覆盖、竞价层。
+后续可加（当前未做门禁）：爆量规则、修全量 `_MISMATCH`、全历史 OHLC 覆盖、09:25 实时竞价采集器。
 
 ## 包导入
 
