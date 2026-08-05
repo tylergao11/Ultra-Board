@@ -13,12 +13,14 @@
 
 真相源边界：
 - 梯队、公告属性、题材发酵：ladder_daily/by_day/{date}.json
+- 个股题材路径：raw/{date}/zt_pool.json 中该股从 1 板到节点日的逐日 theme
 - 开盘、首封、换手、日内 OHLC：raw/{date}/zt_pool.json + ohlc.json
 - 市场破板率：raw/{date}/expression.json 的 info[7]
 
 明确不读取人工判断、自动选层、最终高度、未来收益等裁判字段，也不替人工宣布
-“应有竞价”或“资金已迁移”。当前原始池没有末封时间和地域字段，接口会如实
-保留缺口，绝不拿首封冒充末封，也不硬编码地域或名称关联。
+“应有竞价”或“资金已迁移”。concepts/raw[12] 是静态概念堆，永不参与题材匹配；
+只有股票在当时连板路径上真实出现过的 theme 才是可用关系。当前原始池没有末封时间，
+地域也暂不纳入；接口绝不拿首封冒充末封，也不硬编码地域或名称关联。
 """
 from __future__ import annotations
 
@@ -31,6 +33,11 @@ from pathlib import Path
 from typing import Any
 
 from . import ohlc
+from .announcements import (
+    announcement_type_of,
+    is_announcement_theme,
+    override_for,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -124,6 +131,14 @@ def raw_pool(day: str) -> dict[str, Any]:
     return load_json(RAW_DIR / day / "zt_pool.json")
 
 
+@lru_cache(maxsize=None)
+def raw_stock_map(day: str) -> dict[str, dict[str, Any]]:
+    return {
+        code_of(row.get("code")): row
+        for row in (raw_pool(day).get("stocks") or [])
+    }
+
+
 def ohlc_map(day: str) -> dict[str, dict[str, Any]]:
     path = RAW_DIR / day / "ohlc.json"
     if not path.exists():
@@ -158,19 +173,42 @@ def next_trade_day(day: str) -> str | None:
     return next((item for item in available_trade_days() if item > day), None)
 
 
-def theme_rank_map(theme_counts: dict[str, Any]) -> dict[str, int]:
-    ranks: dict[str, int] = {}
-    previous_count: int | None = None
-    previous_rank = 0
-    for index, (theme, count) in enumerate(
-        sorted(theme_counts.items(), key=lambda item: (-item[1], item[0])), 1
-    ):
-        current = as_int(count) or 0
-        if current != previous_count:
-            previous_rank = index
-            previous_count = current
-        ranks[theme] = previous_rank
-    return ranks
+def stock_theme_path(end_day: str, code: str, end_height: int) -> dict[str, Any]:
+    """回溯个股当前连板路径上真实出现过的开盘啦 theme。
+
+    只接受相邻交易日中板高严格按 1 递增到 end_height 的记录。
+    一旦断日、缺票或板高不连续就停止，不向静态 concepts 补属性。
+    """
+    expected_height = end_height
+    reverse_steps: list[dict[str, Any]] = []
+    days = [item for item in available_trade_days() if item <= end_day]
+    for route_day in reversed(days):
+        if expected_height < 1:
+            break
+        stock = raw_stock_map(route_day).get(code)
+        actual_height = as_int((stock or {}).get("boards"))
+        if stock is None or actual_height != expected_height:
+            break
+        reverse_steps.append(
+            {
+                "date": route_day,
+                "height": actual_height,
+                "theme": str(stock.get("theme") or ""),
+            }
+        )
+        expected_height -= 1
+
+    steps = list(reversed(reverse_steps))
+    themes: list[str] = []
+    for step in steps:
+        theme = step["theme"]
+        if theme and theme not in themes:
+            themes.append(theme)
+    return {
+        "complete": expected_height == 0,
+        "themes": themes,
+        "steps": steps,
+    }
 
 
 def theme_history(day: str, theme: str, history_days: int) -> list[dict[str, Any]]:
@@ -230,7 +268,13 @@ def theme_timing(
     }
 
 
-def market_snapshot(day: str, by_day: dict[str, Any], pool: dict[str, Any]) -> dict[str, Any]:
+def market_snapshot(
+    day: str,
+    by_day: dict[str, Any],
+    pool: dict[str, Any],
+    *,
+    limit_reason_ranking: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     expression = load_json(RAW_DIR / day / "expression.json").get("info") or []
     market = by_day.get("market") or {}
     themes = market.get("theme_first_board_counts") or {}
@@ -252,14 +296,87 @@ def market_snapshot(day: str, by_day: dict[str, Any], pool: dict[str, Any]) -> d
             {"theme": theme, "first_board_count": as_int(count)}
             for theme, count in sorted(themes.items(), key=lambda item: (-item[1], item[0]))
         ],
+        "limit_reason_ranking": limit_reason_ranking or [],
+        "limit_reason_top_two": (limit_reason_ranking or [])[:2],
+    }
+
+
+def limit_reason_ranking(day: str) -> list[dict[str, Any]]:
+    """读取开盘啦同日涨停原因发酵榜原始次序。
+
+    ``GetYTFP_BKHX`` 支持历史 ``Date``。其前二已与最新交易日
+    ``GetPlateInfo_w38`` 的涨停原因榜逐项核对一致。排名以接口原始位置为准，
+    不按数量重排，不把被过滤题材后的下一名递补进前二。
+    """
+    path = RAW_DIR / day / "sector_ladder.json"
+    if not path.exists():
+        return []
+    ranking = []
+    seen = set()
+    for rank, sector in enumerate(load_json(path).get("sectors") or [], 1):
+        theme = str(sector.get("name") or "").strip()
+        if not theme or theme in seen:
+            continue
+        seen.add(theme)
+        ranking.append({
+            "rank": rank,
+            "theme": theme,
+            "reported_count": as_int(sector.get("count")) or 0,
+        })
+    return ranking
+
+
+def announcement_identity(
+    day: str,
+    stock: dict[str, Any],
+    meta: dict[str, Any],
+    route: dict[str, Any],
+) -> dict[str, Any]:
+    """按覆盖表、连续路径和同日派生元数据解析公告起源。"""
+    override = override_for(stock.get("code"), day)
+    if override:
+        return {
+            "announcement": True,
+            "announcement_type": override["announcement_type"],
+            "announcement_origin_date": override["start_date"],
+            "announcement_source": "manual_event_override",
+        }
+
+    for step in route.get("steps") or []:
+        announcement_type = announcement_type_of(step.get("theme"))
+        if announcement_type:
+            return {
+                "announcement": True,
+                "announcement_type": announcement_type,
+                "announcement_origin_date": step.get("date"),
+                "announcement_source": "limit_path_primary_theme",
+            }
+
+    if meta.get("is_gonggao"):
+        return {
+            "announcement": True,
+            "announcement_type": meta.get("announcement_type"),
+            "announcement_origin_date": meta.get("announcement_origin_date"),
+            "announcement_source": meta.get("announcement_source")
+            or "daily_snapshot",
+        }
+
+    return {
+        "announcement": False,
+        "announcement_type": None,
+        "announcement_origin_date": None,
+        "announcement_source": None,
     }
 
 
 def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
     by_day = load_json(BY_DAY_DIR / f"{day}.json")
+    if by_day.get("information_cutoff") != day:
+        raise ValueError(
+            f"{day} 的派生快照没有同日信息截止标记；请先重建 ladder_daily"
+        )
     pool = raw_pool(day)
     all_stocks = pool.get("stocks") or []
-    raw_map = {code_of(row.get("code")): row for row in all_stocks}
     meta_map = by_day_stock_map(by_day)
     ladder_rows = [
         row
@@ -268,28 +385,85 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
         and not is_chinext(code_of(row.get("code")))
     ]
     theme_counts = (by_day.get("market") or {}).get("theme_first_board_counts") or {}
-    theme_ranks = theme_rank_map(theme_counts)
-    distinct_themes = {str(row.get("theme") or "") for row in ladder_rows}
+    all_routes = {
+        code_of(row.get("code")): stock_theme_path(
+            day,
+            code_of(row.get("code")),
+            as_int(row.get("boards")) or 0,
+        )
+        for row in all_stocks
+    }
+    identities = {
+        code_of(row.get("code")): announcement_identity(
+            day,
+            row,
+            meta_map.get(code_of(row.get("code"))) or {},
+            all_routes[code_of(row.get("code"))],
+        )
+        for row in all_stocks
+    }
+    routes = {
+        code_of(row.get("code")): all_routes[code_of(row.get("code"))]
+        for row in ladder_rows
+    }
+
+    reason_ranking = limit_reason_ranking(day)
+    reason_by_theme = {
+        item["theme"]: item for item in reason_ranking
+    }
+
+    distinct_themes = {
+        theme
+        for route in routes.values()
+        for theme in route["themes"]
+        if theme and not is_announcement_theme(theme)
+    }
     histories = {
         theme: theme_history(day, theme, history_days) for theme in distinct_themes
     }
     height_counts: dict[int, int] = {}
+    route_theme_heights: dict[str, list[int]] = {}
     for row in ladder_rows:
+        code = code_of(row.get("code"))
         height = as_int(row.get("boards")) or 0
         height_counts[height] = height_counts.get(height, 0) + 1
+        if identities[code]["announcement"]:
+            continue
+        route = routes[code]
+        for theme in route["themes"]:
+            if is_announcement_theme(theme):
+                continue
+            route_theme_heights.setdefault(theme, []).append(height)
 
-    broken_rows = by_day.get("change", {}).get("broken") or []
-    broken = [
-        {
-            "code": code_of(row.get("code")),
-            "name": row.get("name"),
-            "height": as_int(row.get("boards_before_break") or row.get("boards")),
-            "theme": row.get("theme"),
-            "announcement": bool(row.get("is_gonggao")),
-        }
-        for row in broken_rows
-        if not is_chinext(code_of(row.get("code")))
-    ]
+    change = by_day.get("change") or {}
+    previous_day = change.get("prev_date")
+    broken = []
+    for row in change.get("broken") or []:
+        code = code_of(row.get("code"))
+        if is_chinext(code):
+            continue
+        height = as_int(row.get("boards_before_break") or row.get("boards")) or 0
+        theme = str(row.get("theme") or "")
+        route = (
+            stock_theme_path(previous_day, code, height)
+            if previous_day
+            else {"complete": False, "themes": [], "steps": []}
+        )
+        route_themes = route["themes"] or ([theme] if theme else [])
+        broken.append(
+            {
+                "code": code,
+                "name": row.get("name"),
+                "height": height,
+                "theme": theme,
+                "theme_path": route["steps"],
+                "theme_path_complete": route["complete"],
+                "route_themes": route_themes,
+                "announcement": bool(row.get("is_gonggao")),
+                "announcement_type": row.get("announcement_type"),
+                "announcement_origin_date": row.get("announcement_origin_date"),
+            }
+        )
     broken.sort(key=lambda row: (-(row["height"] or 0), row["code"]))
 
     candidates = []
@@ -298,42 +472,128 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
         meta = meta_map.get(code) or {}
         theme = str(raw.get("theme") or meta.get("theme") or "")
         height = as_int(raw.get("boards")) or 0
-        peers = [row for row in ladder_rows if row.get("theme") == theme]
-        peer_heights = [as_int(row.get("boards")) or 0 for row in peers]
+        route = routes[code]
+        identity = identities[code]
         candidate_ts = raw.get("first_limit_ts")
-        same_height_theme_count = sum(item == height for item in peer_heights)
-        history = histories.get(theme) or []
+        route_theme_evidence = []
+        for route_theme in route["themes"]:
+            if is_announcement_theme(route_theme):
+                continue
+            peer_heights = route_theme_heights.get(route_theme) or []
+            history = histories.get(route_theme) or []
+            same_height_theme_count = sum(item == height for item in peer_heights)
+            reason_item = reason_by_theme.get(route_theme)
+            route_theme_evidence.append(
+                {
+                    "theme": route_theme,
+                    "path_steps": [
+                        {"date": step["date"], "height": step["height"]}
+                        for step in route["steps"]
+                        if step["theme"] == route_theme
+                    ],
+                    "current_theme": route_theme == theme,
+                    "first_board_count": as_int(theme_counts.get(route_theme)) or 0,
+                    "limit_reason_rank": (
+                        reason_item["rank"] if reason_item else None
+                    ),
+                    "limit_reason_reported_count": (
+                        reason_item["reported_count"] if reason_item else 0
+                    ),
+                    "ferment_history": history,
+                    "ferment_history_supported_days": sum(
+                        item["first_board_count"] > 0 for item in history
+                    ),
+                    "ferment_history_count_sum": sum(
+                        item["first_board_count"] for item in history
+                    ),
+                    "timing": theme_timing(all_stocks, route_theme, candidate_ts),
+                    "height_core": height == max(peer_heights, default=height),
+                    "same_height_count": same_height_theme_count,
+                    "same_height_share": (
+                        same_height_theme_count / height_counts[height]
+                        if height_counts.get(height)
+                        else 0.0
+                    ),
+                    "lower_ladder_count": sum(
+                        item < height for item in peer_heights
+                    ),
+                }
+            )
+        current_theme_evidence = next(
+            (
+                item
+                for item in route_theme_evidence
+                if item["theme"] == theme
+            ),
+            {
+                "first_board_count": 0,
+                "limit_reason_rank": None,
+                "limit_reason_reported_count": 0,
+                "ferment_history": [],
+                "ferment_history_supported_days": 0,
+                "ferment_history_count_sum": 0,
+                "timing": theme_timing(all_stocks, theme, candidate_ts),
+                "height_core": True,
+                "same_height_count": 1,
+                "same_height_share": 1 / height_counts[height],
+                "lower_ladder_count": 0,
+            },
+        )
         candidates.append(
             {
                 "height": height,
                 "code": code,
                 "name": raw.get("name"),
                 "theme": theme,
-                "announcement": bool(meta.get("is_gonggao")),
+                "theme_path": route["steps"],
+                "theme_path_complete": route["complete"],
+                "route_themes": route["themes"],
+                "route_theme_evidence": route_theme_evidence,
+                "announcement": identity["announcement"],
+                "announcement_type": identity["announcement_type"],
+                "announcement_origin_date": identity[
+                    "announcement_origin_date"
+                ],
+                "announcement_source": identity["announcement_source"],
                 "open_pct": as_float(raw.get("open_pct")),
                 "first_seal": seal_time(candidate_ts),
                 "final_seal": None,
                 "turnover_pct": as_float(raw.get("turnover_rate")),
                 "limit_open": near_equal(raw.get("open"), raw.get("price")),
                 "one_price": is_one_price(raw),
-                "theme_first_board_count": as_int(theme_counts.get(theme)) or 0,
-                "theme_ferment_rank": theme_ranks.get(theme, len(theme_ranks) + 1),
-                "theme_ferment_history": history,
-                "theme_ferment_history_supported_days": sum(
-                    row["first_board_count"] > 0 for row in history
+                "theme_first_board_count": current_theme_evidence[
+                    "first_board_count"
+                ],
+                "theme_limit_reason_rank": current_theme_evidence[
+                    "limit_reason_rank"
+                ],
+                "theme_limit_reason_reported_count": current_theme_evidence[
+                    "limit_reason_reported_count"
+                ],
+                "theme_ferment_history": current_theme_evidence[
+                    "ferment_history"
+                ],
+                "theme_ferment_history_supported_days": current_theme_evidence[
+                    "ferment_history_supported_days"
+                ],
+                "theme_ferment_history_count_sum": current_theme_evidence[
+                    "ferment_history_count_sum"
+                ],
+                "theme_timing": current_theme_evidence["timing"],
+                "theme_height_core": current_theme_evidence["height_core"],
+                "same_theme_same_height_count": current_theme_evidence[
+                    "same_height_count"
+                ],
+                "same_theme_height_share": current_theme_evidence[
+                    "same_height_share"
+                ],
+                "same_theme_lower_ladder_count": current_theme_evidence[
+                    "lower_ladder_count"
+                ],
+                "route_theme_has_first_board_support": any(
+                    item["first_board_count"] > 0
+                    for item in route_theme_evidence
                 ),
-                "theme_ferment_history_count_sum": sum(
-                    row["first_board_count"] for row in history
-                ),
-                "theme_timing": theme_timing(all_stocks, theme, candidate_ts),
-                "theme_height_core": height == max(peer_heights, default=height),
-                "same_theme_same_height_count": same_height_theme_count,
-                "same_theme_height_share": (
-                    same_height_theme_count / height_counts[height]
-                    if height_counts.get(height)
-                    else 0.0
-                ),
-                "same_theme_lower_ladder_count": sum(item < height for item in peer_heights),
                 "boards_desc": raw.get("boards_desc") or "",
             }
         )
@@ -344,18 +604,31 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
     layout_candidates = []
     for donor in broken:
         for recipient in candidates:
-            if (
-                donor["theme"]
-                and donor["theme"] == recipient["theme"]
-                and (recipient["height"] or 0) < (donor["height"] or 0)
+            matched_themes = [
+                theme
+                for theme in donor["route_themes"]
+                if theme in recipient["route_themes"]
+            ]
+            if matched_themes and (
+                (recipient["height"] or 0) < (donor["height"] or 0)
             ):
                 layout_candidates.append(
                     {
                         "evidence_level": "association_hypothesis",
+                        "evidence_basis": "shared_theme_on_limit_path",
+                        "matched_themes": matched_themes,
                         "donor": donor,
                         "recipient": {
                             key: recipient[key]
-                            for key in ("code", "name", "height", "theme")
+                            for key in (
+                                "code",
+                                "name",
+                                "height",
+                                "theme",
+                                "theme_path",
+                                "theme_path_complete",
+                                "route_themes",
+                            )
                         },
                     }
                 )
@@ -363,12 +636,26 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
     return {
         "stage": "node_close_only",
         "date": day,
-        "market": market_snapshot(day, by_day, pool),
+        "market": market_snapshot(
+            day,
+            by_day,
+            pool,
+            limit_reason_ranking=reason_ranking,
+        ),
         "broken_previous_ladder": broken,
-        "same_attribute_layout_candidates": layout_candidates,
+        "shared_theme_path_layout_candidates": layout_candidates,
+        "theme_contract": (
+            "仅使用个股当前连板路径上逐日真实 theme；"
+            "神剑只与节点日涨停原因发酵榜原始前二相交；"
+            "concepts/raw[12]、主营联想和静态全属性不参与匹配"
+        ),
+        "announcement_contract": (
+            "仅并购重组、实控人变更、股权转让三类；"
+            "公告起源沿连续连板段保持且不计入自然题材发酵"
+        ),
         "ferment_history_days": history_days,
         "candidates": candidates,
-        "source_gap": "原始涨停池只有首封时间，没有末封时间",
+        "source_gap": "原始涨停池只有首封时间，没有末封时间；地域暂不纳入",
     }
 
 
@@ -463,6 +750,12 @@ def pk_evidence(
                     "action_theme": action_theme,
                     "node_close": {
                         "announcement": candidate["announcement"],
+                        "theme_path": candidate["theme_path"],
+                        "theme_path_complete": candidate["theme_path_complete"],
+                        "route_themes": candidate["route_themes"],
+                        "route_theme_evidence": candidate[
+                            "route_theme_evidence"
+                        ],
                         "open_pct": candidate["open_pct"],
                         "first_seal": candidate["first_seal"],
                         "final_seal": None,
@@ -471,7 +764,6 @@ def pk_evidence(
                         "theme_first_board_count": candidate[
                             "theme_first_board_count"
                         ],
-                        "theme_ferment_rank": candidate["theme_ferment_rank"],
                         "theme_ferment_history": candidate[
                             "theme_ferment_history"
                         ],
@@ -488,7 +780,7 @@ def pk_evidence(
                         "near_limit": near_limit,
                         "action_announcement": action_announcement,
                         "zero_ferment_near_limit_risk": (
-                            candidate["theme_first_board_count"] == 0
+                            not candidate["route_theme_has_first_board_support"]
                             and near_limit
                         ),
                     },
@@ -525,12 +817,37 @@ def pk_evidence(
                 "action_date": action_day,
                 "candidates": rows,
                 "source_gap": (
-                    "末封时间、盘中分时换手快照和地域字段缺失；"
+                    "末封时间和盘中分时换手快照缺失；地域暂不纳入；"
                     "应有竞价与关系类型须由人工判断，收盘结果不得倒灌到盘中买点"
                 ),
             }
         )
     return packs
+
+
+def format_theme_path(steps: list[dict[str, Any]]) -> str:
+    if not steps:
+        return "—"
+    groups: list[dict[str, Any]] = []
+    for step in steps:
+        if groups and groups[-1]["theme"] == step["theme"]:
+            groups[-1]["end"] = step["height"]
+            continue
+        groups.append(
+            {
+                "theme": step["theme"] or "（无）",
+                "start": step["height"],
+                "end": step["height"],
+            }
+        )
+    return "→".join(
+        (
+            f"{group['start']}板{group['theme']}"
+            if group["start"] == group["end"]
+            else f"{group['start']}-{group['end']}板{group['theme']}"
+        )
+        for group in groups
+    )
 
 
 def markdown_node(pack: dict[str, Any]) -> str:
@@ -563,42 +880,66 @@ def markdown_node(pack: dict[str, Any]) -> str:
             else "无"
         )
     )
-    links = pack["same_attribute_layout_candidates"]
+    links = pack["shared_theme_path_layout_candidates"]
     lines.append(
-        "同属性布局候选（未确认迁移）："
+        "沿途theme重合布局候选（未确认迁移）："
         + (
             "；".join(
                 f"{row['donor']['name']}{row['donor']['height']}板→"
                 f"{row['recipient']['name']}{row['recipient']['height']}板"
+                f"[{','.join(row['matched_themes'])}]"
                 for row in links
             )
             if links
-            else "无精确同属性高低位映射；补涨、让位或跨属性切换均留给人工判断"
+            else "无沿途theme高低位映射；补涨、让位或跨题材切换均留给人工判断"
         )
     )
-    lines.extend(["", "题材首板前排：" + "、".join(
-        f"{row['theme']}{row['first_board_count']}" for row in market["top_themes"][:10]
-    ), ""])
-    lines.append("|板|股票|题材|公告|开盘|首封|换手|一字|发酵 封前/收盘(排名)/历史|题材地位|")
+    lines.extend([
+        "",
+        f"theme读取合同：{pack['theme_contract']}",
+        f"公告合同：{pack['announcement_contract']}",
+        "",
+        "涨停原因发酵前二：" + "、".join(
+            f"{row['rank']}.{row['theme']}({row['reported_count']})"
+            for row in market["limit_reason_top_two"]
+        ),
+        "题材首板计数（非排名真相）：" + "、".join(
+            f"{row['theme']}{row['first_board_count']}"
+            for row in market["top_themes"][:10]
+        ),
+        "",
+    ])
+    lines.append("|板|股票|沿途theme|公告起源|开盘|首封|换手|一字|沿途theme 封前/首板/原因榜名次/历史|当日theme地位|")
     lines.append("|---:|---|---|:---:|---:|---:|---:|:---:|---:|---|")
     for row in pack["candidates"]:
-        timing = row["theme_timing"]
-        history_text = "/".join(
-            str(item["first_board_count"])
-            for item in row["theme_ferment_history"]
-        ) or "—"
+        route_support = []
+        for item in row["route_theme_evidence"]:
+            timing = item["timing"]
+            history_text = "/".join(
+                str(history["first_board_count"])
+                for history in item["ferment_history"]
+            ) or "—"
+            route_support.append(
+                f"{item['theme']}:"
+                f"{timing['before_candidate_first_seal'] if timing['before_candidate_first_seal'] is not None else '—'}"
+                f"/{item['first_board_count']}"
+                f"/{item['limit_reason_rank'] or '—'}"
+                f"/{history_text}"
+            )
         position = "高度核心" if row["theme_height_core"] else "非高度核心"
         position += (
             f"；同高{row['same_theme_same_height_count']}"
             f"/{row['same_theme_height_share']:.0%}，低位{row['same_theme_lower_ladder_count']}"
         )
+        path_text = format_theme_path(row["theme_path"])
+        if not row["theme_path_complete"]:
+            path_text += "[路径不完整]"
         lines.append(
-            f"|{row['height']}|{row['name']} `{row['code']}`|{row['theme']}|"
-            f"{'是' if row['announcement'] else '否'}|{pct(row['open_pct'])}|"
+            f"|{row['height']}|{row['name']} `{row['code']}`|{path_text}|"
+            f"{row['announcement_type'] if row['announcement'] else '否'}|{pct(row['open_pct'])}|"
             f"{row['first_seal'] or '—'}|{rate(row['turnover_pct'])}|"
             f"{'是' if row['one_price'] else '否'}|"
-            f"{timing['before_candidate_first_seal'] if timing['before_candidate_first_seal'] is not None else '—'}"
-            f"/{row['theme_first_board_count']}({row['theme_ferment_rank']})/{history_text}|{position}|"
+            f"{'；'.join(route_support) or '—'}|{row['theme']}:{position}|"
         )
     lines.extend(["", f"数据缺口：{pack['source_gap']}。"])
     return "\n".join(lines)
@@ -608,7 +949,7 @@ def markdown_pk(pack: dict[str, Any]) -> str:
     lines = [
         f"## {pack['node_date']}｜冻结{pack['frozen_height']}板 → {pack['action_date']}个股PK",
         "",
-        "|股票|题材|实际竞价|相对涨停|09:25风险|盘中首封|最低涨幅|首封前可见首板|收盘换手*|连板*|",
+        "|股票|沿途theme|实际竞价|相对涨停|09:25风险|盘中首封|最低涨幅|首封前可见首板|收盘换手*|连板*|",
         "|---|---|---:|---:|---|---:|---:|---:|---:|:---:|",
     ]
     for row in pack["candidates"]:
@@ -619,11 +960,11 @@ def markdown_pk(pack: dict[str, Any]) -> str:
         if row["node_close"]["announcement"] or auction["action_announcement"]:
             risks.append("公告")
         if auction["zero_ferment_near_limit_risk"]:
-            risks.append("0发酵近板")
+            risks.append("沿途theme零发酵近板")
         if intraday["opened_at_limit"]:
             risks.append("涨停开勿排队")
-        theme_text = row["theme"]
-        if row["action_theme"] != row["theme"]:
+        theme_text = format_theme_path(row["node_close"]["theme_path"])
+        if row["action_theme"] not in row["node_close"]["route_themes"]:
             theme_text += f"→{row['action_theme']}"
         lines.append(
             f"|{row['name']} `{row['code']}`|{theme_text}|"

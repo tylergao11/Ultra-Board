@@ -5,7 +5,7 @@
   sentiment.json      情绪统计（含 SJZT，用作校验基准）
   expression.json     梯队情绪指标
   zt_pool.json        完整涨停池，每只票带真实连板数
-  sector_ladder.json  板块核心梯队 + 反包板标记
+  sector_ladder.json  涨停原因发酵榜原序 + 板块核心梯队 + 反包板标记
   _DONE               仅当校验全过才写
 
 已验证的接口语义（勿凭猜测改动）：
@@ -16,6 +16,7 @@
     下标 18 = 描述文字，如 "7连板" / "3天2板"，仅作备注
   GetYTFP_BKHX
     历史参数是 Date（大写），不是 Day
+    List 原始顺序是节点日发酵榜顺序；不得按 Count 重新排序
     TD 按 TDType 分组：0=反包板 1=首板 2=2连板 … 9=打开高度标注
 
 硬规则：
@@ -138,7 +139,7 @@ def parse_stock(row: list, pid: int) -> tuple[dict[str, Any] | None, str | None]
         "boards": boards,               # 真实连板数，唯一权威
         "boards_desc": row[18] or "",   # "7连板" / "3天2板"，仅备注
         "theme": row[5] or "",  # 开盘啦主属性（业务唯一题材口径）
-        # row[12] 为接口概念堆，勿当主属性/公告依据；需要时看 raw[12]
+        # row[12] 为接口概念堆，仅随 raw 保留供源数据审计，禁止进入题材匹配
         "sector_code": str(row[19] or ""),
         "first_limit_ts": row[4],
         "turnover_rate": row[14],

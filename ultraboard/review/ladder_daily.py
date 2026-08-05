@@ -7,6 +7,8 @@
 产物 data/kaipanla/ladder_daily/：
   by_day/YYYY-MM-DD.md|.json
   index.md / index.json / README.md
+
+安全日文件严格截断在各自日期；完整后续路径只写入隐藏隔离区。
 """
 from __future__ import annotations
 
@@ -16,17 +18,18 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from ultraboard.kaipanla.announcements import (
+    ANNOUNCEMENT_TYPES,
+    is_announcement_theme,
+    resolve_identity,
+)
+
 ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = ROOT / "data" / "kaipanla" / "raw"
 OUT_DIR = ROOT / "data" / "kaipanla" / "ladder_daily"
 
-# 开盘啦主属性中的公告板（展示：主属性=并购重组[公告板]）
-GONGGAO_THEMES = frozenset({
-    "举牌",
-    "实控人变更",
-    "并购重组",
-    "股权转让",
-})
+# 兼容本模块原有字段名；分类真相只来自 announcements.py。
+GONGGAO_THEMES = ANNOUNCEMENT_TYPES
 
 
 def _read_json(path: Path) -> Any:
@@ -57,13 +60,7 @@ def list_trading_days(raw_dir: Path = RAW_DIR) -> list[str]:
 
 
 def is_gonggao_theme(theme: str) -> bool:
-    t = (theme or "").strip()
-    if not t:
-        return False
-    if t in GONGGAO_THEMES:
-        return True
-    # 兜底：开盘啦若写成「并购重组概念」等
-    return any(k in t for k in GONGGAO_THEMES)
+    return is_announcement_theme(theme)
 
 
 def format_theme(theme: str) -> str:
@@ -147,9 +144,21 @@ def _fmt_amount_yi(amount: float | None) -> str:
     return f"额={amount / 1e8:.2f}亿"
 
 
-def _stock_brief(s: dict) -> dict[str, Any]:
+def _stock_brief(
+    s: dict,
+    *,
+    day: str,
+    previous: dict[str, Any] | None,
+) -> dict[str, Any]:
     theme = s.get("theme") or ""
-    gonggao = is_gonggao_theme(theme)
+    identity = resolve_identity(
+        code=s.get("code"),
+        day=day,
+        theme=theme,
+        boards=int(s.get("boards") or 0),
+        previous=previous,
+    )
+    gonggao = bool(identity["is_announcement"])
     raw = s.get("raw") if isinstance(s.get("raw"), list) else None
     open_amp = None
     if raw is not None and len(raw) > 17:
@@ -165,6 +174,9 @@ def _stock_brief(s: dict) -> dict[str, Any]:
         "theme": theme,  # 开盘啦主属性原文
         "theme_display": format_theme(theme),
         "is_gonggao": gonggao,
+        "announcement_type": identity["announcement_type"],
+        "announcement_origin_date": identity["announcement_origin_date"],
+        "announcement_source": identity["announcement_source"],
         "sector_code": s.get("sector_code") or "",
         "is_fanbao": bool(s.get("is_fanbao")),
         "first_limit_ts": s.get("first_limit_ts"),
@@ -177,6 +189,10 @@ def _stock_brief(s: dict) -> dict[str, Any]:
         "open_pct": s.get("open_pct"),
         "raw": raw,
     }
+    if gonggao and not is_gonggao_theme(theme):
+        brief["theme_display"] = (
+            f"{brief['theme_display']}[公告起源={identity['announcement_type']}]"
+        )
     brief["is_yizi"] = is_yizi_board(brief)
     # 仅公告板挂成交额（材料只展示这类）
     if gonggao:
@@ -186,8 +202,21 @@ def _stock_brief(s: dict) -> dict[str, Any]:
     return brief
 
 
-def _pool_map(zt: dict) -> dict[str, dict]:
-    return {s["code"]: _stock_brief(s) for s in zt.get("stocks") or []}
+def _pool_map(
+    zt: dict,
+    *,
+    day: str,
+    previous_pool: dict[str, dict] | None,
+) -> dict[str, dict]:
+    previous_pool = previous_pool or {}
+    return {
+        s["code"]: _stock_brief(
+            s,
+            day=day,
+            previous=previous_pool.get(s["code"]),
+        )
+        for s in zt.get("stocks") or []
+    }
 
 
 def is_first_board_layer(s: dict) -> bool:
@@ -198,10 +227,10 @@ def is_first_board_layer(s: dict) -> bool:
 
 
 def _theme_first_board_counts(pool: dict[str, dict]) -> dict[str, int]:
-    """按开盘啦主属性统计首板发酵数（含反包板，去重按代码）。"""
+    """统计自然首板发酵；公告起源票不计入题材宽度。"""
     counts: dict[str, int] = defaultdict(int)
     for s in pool.values():
-        if not is_first_board_layer(s):
+        if not is_first_board_layer(s) or s.get("is_gonggao"):
             continue
         th = s.get("theme") or "（无）"
         counts[th] += 1
@@ -648,6 +677,21 @@ def build_fanbao_follow_events(
     return events
 
 
+def _follow_event_as_of(event: dict[str, Any], cutoff: str) -> dict[str, Any]:
+    """生成严格截至 cutoff 的公开快照，不携带后续路径。"""
+    steps = [step for step in event.get("follow_path") or [] if step["date"] <= cutoff]
+    if not steps:
+        raise ValueError(f"跟随事件在信息截止日前没有可见步骤: {cutoff}")
+    snapshot = dict(event)
+    snapshot.pop("end_date", None)
+    snapshot["information_cutoff"] = cutoff
+    snapshot["observed_through"] = steps[-1]["date"]
+    snapshot["follow_path"] = steps
+    snapshot["follow_path_text"] = _path_text(steps, event["boards_before_break"])
+    snapshot["dates_on_path"] = [step["date"] for step in steps]
+    return snapshot
+
+
 def _format_follow_hit_line(e: dict, day: str) -> str:
     steps = e.get("follow_path") or []
     today = next((st for st in steps if st["date"] == day), None)
@@ -688,7 +732,11 @@ def build_one_day(
     raw_dir: Path = RAW_DIR,
 ) -> tuple[dict, dict[str, dict], dict]:
     zt = _read_json(raw_dir / day / "zt_pool.json")
-    pool = _pool_map(zt)
+    pool = _pool_map(
+        zt,
+        day=day,
+        previous_pool=prev_pool,
+    )
 
     board_counts = zt.get("board_counts") or {}
     if not board_counts:
@@ -789,7 +837,8 @@ def build_ladder_daily(
             hits_by_date[d].append(e)
 
     for day, doc in day_docs.items():
-        hits = hits_by_date.get(day, [])
+        hits = [_follow_event_as_of(event, day) for event in hits_by_date.get(day, [])]
+        doc["information_cutoff"] = day
         doc["fanbao_follow_events"] = [
             e for e in hits if e.get("fanbao_date") == day
         ]
@@ -834,19 +883,23 @@ python -m ultraboard.review.ladder_daily
 1. meta / dist昨 / dist今 / 首板数量
 2. **今梯队(≥2 高度↓)** ← 主视图
 3. **变化(相对昨)** 晋级 / 断板 / 新上 / 续板
-4. 反包跟随（有则）
+4. 截至本日已经发生的反包跟随（有则）
 
 组织轴是高度与变化，不是题材分堆。
-主属性=开盘啦 theme；举牌/实控人变更/并购重组/股权转让 → 主属性=xx[公告板]。
-公告板另附 额=x.xx亿（raw[11]）；非公告板附 首板×N=该主属性日内首板发酵数（含反包板）。
-跟随链：≥2断板→反包跟N板 → 次日再连板跟M板，证据保存在对应 by_day 日文件的 follow_path 字段。
+主属性=开盘啦 theme；只有实控人变更/并购重组/股权转让属于公告起源。
+举牌、业绩增长、ST摘帽、订单和再融资均按自然属性；公告起源在连续连板段中保持。
+节点取证时，个股可用题材只限当前连板路径上从 1 板到 N 板逐日真实出现过的 theme。
+`concepts` / `raw[12]` 是静态概念堆，不得用于题材关系、高低位映射或发酵匹配。
+公告起源票另附 额=x.xx亿（raw[11]），且不计入自然题材发酵；自然票附
+首板×N=该主属性日内自然首板发酵数（含反包板）。
+日文件中的跟随链严格截断在该日；完整后续路径只保存在隐藏隔离区，盲测禁止访问。
 一字板：首封09:25 且 raw[17]≈0 → 票名后标 [一字]。
 不列首板个股名单。
 
 ## 顶层文件契约
 
 - `by_day/`、`index.json`、`index.md`：由本命令生成的客观派生证据，可重建。
-- `human_ladder_judgments.json`：人工标签真相，本命令不读、不写；只在事后清洗和训练阶段使用。
+- 人工标签和完整后续路径位于隐藏隔离区，本命令的安全日文件不读取它们。
 - 临时赛马、排名、收益审计和自动选层报告不在本目录长期保存。
 """
     _write_text(out_dir / "README.md", readme)

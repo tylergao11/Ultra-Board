@@ -17,9 +17,15 @@ python -m ultraboard.kaipanla.ohlc
 # 3) 生成梯队逐日变化材料
 python -m ultraboard.review.ladder_daily
 
-# 4) 只取证，不自动选梯队或股票
+# 4) 节点日证据（不自动选层）
 python -m ultraboard.kaipanla.ladder_evidence node 2025-12-12
 python -m ultraboard.kaipanla.ladder_evidence pk 2025-12-12:2
+
+# 5) 第一阶段统一选层（严格不读 T+1）
+python -m ultraboard.review.ladder_selector select 2025-12-12
+
+# 显式事后回测；普通 select 不读取标签
+python -m ultraboard.review.ladder_selector backtest --labels .blind-test-quarantine/labels/stage1_locked.json
 ```
 
 依赖：
@@ -33,19 +39,21 @@ pip install -r requirements.txt
 | 路径 | 角色 |
 |---|---|
 | `ultraboard/kaipanla/` | **采集 / 补全**：接口客户端、回灌、日 K 开盘价 |
-| `ultraboard/review/` | **复盘派生**：读 raw，写梯队日材料 |
+| `ultraboard/review/` | **复盘派生与一阶段选层**：读 raw，写梯队日材料，节点日统一选层 |
 | `ultraboard/limits.py` | 涨跌幅 / 一字等**校验**工具（非主采集） |
 | `data/kaipanla/raw/YYYY-MM-DD/` | **主源日目录**（只增不乱改语义） |
 | `data/kaipanla/ladder_daily/` | **派生日录**（可随时重生成） |
 | `data/kaipanla/ohlc_cache/` | 日 K 缓存（可删可重建，勿当源） |
-| `docs/` | 方案与决策记录 |
+| `docs/` | 节点日可见的方案与判断经验 |
+| `.blind-test-quarantine/` | 后验研究、人工标签与完整后续路径；盲测禁止访问 |
 
 ## 主升研究最小资产
 
 - 客观数据与人工标签共同组成真相库，但事前证据接口禁止读取人工标签。
 - `docs/主升梯队资金迁移与逐日个股PK经验.md` 是唯一判断经验源。
-- 正式脚本只取证或生成派生材料，不自动宣判梯队、资金流向和买卖状态。
+- 第一阶段选层由 `ladder_selector` 按唯一规则自动完成；第二阶段选票与买卖状态仍不自动宣判。
 - README 与命令参数构成薄接口契约；临时赛马、排名和收益报告不长期保存。
+- 节点日盲测只走 `ladder_evidence node DATE`；隔离区仅在用户明确授权事后研究时开放。
 
 数据细节见 `data/kaipanla/README.md`。
 
