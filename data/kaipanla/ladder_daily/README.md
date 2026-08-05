@@ -14,6 +14,12 @@ python -m ultraboard.review.ladder_daily
 组织轴是高度与变化，不是题材分堆。
 主属性=开盘啦 theme；举牌/实控人变更/并购重组/股权转让 → 主属性=xx[公告板]。
 公告板另附 额=x.xx亿（raw[11]）；非公告板附 首板×N=该主属性日内首板发酵数（含反包板）。
-跟随链：≥2断板→反包跟N板 → 次日再连板跟M板…（见 follow_path / fanbao_follow_ladder.md）。
+跟随链：≥2断板→反包跟N板 → 次日再连板跟M板，证据保存在对应 by_day 日文件的 follow_path 字段。
 一字板：首封09:25 且 raw[17]≈0 → 票名后标 [一字]。
 不列首板个股名单。
+
+## 顶层文件契约
+
+- `by_day/`、`index.json`、`index.md`：由本命令生成的客观派生证据，可重建。
+- `human_ladder_judgments.json`：人工标签真相，本命令不读、不写；只在事后清洗和训练阶段使用。
+- 临时赛马、排名、收益审计和自动选层报告不在本目录长期保存。

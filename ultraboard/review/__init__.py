@@ -6,7 +6,7 @@
 产物：
   data/kaipanla/ladder_daily/
 
-新复盘视图加在本包，勿写入 scripts/_scratch。
+新复盘视图加在本包；临时探针用完即删，不进入正式路径。
 """
 
 __all__ = ["build_ladder_daily", "RAW_DIR", "OUT_DIR"]

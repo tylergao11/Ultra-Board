@@ -1,8 +1,8 @@
 # Ultra-Board
 
-连板复盘辅助：开盘啦历史涨停池 → 开盘价补全 → 涨停梯队逐日变化材料。
+连板复盘辅助：开盘啦历史涨停池 → 开盘价补全 → 涨停梯队逐日变化材料 → 人工主升判断证据包。
 
-## 主链路（三入口）
+## 主链路（四入口）
 
 在仓库根目录执行：
 
@@ -16,6 +16,10 @@ python -m ultraboard.kaipanla.ohlc
 
 # 3) 生成梯队逐日变化材料
 python -m ultraboard.review.ladder_daily
+
+# 4) 只取证，不自动选梯队或股票
+python -m ultraboard.kaipanla.ladder_evidence node 2025-12-12
+python -m ultraboard.kaipanla.ladder_evidence pk 2025-12-12:2
 ```
 
 依赖：
@@ -34,8 +38,14 @@ pip install -r requirements.txt
 | `data/kaipanla/raw/YYYY-MM-DD/` | **主源日目录**（只增不乱改语义） |
 | `data/kaipanla/ladder_daily/` | **派生日录**（可随时重生成） |
 | `data/kaipanla/ohlc_cache/` | 日 K 缓存（可删可重建，勿当源） |
-| `scripts/_scratch/` | 历史探针，**非主路径** |
 | `docs/` | 方案与决策记录 |
+
+## 主升研究最小资产
+
+- 客观数据与人工标签共同组成真相库，但事前证据接口禁止读取人工标签。
+- `docs/主升梯队资金迁移与逐日个股PK经验.md` 是唯一判断经验源。
+- 正式脚本只取证或生成派生材料，不自动宣判梯队、资金流向和买卖状态。
+- README 与命令参数构成薄接口契约；临时赛马、排名和收益报告不长期保存。
 
 数据细节见 `data/kaipanla/README.md`。
 
@@ -47,7 +57,7 @@ pip install -r requirements.txt
    - 新数据源 / 补全 → `ultraboard/kaipanla/`
    - 新复盘视图 / 材料 → `ultraboard/review/`
    - 价位规则校验 → `ultraboard/limits.py` 或同级小模块
-4. **不要**把正式能力堆进 `scripts/_scratch/`。
+4. **正式入口唯一**：正式能力放在 `ultraboard/`，临时探针用完即删。
 
 后续可加（当前未做门禁）：爆量规则、修全量 `_MISMATCH`、全历史 OHLC 覆盖、竞价层。
 

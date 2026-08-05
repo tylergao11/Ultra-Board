@@ -37,6 +37,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT / "data" / "kaipanla"
 RAW_DIR = DATA_DIR / "raw"
 CACHE_DIR = DATA_DIR / "ohlc_cache"
+CACHE_PRICE_MODE = "unadjusted"
 
 # 腾讯日 K 为主（东财当前环境连不上）；新浪作兜底
 TENCENT_KLINE = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
@@ -152,14 +153,14 @@ def _fetch_tencent(code: str, beg: str, end: str) -> dict[str, dict[str, Any]]:
     sym = to_symbol(code)
     if not sym:
         return {}
-    # param: symbol,day,start,end,count,qfq
-    param = f"{sym},day,{beg},{end},1000,qfq"
+    # 涨停池保存真实成交价，补K线必须同样使用不复权价格；前复权会在除权后
+    # 追溯改写历史价格，造成跨日收益出现物理上不可能的跳变。
+    param = f"{sym},day,{beg},{end},1000,none"
     r = _SESSION.get(TENCENT_KLINE, params={"param": param}, timeout=15)
     r.raise_for_status()
     body = r.json()
     data = (body.get("data") or {}).get(sym) or {}
-    # qfqday / day
-    series = data.get("qfqday") or data.get("day") or []
+    series = data.get("day") or []
     rows: list[tuple[str, float, float, float, float, float]] = []
     for item in series:
         # [date, open, close, high, low, volume]
@@ -180,11 +181,11 @@ def _fetch_tencent(code: str, beg: str, end: str) -> dict[str, dict[str, Any]]:
     # 为算首日 open_pct，多取一根前收：若被 beg 截断，再拉稍长区间
     if rows and rows[0][0] == beg:
         # 试着向前多取几天补 prev_close
-        param2 = f"{sym},day,,{beg},5,qfq"
+        param2 = f"{sym},day,,{beg},5,none"
         r2 = _SESSION.get(TENCENT_KLINE, params={"param": param2}, timeout=15)
         if r2.ok:
             data2 = (r2.json().get("data") or {}).get(sym) or {}
-            series2 = data2.get("qfqday") or data2.get("day") or []
+            series2 = data2.get("day") or []
             pre_rows = []
             for item in series2:
                 if not item or len(item) < 6:
@@ -293,6 +294,8 @@ def load_or_fetch_code(
 ) -> dict[str, dict[str, Any]]:
     cache_path = CACHE_DIR / f"{code}.json"
     cached = {} if force else (_read_json(cache_path, {}) or {})
+    if cached.get("price_mode") != CACHE_PRICE_MODE:
+        cached = {}
     bars: dict[str, dict] = dict(cached.get("bars") or {})
 
     need_refresh = force or not bars
@@ -304,16 +307,20 @@ def load_or_fetch_code(
     if need_refresh:
         time.sleep(sleep_s)
         try:
-            bars = fetch_kline_range(code, beg, end)
+            fetched = fetch_kline_range(code, beg, end)
         except Exception as e:
             print(f"  FAIL {code}: {e}", flush=True)
             return bars
-        if bars:
+        if fetched:
+            # 窄区间补数只能增量覆盖同日期，不能抹掉缓存中其他历史日期。
+            # force=True 时 bars 本来就是空字典，仍保持完整重拉语义。
+            bars = {**bars, **fetched}
             _write_json(cache_path, {
                 "code": code,
                 "symbol": to_symbol(code),
-                "beg": beg,
-                "end": end,
+                "price_mode": CACHE_PRICE_MODE,
+                "beg": min(bars),
+                "end": max(bars),
                 "bars": bars,
             })
     return bars

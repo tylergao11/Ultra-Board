@@ -6,7 +6,6 @@
 
 产物 data/kaipanla/ladder_daily/：
   by_day/YYYY-MM-DD.md|.json
-  fanbao_follow_ladder.md|.json
   index.md / index.json / README.md
 """
 from __future__ import annotations
@@ -681,37 +680,6 @@ def _format_follow_hit_line(e: dict, day: str) -> str:
     )
 
 
-def fanbao_events_to_markdown(events: list[dict]) -> str:
-    lines = [
-        f"# 跟随链(断→反包→再连板)  n={len(events)}",
-        "例: 2板→断→反包跟4板梯队→次日自身2板跟5板梯队",
-        "",
-    ]
-    for e in events:
-        th = e.get("theme_before_display") or format_theme(e.get("theme_before_break") or "")
-        amt = _fmt_amount_yi(e.get("amount")) if e.get("is_gonggao") else ""
-        amt_s = f" {amt}" if amt else ""
-        lines.append(
-            f"{e['name']}({e['code']}) 断前{e['boards_before_break']} "
-            f"主属性={th}{amt_s} | {e.get('follow_path_text')}"
-        )
-        for st in e.get("follow_path") or []:
-            a = st.get("follow_anchor")
-            if a and st.get("follow_ladder_label"):
-                fol = f"{a['name']}({a['code']}){a['boards']}→{st['follow_ladder_label']}"
-            else:
-                fol = st.get("follow_ladder_label") or "-"
-            role = "反包" if st.get("role") == "fanbao" else "连板"
-            yz = "[一字]" if st.get("is_yizi") else ""
-            lines.append(
-                f"  {st['date']} {role} 自身{st['self_boards']}板{yz} "
-                f"主属性={st.get('theme_display')} 跟={fol} "
-                f"首板×{st.get('theme_first_board_count', 0)}"
-            )
-        lines.append("")
-    return "\n".join(lines)
-
-
 def build_one_day(
     day: str,
     prev_date: str | None,
@@ -829,17 +797,6 @@ def build_ladder_daily(
         _write_json(by_day_dir / f"{day}.json", doc)
         _write_text(by_day_dir / f"{day}.md", day_to_markdown(doc))
 
-    _write_json(out_dir / "fanbao_follow_ladder.json", {
-        "definition": (
-            "≥2板→断板→反包，之后每个仍在涨停池的交易日续记跟随高度"
-            "（例：反包跟4板，次日再连板跟5板）"
-        ),
-        "gonggao_themes": sorted(GONGGAO_THEMES),
-        "count": len(fb_events),
-        "events": fb_events,
-    })
-    _write_text(out_dir / "fanbao_follow_ladder.md", fanbao_events_to_markdown(fb_events))
-
     summary = {
         "day_count": len(days),
         "first_date": days[0] if days else None,
@@ -882,9 +839,15 @@ python -m ultraboard.review.ladder_daily
 组织轴是高度与变化，不是题材分堆。
 主属性=开盘啦 theme；举牌/实控人变更/并购重组/股权转让 → 主属性=xx[公告板]。
 公告板另附 额=x.xx亿（raw[11]）；非公告板附 首板×N=该主属性日内首板发酵数（含反包板）。
-跟随链：≥2断板→反包跟N板 → 次日再连板跟M板…（见 follow_path / fanbao_follow_ladder.md）。
+跟随链：≥2断板→反包跟N板 → 次日再连板跟M板，证据保存在对应 by_day 日文件的 follow_path 字段。
 一字板：首封09:25 且 raw[17]≈0 → 票名后标 [一字]。
 不列首板个股名单。
+
+## 顶层文件契约
+
+- `by_day/`、`index.json`、`index.md`：由本命令生成的客观派生证据，可重建。
+- `human_ladder_judgments.json`：人工标签真相，本命令不读、不写；只在事后清洗和训练阶段使用。
+- 临时赛马、排名、收益审计和自动选层报告不在本目录长期保存。
 """
     _write_text(out_dir / "README.md", readme)
 
