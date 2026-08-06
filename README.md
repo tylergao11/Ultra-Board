@@ -27,8 +27,8 @@ python -m ultraboard.review.ladder_selector select 2025-11-06
 # 显式事后回测；普通 select 不读取标签
 python -m ultraboard.review.ladder_selector backtest --labels .blind-test-quarantine/labels/stage1_locked.json
 
-# 6) 日内真实爆量证据：按需补同花顺终封/炸板事实，不读取换手率
-python -m ultraboard.review.true_volume_score 2025-12-16 --code 001208 --fetch-missing
+# 6) 换手、分歧与次日任务标签：保留量能链原值，不生成混合总分
+python -m ultraboard.review.exchange_tags 2025-12-16 --code 001208 --fetch-missing
 
 # 7) 第二阶段节点日地位侧预期评分 E_position（仍严格不读 T+1）
 python -m ultraboard.review.expectation_score 2025-12-24
@@ -48,7 +48,7 @@ pip install -r requirements.txt
 | 路径 | 角色 |
 |---|---|
 | `ultraboard/kaipanla/` | **采集 / 补全**：开盘啦主源、同花顺板上行为事实、日 K 开盘价 |
-| `ultraboard/review/` | **复盘派生与决策**：节点日统一选层、真实爆量证据、地位侧预期评分 E_position，以及显式后验竞价强度 A/地位差 G_position |
+| `ultraboard/review/` | **复盘派生与决策**：节点日统一选层、换手/分歧/次日任务标签、地位侧预期评分 E_position，以及显式后验竞价强度 A/地位差 G_position |
 | `ultraboard/limits.py` | 涨跌幅 / 一字等**校验**工具（非主采集） |
 | `data/kaipanla/raw/YYYY-MM-DD/` | **主源日目录**（只增不乱改语义） |
 | `data/kaipanla/ladder_daily/` | **派生日录**（可随时重生成） |

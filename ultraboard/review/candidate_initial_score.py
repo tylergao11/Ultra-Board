@@ -621,8 +621,8 @@ def score_day(day: str) -> dict[str, Any]:
             "announcement": node["announcement_contract"],
             "one_price": "一字形态本身直接权重为0；只能通过首封时刻、板块地位和此后传播体现",
             "dimension_boundary": (
-                "本分只回答梯队与板块地位要求市场给予多强预期；真实爆量、换手完成"
-                "与次日任务由true_volume_score及人工意图判断独立处理，不混入本分"
+                "本分只回答梯队与板块地位要求市场给予多强预期；换手、分歧状态"
+                "与次日任务由exchange_tags独立处理，不混入本分"
             ),
         },
         "source_gaps": [
