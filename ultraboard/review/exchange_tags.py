@@ -4,7 +4,7 @@
 本模块不读取数值换手率，也不把不同含义压成一个总分。它只使用节点日及以前的
 连续涨停量能链，加上节点日开盘、最低价、首封、终封与炸板事实，分别回答：
 
-- 相对本轮此前有效换手基线，当前交换了多少；
+- 从首板到节点日的逐板量能与形态呈现什么结构；
 - 分歧是否暴露、是否仍在延续、是否已经形成一致；
 - 个股当前处于加速途中、换手整理中，还是整理完成；
 - 次日仍欠什么任务，不预测它必须选择哪一种具体动作模型。
@@ -35,12 +35,7 @@ from ultraboard.kaipanla.price_shapes import is_one_price
 from ultraboard.kaipanla.ths_limit_pool import stock_map as ths_stock_map
 
 
-POLICY_VERSION = "exchange_tags_v1_multiaxis"
-
-# 全局语义锚点只在此处定义。0.5 表示恢复到前序有效换手基线的一半，
-# 1.0 表示达到该基线；它们不是股票、日期或名称特判。
-PARTIAL_REFERENCE_RATIO = 0.5
-FULL_REFERENCE_RATIO = 1.0
+POLICY_VERSION = "exchange_tags_v2_sequence_structure"
 
 MORNING_START = 9 * 3600 + 30 * 60
 MORNING_END = 11 * 3600 + 30 * 60
@@ -111,6 +106,14 @@ def consecutive_limit_sequence(
             "height": actual,
             "amount": as_float(stock.get("amount")),
             "first_seal": seal_time(stock.get("first_limit_ts")),
+            "open_pct": as_float(stock.get("open_pct")),
+            "low_pct": price_pct(stock.get("low"), stock.get("prev_close")),
+            "limit_pct": abs(as_float(stock.get("limit_pct")) or 0.0) or None,
+            "shape_known": all(
+                as_float(stock.get(field)) is not None
+                for field in ("open", "high", "low")
+            ),
+            "one_price": is_one_price(stock),
         })
         expected -= 1
         if expected == 0:
@@ -123,53 +126,49 @@ def amount_path(
     current_amount: float | None,
     sequence: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    prior_rows = [
-        row
+    prior_amounts = [
+        as_float(row.get("amount"))
         for row in sequence[:-1]
         if as_float(row.get("amount")) not in (None, 0.0)
     ]
     previous_row = sequence[-2] if len(sequence) >= 2 else None
     previous_amount = as_float((previous_row or {}).get("amount"))
-    previous_ratio = (
-        current_amount / previous_amount
-        if current_amount is not None and previous_amount
-        else None
-    )
-    reference_row = (
-        max(prior_rows, key=lambda row: as_float(row.get("amount")) or 0.0)
-        if prior_rows
-        else None
-    )
-    reference_amount = as_float((reference_row or {}).get("amount"))
-    reference_ratio = (
-        current_amount / reference_amount
-        if current_amount is not None and reference_amount
-        else None
-    )
-
-    if reference_ratio is None:
-        reference_state = "量能基线不足"
-    elif reference_ratio < PARTIAL_REFERENCE_RATIO:
-        reference_state = "低于前序有效换手基线一半"
-    elif reference_ratio < FULL_REFERENCE_RATIO:
-        reference_state = "恢复到一半及以上但未达到前序有效换手基线"
+    if current_amount is None or not prior_amounts:
+        position = "逐板量能证据不足"
+    elif current_amount > max(prior_amounts):
+        position = "当前量高于前序所有板"
+    elif current_amount < min(prior_amounts):
+        position = "当前量低于前序所有板"
     else:
-        reference_state = "达到或超过前序有效换手基线"
+        position = "当前量位于前序量能区间"
+
+    previous_relation: str | None = None
+    if current_amount is not None and previous_amount is not None:
+        if current_amount > previous_amount:
+            previous_relation = "高于上一板"
+        elif current_amount < previous_amount:
+            previous_relation = "低于上一板"
+        else:
+            previous_relation = "与上一板相当"
+
+    structure_tags = [position]
+    if (previous_row or {}).get("one_price") is True:
+        if previous_relation == "高于上一板":
+            structure_tags.append("一字后补量")
+        elif previous_relation == "低于上一板":
+            structure_tags.append("一字后继续缩量")
+    if (
+        "一字后补量" in structure_tags
+        and position == "当前量位于前序量能区间"
+    ):
+        structure_tags.append("补量但未超过前序高量板")
 
     return {
         "current_amount": current_amount,
-        "previous_board_amount": previous_amount,
-        "previous_board_ratio": (
-            round(previous_ratio, 3) if previous_ratio is not None else None
-        ),
-        "effective_reference_amount": reference_amount,
-        "effective_reference_date": (reference_row or {}).get("date"),
-        "effective_reference_height": (reference_row or {}).get("height"),
-        "effective_reference_ratio": (
-            round(reference_ratio, 3) if reference_ratio is not None else None
-        ),
-        "reference_state": reference_state,
-        "reference_contract": "本轮连续涨停路径此前各板成交额最大值",
+        "position_in_sequence": position,
+        "previous_relation": previous_relation,
+        "structure_tags": unique(structure_tags),
+        "comparison_contract": "只阅读完整逐板量能与形态，不建立单一有效基线或倍数",
         "sequence": sequence,
     }
 
@@ -287,13 +286,32 @@ def has_observable_interaction(
     ))
 
 
+def has_sustained_interaction(
+    *,
+    one_price: bool,
+    observable_interaction: bool,
+    price: dict[str, Any],
+    board: dict[str, Any],
+) -> bool:
+    """区分真实展开的过程与高开后短促封板。
+
+    非快速终封表示市场给出了持续交互时间；最低价触及零轴及以下则表示出现了
+    明确的向下释放。普通的短阳实体或板上成交量不能单独宣布换手充分。
+    """
+    if one_price or not observable_interaction:
+        return False
+    low_pct = as_float(price.get("low_pct"))
+    touched_zero_axis = low_pct is not None and low_pct <= 0.0
+    return board.get("quick_final_seal") is False or touched_zero_axis
+
+
 def classify_exchange(
     *,
     one_price: bool,
     amount: dict[str, Any],
     observable_interaction: bool,
+    sustained_interaction: bool,
 ) -> dict[str, Any]:
-    ratio = as_float(amount.get("effective_reference_ratio"))
     if one_price:
         return {
             "state": "严重欠换手",
@@ -301,12 +319,12 @@ def classify_exchange(
             "has_shortfall": True,
             "reason": "一字封闭，没有可观察的筹码交互",
         }
-    if ratio is None:
+    if amount.get("position_in_sequence") == "逐板量能证据不足":
         return {
             "state": "换手证据不足",
             "shortfall_level": "未知",
             "has_shortfall": None,
-            "reason": "本轮此前有效换手基线缺失",
+            "reason": "完整逐板量能证据不足，不建立虚假基线",
         }
     if not observable_interaction:
         return {
@@ -315,25 +333,33 @@ def classify_exchange(
             "has_shortfall": True,
             "reason": "成交额不能替代价格释放、炸板或回封交互",
         }
-    if ratio < PARTIAL_REFERENCE_RATIO:
+    if not sustained_interaction:
         return {
-            "state": "明显欠换手",
+            "state": "短促交互，仍欠换手",
             "shortfall_level": "明显",
             "has_shortfall": True,
-            "reason": "当前成交额仍低于本轮此前有效换手基线一半",
+            "reason": "高开后快速封板或交互时间过短，整日成交额不能替代过程",
         }
-    if ratio < FULL_REFERENCE_RATIO:
+    structure_tags = set(amount.get("structure_tags") or [])
+    if "补量但未超过前序高量板" in structure_tags:
         return {
             "state": "部分交换，仍欠换手",
             "shortfall_level": "部分",
             "has_shortfall": True,
-            "reason": "已补充交换，但尚未恢复到本轮此前有效换手基线",
+            "reason": "一字后已有持续交换，但整段量能结构仍显示只完成部分补量",
+        }
+    if amount.get("position_in_sequence") == "当前量高于前序所有板":
+        return {
+            "state": "换手充分",
+            "shortfall_level": "无明显缺口",
+            "has_shortfall": False,
+            "reason": "当前日持续交互，且量能在完整连板序列中处于前高",
         }
     return {
-        "state": "换手充分",
-        "shortfall_level": "无明显缺口",
-        "has_shortfall": False,
-        "reason": "成交额达到前序有效换手基线，且存在可观察日内交互",
+        "state": "已有持续交互，换手程度待确认",
+        "shortfall_level": "未知",
+        "has_shortfall": None,
+        "reason": "完整量能结构与日内过程尚不足以宣布换手完成或仍明显欠缺",
     }
 
 
@@ -442,10 +468,17 @@ def analyze_stock(
         price=price,
         board=board,
     )
+    sustained_interaction = has_sustained_interaction(
+        one_price=one_price,
+        observable_interaction=observable_interaction,
+        price=price,
+        board=board,
+    )
     exchange = classify_exchange(
         one_price=one_price,
         amount=amount,
         observable_interaction=observable_interaction,
+        sustained_interaction=sustained_interaction,
     )
     divergence = classify_divergence(
         exchange=exchange,
@@ -455,12 +488,16 @@ def analyze_stock(
     phase = classify_phase(exchange, divergence, board)
     intent = next_day_intent(exchange, divergence)
 
-    fact_tags = list(price.get("fact_tags") or []) + list(board.get("fact_tags") or [])
+    fact_tags = (
+        list(amount.get("structure_tags") or [])
+        + list(price.get("fact_tags") or [])
+        + list(board.get("fact_tags") or [])
+    )
     if one_price:
         fact_tags.insert(0, "一字封闭")
     missing: list[str] = []
-    if amount.get("effective_reference_ratio") is None:
-        missing.append("本轮此前有效换手基线")
+    if amount.get("position_in_sequence") == "逐板量能证据不足":
+        missing.append("完整逐板量能")
     if price.get("downward_release_pct_points") is None:
         missing.append("开盘/最低价路径")
     if board.get("final_seal") is None or board.get("open_count") is None:
@@ -484,6 +521,7 @@ def analyze_stock(
             "price_path": price,
             "board_path": board,
             "observable_interaction": observable_interaction,
+            "sustained_interaction": sustained_interaction,
             "tags": unique(fact_tags),
         },
         "labels": {
@@ -532,8 +570,8 @@ def analyze_day(
         ),
         "contracts": {
             "forbidden_inputs": ["数值换手率", "T+1及以后事实"],
-            "amount_reference": (
-                "同时展示较上一板与较本轮此前最大成交额；后者作为有效换手基线"
+            "amount_path": (
+                "只展示完整逐板量能与形态关系；禁止建立单一有效基线或派生倍数"
             ),
             "exchange_and_divergence": (
                 "换手充分度与分歧状态相互独立，允许欠换手与分歧延续同时存在"
@@ -553,11 +591,6 @@ def analyze_day(
     }
 
 
-def fmt_ratio(value: Any) -> str:
-    number = as_float(value)
-    return "—" if number is None else f"{number:.3f}×"
-
-
 def fmt_amount(value: Any) -> str:
     number = as_float(value)
     return "—" if number is None else f"{number / 100_000_000:.2f}亿"
@@ -573,8 +606,8 @@ def markdown_report(result: dict[str, Any]) -> str:
         "",
         result["semantics"],
         "",
-        "|股票|板|量能链|较上一板|较有效基线|首封→终封/炸板|换手标签|分歧标签|阶段|次日任务|",
-        "|---|---:|---|---:|---:|---|---|---|---|---|",
+        "|股票|板|量能链|量能结构|首封→终封/炸板|换手标签|分歧标签|阶段|次日任务|",
+        "|---|---:|---|---|---|---|---|---|---|",
     ]
     for row in result["candidates"]:
         facts = row["facts"]
@@ -586,8 +619,7 @@ def markdown_report(result: dict[str, Any]) -> str:
         lines.append(
             f"|{row['name']} `{row['code']}`|{row['height']}|"
             f"{amount_chain(volume['sequence'])}|"
-            f"{fmt_ratio(volume['previous_board_ratio'])}|"
-            f"{fmt_ratio(volume['effective_reference_ratio'])}|"
+            f"{'＋'.join(volume['structure_tags'])}|"
             f"{board['first_seal'] or '—'}→{board['final_seal'] or '—'}/{open_count}|"
             f"{labels['exchange']['state']}|{labels['divergence']['state']}|"
             f"{labels['phase']}|{tasks}|"
@@ -597,10 +629,10 @@ def markdown_report(result: dict[str, Any]) -> str:
         notes = row["missing_facts"] + row["warnings"]
         explanations = unique(details + risks + notes)
         if explanations:
-            lines.append(f"|↳|||||||||{'；'.join(explanations)}|")
+            lines.append(f"|↳||||||||{'；'.join(explanations)}|")
     lines.extend([
         "",
-        "- 量能链仅包含本轮连续涨停；有效基线取此前各板最大成交额，不能只拿缩量一字的上一板作分母。",
+        "- 量能链仅包含本轮连续涨停；保留逐板原值与形态关系，不建立单一有效基线，也不输出派生倍数。",
         "- 尾盘终封只描述路径；交换多少仍需结合整段量能链，换手充分也不等于已经形成一致。",
         "- 当前缺少分钟／逐笔成交分布，因此尾盘开板区间的精确交换量只作证据缺口，不伪造结论。",
     ])
