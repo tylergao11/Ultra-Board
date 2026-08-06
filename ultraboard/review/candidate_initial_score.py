@@ -28,9 +28,9 @@ from ultraboard.kaipanla.ladder_evidence import (
     seal_time,
 )
 from ultraboard.review.ladder_selector import (
-    MODEL_HEFU,
+    MODEL_ATTACK,
+    MODEL_DEFENSE,
     MODEL_NONE,
-    MODEL_SHENJIAN,
     select_ladder,
 )
 from ultraboard.review.layer_pk import (
@@ -41,7 +41,7 @@ from ultraboard.review.layer_pk import (
 )
 
 
-POLICY_VERSION = "stage2_node_auction_expectation_v2_layer_pk"
+POLICY_VERSION = "stage2_node_auction_expectation_v3_effective_theme"
 
 # 唯一权重真相源。日内主动性 + 后续传播合计 40%。
 WEIGHTS = {
@@ -55,8 +55,8 @@ WEIGHTS = {
 # 这些是首版人工先验，不是后验命中率。后续只能用隔离的 T+1 标签整体校准，
 # 禁止为某只股票或某个日期加特判。
 MODEL_STRENGTH = {
-    MODEL_SHENJIAN: 92.0,
-    MODEL_HEFU: 82.0,
+    MODEL_ATTACK: 92.0,
+    MODEL_DEFENSE: 82.0,
     MODEL_NONE: 58.0,
     None: 0.0,
 }
@@ -248,15 +248,15 @@ def candidate_role_strength(
         else 0
     )
     if not current_member:
-        return 35.0, "沿途题材关联，但节点日当前主题不在该板块", sector_max, sector_max_count
+        return 35.0, "沿途题材关联，但节点日有效自然题材不在该板块", sector_max, sector_max_count
     if candidate_height == sector_max and sector_max_count == 1:
-        return 100.0, "节点日当前主题成员，且为唯一最高身位", sector_max, sector_max_count
+        return 100.0, "节点日有效自然题材成员，且为唯一最高身位", sector_max, sector_max_count
     if candidate_height == sector_max:
-        return 84.0, "节点日当前主题成员，且并列最高身位", sector_max, sector_max_count
+        return 84.0, "节点日有效自然题材成员，且并列最高身位", sector_max, sector_max_count
     gap = max(1, int(sector_max or candidate_height) - candidate_height)
     return (
         max(30.0, 70.0 - 15.0 * gap),
-        f"节点日当前主题成员，但低于板块最高身位{gap}板",
+        f"节点日有效自然题材成员，但低于板块最高身位{gap}板",
         sector_max,
         sector_max_count,
     )
@@ -275,22 +275,36 @@ def theme_profile(
     candidate_height = int(candidate["height"])
     candidate_ts = as_int(raw_candidate.get("first_limit_ts"))
     identities = context["identities"]
-    current_members = [
+    raw_current_members = [
         row
         for row in context["stocks"]
         if str(row.get("theme") or "").strip() == theme
     ]
+    effective_members = [
+        row
+        for row in context["stocks"]
+        if str(
+            identities[code_of(row.get("code"))].get("effective_theme")
+            or row.get("theme")
+            or ""
+        ).strip() == theme
+    ]
     natural_members = [
         row
-        for row in current_members
+        for row in effective_members
         if not identities[code_of(row.get("code"))]["announcement"]
     ]
     announcement_members = [
         row
-        for row in current_members
+        for row in effective_members
         if identities[code_of(row.get("code"))]["announcement"]
     ]
-    current_member = str(raw_candidate.get("theme") or "").strip() == theme
+    candidate_effective_theme = str(
+        identities[candidate_code].get("effective_theme")
+        or raw_candidate.get("theme")
+        or ""
+    ).strip()
+    current_member = candidate_effective_theme == theme
     timeline = timeline_groups(
         natural_members,
         candidate_code,
@@ -300,7 +314,7 @@ def theme_profile(
     reason = reason_by_theme.get(theme) or {}
     reason_rank = as_int(reason.get("rank"))
     reported_count = as_int(reason.get("reported_count")) or 0
-    market_count = reported_count if reason_rank is not None else len(current_members)
+    market_count = reported_count if reason_rank is not None else len(raw_current_members)
     rank_score = rank_strength(reason_rank)
     breadth_score = breadth_strength(market_count)
     market_score = rounded(0.80 * rank_score + 0.20 * breadth_score)
@@ -319,25 +333,32 @@ def theme_profile(
 
     return {
         "theme": theme,
-        "current_primary_theme": current_member,
+        "current_theme_matched": current_member,
+        "raw_current_theme_matched": (
+            str(raw_candidate.get("theme") or "").strip() == theme
+        ),
         "route_path_steps": theme_evidence.get("path_steps") or [],
         "limit_reason_rank": reason_rank,
         "limit_reason_reported_count": reported_count,
-        "pool_current_theme_count": len(current_members),
+        "pool_current_theme_count": len(raw_current_members),
+        "pool_effective_natural_theme_count": len(effective_members),
         "reported_count_matches_pool": (
-            reported_count == len(current_members)
+            reported_count == len(raw_current_members)
             if reason_rank is not None
             else None
         ),
         "market_score_parts": {
             "rank_strength": rounded(rank_score),
             "breadth_strength": rounded(breadth_score),
-            "ranking_contract": "榜单原始位置占80%，数量只作20%强度，不按数量重排",
+            "ranking_contract": (
+                "开盘啦市场动向榜名次占80%，题材家数占20%；"
+                "同期客户端画面确认排序为家数、题材成交额"
+            ),
         },
         "candidate_role": role,
         "candidate_role_parts": {
-            "natural_current_theme_members": len(natural_members),
-            "announcement_current_theme_members": len(announcement_members),
+            "natural_effective_theme_members": len(natural_members),
+            "announcement_effective_theme_members": len(announcement_members),
             "sector_natural_max_height": sector_max,
             "sector_natural_max_height_count": sector_max_count,
         },
@@ -400,9 +421,11 @@ def score_candidate(
     natural_layer_count: int,
 ) -> dict[str, Any]:
     theme_evidence_rows = list(candidate.get("route_theme_evidence") or [])
-    if not theme_evidence_rows and candidate.get("theme"):
+    if not theme_evidence_rows and (
+        candidate.get("effective_theme") or candidate.get("theme")
+    ):
         theme_evidence_rows = [{
-            "theme": candidate["theme"],
+            "theme": candidate.get("effective_theme") or candidate["theme"],
             "path_steps": [],
         }]
     profiles = [
@@ -422,7 +445,7 @@ def score_candidate(
         profiles,
         key=lambda row: (
             row["theme_thesis_score"],
-            bool(row["current_primary_theme"]),
+            bool(row["current_theme_matched"]),
             -(row["limit_reason_rank"] or 10**6),
         ),
     )
@@ -440,14 +463,14 @@ def score_candidate(
     candidate_evidence_score = rounded(sum(contributions.values()))
 
     warnings = []
-    if not best["current_primary_theme"]:
-        warnings.append("命中来自沿途theme，不能把节点日当前板块核心地位直接记到该股")
+    if not best["current_theme_matched"]:
+        warnings.append("命中来自沿途题材，但不等于节点日有效自然题材，板块核心地位不直接记入")
     if best["limit_reason_rank"] is None:
         warnings.append("评分题材未进入节点日涨停原因榜，市场题材分受限")
     if best["timeline"]["missing_time_count"]:
         warnings.append("部分自然队友缺首封时间，时序分证据不完整")
     if best["reported_count_matches_pool"] is False:
-        warnings.append("榜单报告数量与当日主theme涨停池数量不一致，保留原始排名并提示人工复核")
+        warnings.append("开盘啦榜单报告家数与本地主theme池数量不同；排名仍以开盘啦报告家数为准")
     if best["timeline"]["timed_peer_count"] == 0:
         warnings.append("没有可比较的自然队友首封，不能证明板块传播")
 
@@ -463,6 +486,7 @@ def score_candidate(
         "scoring_theme": best["theme"],
         "day_performance": {
             "current_theme": candidate.get("theme"),
+            "effective_theme": candidate.get("effective_theme"),
             "open_pct": candidate.get("open_pct"),
             "first_seal": first_seal,
             "turnover_pct": candidate.get("turnover_pct"),
@@ -484,7 +508,7 @@ def score_candidate(
         "alternative_theme_scores": [
             {
                 "theme": row["theme"],
-                "current_primary_theme": row["current_primary_theme"],
+                "current_theme_matched": row["current_theme_matched"],
                 "limit_reason_rank": row["limit_reason_rank"],
                 "theme_thesis_score": row["theme_thesis_score"],
                 "component_scores": row["component_scores"],
@@ -600,7 +624,7 @@ def score_day(day: str) -> dict[str, Any]:
             "model_strength": MODEL_STRENGTH,
             "height_strength": HEIGHT_STRENGTH,
             "layer_component": {"model": 0.60, "height": 0.40},
-            "market_component": {"original_rank": 0.80, "reported_count": 0.20},
+            "market_component": {"market_direction_rank": 0.80, "reported_count": 0.20},
             "initiative_component": {"absolute_first_seal": 0.55, "relative_order": 0.45},
             "propagation_component": {"after_share": 0.45, "after_count": 0.55},
             "same_ladder_pk": {
@@ -630,8 +654,8 @@ def score_day(day: str) -> dict[str, Any]:
             ),
             "theme": node["theme_contract"],
             "theme_selection": (
-                "沿途每个真实theme分别形成完整评分论点，选总分最高者；"
-                "禁止从不同theme各摘一个最高分拼接"
+                "公告身份只按节点日最高板theme判定；节点日为自然票时，"
+                "二板起沿途每个真实theme分别形成完整论点，禁止跨theme拼分"
             ),
             "announcement": node["announcement_contract"],
             "one_price": "一字形态本身直接权重为0；只能通过首封时刻、板块地位和此后传播体现",
@@ -647,7 +671,7 @@ def score_day(day: str) -> dict[str, Any]:
 def markdown_score(result: dict[str, Any]) -> str:
     stage1 = result["stage1"]
     lines = [
-        f"## {result['date']}｜{stage1.get('target_height') or '无'}板｜{stage1.get('model') or '无'}",
+        f"## {result['date']}｜{stage1.get('target_height') or '无'}板｜模型={stage1.get('model') or '无'}",
         "",
         result.get("score_semantics") or result.get("status") or "",
     ]
@@ -655,7 +679,7 @@ def markdown_score(result: dict[str, Any]) -> str:
     if candidates:
         lines.extend([
             "",
-            "|名次|候选|竞价预期E|自身证据|预期PK|评分题材|榜位|当前主theme|首封|自然队友 前/同秒/后|市场|板块地位|主动性|传播|",
+            "|名次|候选|竞价预期E|自身证据|预期PK|评分题材|榜位|节点日theme|首封|自然队友 前/同秒/后|市场|板块地位|主动性|传播|",
             "|---:|---|---:|---:|---:|---|---:|:---:|---|---:|---:|---:|---:|---:|",
         ])
         for row in candidates:
@@ -667,7 +691,7 @@ def markdown_score(result: dict[str, Any]) -> str:
                 f"{row['same_ladder_pk']['candidate_evidence_score']:.2f}|"
                 f"{row['same_ladder_pk']['expected_pk_score'] if row['same_ladder_pk']['expected_pk_score'] is not None else '—'}|"
                 f"{row['scoring_theme']}|{evidence['limit_reason_rank'] or '榜外'}|"
-                f"{'是' if evidence['current_primary_theme'] else '否'}|"
+                f"{'是' if evidence['current_theme_matched'] else '否'}|"
                 f"{row['day_performance']['first_seal'] or '缺失'}|"
                 f"{timeline['before_count']}/{timeline['same_second_count']}/{timeline['after_count']}|"
                 f"{scores['market_theme_position']:.2f}|{scores['candidate_theme_role']:.2f}|"

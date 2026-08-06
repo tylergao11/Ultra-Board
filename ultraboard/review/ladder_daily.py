@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """涨停梯队逐日变化（高度梯队 + 昨→今变化）。
 
-组织轴 = 连板高度与日间变化，不是主属性归纳。
-主属性 = 开盘啦 theme（禁止用 concepts 概念堆）；公告板只认主属性。
+组织轴 = 连板高度与日间变化。theme 只取开盘啦梯队列表字段，禁止读取个股详情
+属性或 concepts 概念堆。公告／自然身份只看最高板日 theme；断板时看前一交易日。
 
 产物 data/kaipanla/ladder_daily/：
   by_day/YYYY-MM-DD.md|.json
@@ -19,18 +19,14 @@ from pathlib import Path
 from typing import Any
 
 from ultraboard.kaipanla.announcements import (
-    ANNOUNCEMENT_TYPES,
     is_announcement_theme,
     resolve_identity,
 )
+from ultraboard.kaipanla.price_shapes import is_one_price
 
 ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = ROOT / "data" / "kaipanla" / "raw"
 OUT_DIR = ROOT / "data" / "kaipanla" / "ladder_daily"
-
-# 兼容本模块原有字段名；分类真相只来自 announcements.py。
-GONGGAO_THEMES = ANNOUNCEMENT_TYPES
-
 
 def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8-sig"))
@@ -63,62 +59,19 @@ def is_gonggao_theme(theme: str) -> bool:
     return is_announcement_theme(theme)
 
 
-def format_theme(theme: str) -> str:
-    """主属性展示。公告板强制带 [公告板]。"""
+def format_theme(theme: str, *, announcement: bool | None = None) -> str:
+    """梯队 theme 展示；个股应显式传入同日公告身份。"""
     t = (theme or "").strip() or "（无）"
-    if is_gonggao_theme(t):
+    if announcement is None:
+        announcement = is_gonggao_theme(t)
+    if announcement:
         return f"{t}[公告板]"
     return t
 
 
 def is_yizi_board(s: dict) -> bool:
-    """一字板判定。
-
-    优先 OHLC（东财日K挂到票上）：开≈高≈低≈收。
-    否则回退开盘啦：首封 09:25 且 raw[17]≈0。
-    """
-    if s.get("is_yizi") is True:
-        return True
-    # 真值：有开高低收
-    try:
-        o, h, low, c = s.get("open"), s.get("high"), s.get("low"), s.get("price") or s.get("close")
-        if None not in (o, h, low, c):
-            o, h, low, c = float(o), float(h), float(low), float(c)
-            tol = 0.015
-            if abs(o - c) <= tol and abs(h - c) <= tol and abs(low - c) <= tol:
-                return True
-            # 有完整 OHLC 且不是一字，直接否
-            return False
-    except (TypeError, ValueError):
-        pass
-
-    ts = s.get("first_limit_ts")
-    if ts is None:
-        raw0 = s.get("raw")
-        if isinstance(raw0, list) and len(raw0) > 4:
-            ts = raw0[4]
-    if ts is None:
-        return False
-    try:
-        from datetime import datetime
-        t = datetime.fromtimestamp(int(ts))
-    except (TypeError, ValueError, OSError):
-        return False
-    if not (t.hour == 9 and t.minute == 25):
-        return False
-    raw = s.get("raw")
-    open_amp = s.get("open_amp")
-    if open_amp is None and isinstance(raw, list) and len(raw) > 17:
-        try:
-            open_amp = float(raw[17] or 0)
-        except (TypeError, ValueError):
-            open_amp = None
-    if open_amp is None:
-        return False
-    try:
-        return float(open_amp) <= 0.01
-    except (TypeError, ValueError):
-        return False
+    """真一字只认同一价格口径的开盘价=最高价=最低价。"""
+    return is_one_price(s)
 
 
 def _amount_from_stock(s: dict) -> float | None:
@@ -148,31 +101,26 @@ def _stock_brief(
     s: dict,
     *,
     day: str,
-    previous: dict[str, Any] | None,
 ) -> dict[str, Any]:
     theme = s.get("theme") or ""
     identity = resolve_identity(
-        code=s.get("code"),
         day=day,
         theme=theme,
-        boards=int(s.get("boards") or 0),
-        previous=previous,
+        sector_code=s.get("sector_code"),
     )
     gonggao = bool(identity["is_announcement"])
+    effective_theme = str(identity.get("effective_theme") or theme)
     raw = s.get("raw") if isinstance(s.get("raw"), list) else None
-    open_amp = None
-    if raw is not None and len(raw) > 17:
-        try:
-            open_amp = float(raw[17] or 0)
-        except (TypeError, ValueError):
-            open_amp = None
     brief = {
         "code": s["code"],
         "name": s["name"],
         "boards": s["boards"],
         "boards_desc": s.get("boards_desc") or "",
-        "theme": theme,  # 开盘啦主属性原文
-        "theme_display": format_theme(theme),
+        "theme": theme,  # 开盘啦梯队列表 theme 原文
+        "effective_theme": effective_theme,
+        "natural_theme": identity.get("natural_theme"),
+        "natural_theme_date": identity.get("natural_theme_date"),
+        "theme_display": format_theme(effective_theme, announcement=gonggao),
         "is_gonggao": gonggao,
         "announcement_type": identity["announcement_type"],
         "announcement_origin_date": identity["announcement_origin_date"],
@@ -180,7 +128,6 @@ def _stock_brief(
         "sector_code": s.get("sector_code") or "",
         "is_fanbao": bool(s.get("is_fanbao")),
         "first_limit_ts": s.get("first_limit_ts"),
-        "open_amp": open_amp,  # raw[17]，用于一字回退判定
         "open": s.get("open"),
         "high": s.get("high"),
         "low": s.get("low"),
@@ -189,10 +136,6 @@ def _stock_brief(
         "open_pct": s.get("open_pct"),
         "raw": raw,
     }
-    if gonggao and not is_gonggao_theme(theme):
-        brief["theme_display"] = (
-            f"{brief['theme_display']}[公告起源={identity['announcement_type']}]"
-        )
     brief["is_yizi"] = is_yizi_board(brief)
     # 仅公告板挂成交额（材料只展示这类）
     if gonggao:
@@ -206,14 +149,11 @@ def _pool_map(
     zt: dict,
     *,
     day: str,
-    previous_pool: dict[str, dict] | None,
 ) -> dict[str, dict]:
-    previous_pool = previous_pool or {}
     return {
         s["code"]: _stock_brief(
             s,
             day=day,
-            previous=previous_pool.get(s["code"]),
         )
         for s in zt.get("stocks") or []
     }
@@ -227,7 +167,7 @@ def is_first_board_layer(s: dict) -> bool:
 
 
 def _theme_first_board_counts(pool: dict[str, dict]) -> dict[str, int]:
-    """统计自然首板发酵；公告起源票不计入题材宽度。"""
+    """按首板当日 theme 统计市场宽度；不改变任何股票的同日身份。"""
     counts: dict[str, int] = defaultdict(int)
     for s in pool.values():
         if not is_first_board_layer(s) or s.get("is_gonggao"):
@@ -246,7 +186,7 @@ def _ladder_ge2(
         if int(s["boards"]) < 2:
             continue
         item = dict(s)
-        th = item.get("theme") or "（无）"
+        th = item.get("effective_theme") or item.get("theme") or "（无）"
         item["theme_first_board_count"] = int(theme_fb.get(th, 0))
         buckets[str(s["boards"])].append(item)
     for k in buckets:
@@ -341,7 +281,7 @@ def _dist(counts: dict | None) -> str:
 
 def _gonggao_amount_suffix(s: dict) -> str:
     """仅公告板附加 额=x.xx亿。"""
-    if not (s.get("is_gonggao") or is_gonggao_theme(s.get("theme") or "")):
+    if not s.get("is_gonggao"):
         return ""
     amt = s.get("amount")
     if amt is None:
@@ -351,8 +291,8 @@ def _gonggao_amount_suffix(s: dict) -> str:
 
 
 def _theme_fb_suffix(s: dict) -> str:
-    """非公告板：挂主属性对应首板发酵数（含反包板）。"""
-    if s.get("is_gonggao") or is_gonggao_theme(s.get("theme") or ""):
+    """非公告板：挂梯队 theme 对应首板发酵数（含反包板）。"""
+    if s.get("is_gonggao"):
         return ""
     n = s.get("theme_first_board_count")
     if n is None:
@@ -389,22 +329,28 @@ def _yizi_tag(s: dict) -> str:
 
 
 def _stock_token(s: dict, *, boards: int | None = None) -> str:
-    th = format_theme(s.get("theme") or "")
-    return f"{s['name']}({s['code']}){_yizi_tag(s)} 主属性={th}{_stock_attrs_suffix(s)}"
+    th = format_theme(
+        s.get("theme") or "",
+        announcement=bool(s.get("is_gonggao")),
+    )
+    return f"{s['name']}({s['code']}){_yizi_tag(s)} theme={th}{_stock_attrs_suffix(s)}"
 
 
 def _change_token(s: dict, kind: str) -> str:
-    th = format_theme(s.get("theme") or "")
+    th = format_theme(
+        s.get("theme") or "",
+        announcement=bool(s.get("is_gonggao")),
+    )
     suf = _stock_attrs_suffix(s)
     yz = _yizi_tag(s)
     if kind == "promoted":
-        return f"{s['name']}({s['code']}){yz} {s.get('prev_boards')}→{s['boards']} 主属性={th}{suf}"
+        return f"{s['name']}({s['code']}){yz} {s.get('prev_boards')}→{s['boards']} theme={th}{suf}"
     if kind == "broken":
-        return f"{s['name']}({s['code']}){yz} 断前{s.get('boards_before_break')} 主属性={th}{suf}"
+        return f"{s['name']}({s['code']}){yz} 断前{s.get('boards_before_break')} theme={th}{suf}"
     if kind == "new":
-        return f"{s['name']}({s['code']}){yz} {s['boards']}板 主属性={th}{suf}"
+        return f"{s['name']}({s['code']}){yz} {s['boards']}板 theme={th}{suf}"
     if kind == "continued":
-        return f"{s['name']}({s['code']}){yz} {s['boards']}板 主属性={th}{suf}"
+        return f"{s['name']}({s['code']}){yz} {s['boards']}板 theme={th}{suf}"
     return _stock_token(s)
 
 
@@ -519,7 +465,7 @@ def _resolve_follow_anchor(
     code: str,
     theme_hint: str,
 ) -> tuple[dict | None, str]:
-    """同主属性≥2高标。优先当前 theme，再试 theme_hint。"""
+    """同 theme 的≥2高标。优先当前 theme，再试 theme_hint。"""
     self = pool.get(code) or {}
     theme_now = self.get("theme") or theme_hint or ""
 
@@ -548,7 +494,7 @@ def _follow_step(
     theme_hint: str,
 ) -> dict[str, Any]:
     s = pool[code]
-    theme = s.get("theme") or theme_hint or ""
+    theme = s.get("effective_theme") or s.get("theme") or theme_hint or ""
     anchor, src = _resolve_follow_anchor(pool, code, theme_hint)
     height = int(anchor["boards"]) if anchor else None
     theme_fb = _theme_first_board_counts(pool)
@@ -563,16 +509,20 @@ def _follow_step(
         "self_boards": s["boards"],
         "is_fanbao": bool(s.get("is_fanbao")),
         "is_yizi": yizi,
+        "is_gonggao": bool(s.get("is_gonggao")),
         "identity": identity,
         "identity_text": "+".join(identity),
         "theme": theme,
-        "theme_display": format_theme(theme),
+        "theme_display": format_theme(
+            theme,
+            announcement=bool(s.get("is_gonggao")),
+        ),
         "follow_anchor": _anchor_brief(anchor),
         "follow_ladder_height": height,
         "follow_ladder_label": f"{height}板梯队" if height else None,
         "theme_first_board_count": fb_n,
         "peer_source": src,
-        "amount": s.get("amount") if is_gonggao_theme(theme) else None,
+        "amount": s.get("amount") if s.get("is_gonggao") else None,
     }
 
 
@@ -614,7 +564,7 @@ def build_fanbao_follow_events(
             if not (s_fb.get("is_fanbao") or int(s_fb["boards"]) == 1):
                 continue
 
-            theme_before = s_last.get("theme") or ""
+            theme_before = s_last.get("effective_theme") or s_last.get("theme") or ""
             steps: list[dict] = [
                 _follow_step(d_fb, "fanbao", p_fb, code, theme_before)
             ]
@@ -631,16 +581,15 @@ def build_fanbao_follow_events(
                 )
                 j += 1
 
-            theme_now = steps[0].get("theme") or theme_before
-            gonggao = is_gonggao_theme(theme_before) or is_gonggao_theme(theme_now)
+            first = steps[0]
+            last = steps[-1]
+            gonggao = bool(first.get("is_gonggao"))
             amount = None
             if gonggao:
                 amount = steps[0].get("amount")
                 if amount is None:
                     amount = s_last.get("amount")
 
-            first = steps[0]
-            last = steps[-1]
             events.append({
                 "code": code,
                 "name": s_last["name"],
@@ -650,7 +599,10 @@ def build_fanbao_follow_events(
                 "end_date": last["date"],
                 "boards_before_break": s_last["boards"],
                 "theme_before_break": theme_before,
-                "theme_before_display": format_theme(theme_before),
+                "theme_before_display": format_theme(
+                    theme_before,
+                    announcement=bool(s_last.get("is_gonggao")),
+                ),
                 "is_gonggao": gonggao,
                 "amount": amount,
                 "self_on_fanbao_day": {
@@ -698,7 +650,8 @@ def _format_follow_hit_line(e: dict, day: str) -> str:
     th = format_theme(
         (today or {}).get("theme")
         or e.get("theme_before_break")
-        or ""
+        or "",
+        announcement=bool((today or {}).get("is_gonggao")),
     )
     if today and today.get("follow_ladder_label") and today.get("follow_anchor"):
         a = today["follow_anchor"]
@@ -706,7 +659,7 @@ def _format_follow_hit_line(e: dict, day: str) -> str:
             f"{a['name']}({a['code']}){a['boards']}板→{today['follow_ladder_label']}"
         )
     else:
-        follow = (today or {}).get("follow_ladder_label") or "无同主属性≥2高标"
+        follow = (today or {}).get("follow_ladder_label") or "无同theme≥2高标"
 
     role = "反包日" if (today or {}).get("role") == "fanbao" else "再连板"
     self_b = (today or {}).get("self_boards", "?")
@@ -719,7 +672,7 @@ def _format_follow_hit_line(e: dict, day: str) -> str:
     yz = "[一字]" if (today or {}).get("is_yizi") else ""
     return (
         f"{e['name']}({e['code']}){yz}: 断前{e['boards_before_break']} | "
-        f"今日={role}/自身{self_b}板/{ident} | 主属性={th}{amt} | "
+        f"今日={role}/自身{self_b}板/{ident} | theme={th}{amt} | "
         f"跟={follow} | 首板×{fb_n} | 路径:{path}"
     )
 
@@ -735,7 +688,6 @@ def build_one_day(
     pool = _pool_map(
         zt,
         day=day,
-        previous_pool=prev_pool,
     )
 
     board_counts = zt.get("board_counts") or {}
@@ -753,10 +705,10 @@ def build_one_day(
     change = _diff_days(
         prev_date, prev_pool, day, pool, prev_board_counts, board_counts
     )
-    # 变化名单挂上当日主属性首板发酵数（非公告板展示用）
+    # 变化名单挂上当日 theme 首板发酵数（非公告板展示用）
     for key in ("promoted", "continued", "new_limit", "broken"):
         for item in change.get(key) or []:
-            th = item.get("theme") or "（无）"
+            th = item.get("effective_theme") or item.get("theme") or "（无）"
             item["theme_first_board_count"] = int(theme_fb.get(th, 0))
 
     doc = {
@@ -770,9 +722,11 @@ def build_one_day(
             "first_board_count": first_board_count,
             "ge2_count": ge2_count,
             "theme_first_board_counts": theme_fb,
-            "theme_field": "开盘啦 theme（主属性）",
+            "theme_field": "开盘啦梯队列表 theme（公告身份看最高板日）",
             "first_board_note": "含反包板（日内首板层）",
-            "gonggao_themes": sorted(GONGGAO_THEMES),
+            "announcement_taxonomy": (
+                "data/kaipanla/announcement_taxonomy.json"
+            ),
             "fanbao_count": zt.get(
                 "fanbao_count", sum(1 for s in pool.values() if s["is_fanbao"])
             ),
@@ -805,10 +759,13 @@ def build_ladder_daily(
     prev_date = None
     prev_pool = None
     prev_board_counts = None
-
     for day in days:
         doc, pool, board_counts = build_one_day(
-            day, prev_date, prev_pool, prev_board_counts, raw_dir=raw_dir
+            day,
+            prev_date,
+            prev_pool,
+            prev_board_counts,
+            raw_dir=raw_dir,
         )
         day_docs[day] = doc
         pools[day] = pool
@@ -852,14 +809,15 @@ def build_ladder_daily(
         "last_date": days[-1] if days else None,
         "total_break_ge2": total_broken,
         "fanbao_follow_events": len(fb_events),
-        "gonggao_themes": sorted(GONGGAO_THEMES),
+        "announcement_taxonomy": "data/kaipanla/announcement_taxonomy.json",
         "days": index_days,
     }
     _write_json(out_dir / "index.json", summary)
 
     idx = [
         f"# 梯队逐日  {days[0] if days else '-'}→{days[-1] if days else '-'}  n={len(days)}",
-        f"断板(≥2)={total_broken}  反包跟随={len(fb_events)}  公告板主属性={','.join(sorted(GONGGAO_THEMES))}",
+        f"断板(≥2)={total_broken}  反包跟随={len(fb_events)}  "
+        "公告分类=data/kaipanla/announcement_taxonomy.json",
         "打开 by_day/日期.md 看：今梯队 + 变化",
         "",
         "date | 涨停 | ≥2 | 首板 | 最高 | 晋级 | 断板 | 文件",
@@ -886,14 +844,17 @@ python -m ultraboard.review.ladder_daily
 4. 截至本日已经发生的反包跟随（有则）
 
 组织轴是高度与变化，不是题材分堆。
-主属性=开盘啦 theme；只有实控人变更/并购重组/股权转让属于公告起源。
-举牌、业绩增长、ST摘帽、订单和再融资均按自然属性；公告起源在连续连板段中保持。
-节点取证时，个股可用题材只限当前连板路径上从 1 板到 N 板逐日真实出现过的 theme。
+theme=开盘啦梯队列表字段。自然票从二板起保留沿途 theme；公告身份只看最高板日
+theme，断板时看断板前一交易日，不继承更早身份。公告型 theme 统一读取
+`announcement_taxonomy.json`，包括 ST摘帽、举牌、定期报告、订单、再融资、
+重组等。节点日前一交易日最高自然梯队断板才触发节点；若该票前一日 theme 为
+公告，则其断板不触发自然节点。
 `concepts` / `raw[12]` 是静态概念堆，不得用于题材关系、高低位映射或发酵匹配。
-公告起源票另附 额=x.xx亿（raw[11]），且不计入自然题材发酵；自然票附
-首板×N=该主属性日内自然首板发酵数（含反包板）。
+当日公告票另附 额=x.xx亿（raw[11]），且不计入当日自然题材发酵；自然票附
+首板×N=按首板当日原始 theme 统计的市场宽度（含反包板），只作市场证据，
+不改变个股的梯队 theme。
 日文件中的跟随链严格截断在该日；完整后续路径只保存在隐藏隔离区，盲测禁止访问。
-一字板：首封09:25 且 raw[17]≈0 → 票名后标 [一字]。
+真一字：同一价格口径下开盘价=最高价=最低价 → 票名后标 [一字]。
 不列首板个股名单。
 
 ## 顶层文件契约

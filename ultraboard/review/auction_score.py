@@ -10,6 +10,9 @@
 冻结层内的实际 PK 形成 A。缺数据就明确缺失，不补默认分。全市场竞价一字
 情况按当前约定不接入。
 
+候选行动日日 K 若不在涨停池主源中，默认由腾讯接口补取、失败时走新浪兜底，
+并写入统一未复权缓存；补取后仍不完整则整次任务失败，不输出删样本结果。
+
 用法：
 
   python -m ultraboard.review.auction_score review 2025-12-22 --fetch-missing
@@ -36,7 +39,11 @@ from ultraboard.kaipanla.ladder_evidence import (
     ohlc_map,
     raw_pool,
 )
-from ultraboard.kaipanla.ohlc import fetch_kline_range
+from ultraboard.kaipanla.ohlc import (
+    NoTradingBarError,
+    fetch_kline_range,
+    merge_cached_bars,
+)
 from ultraboard.limits import limit_ratio, limit_up_price
 from ultraboard.review.candidate_initial_score import WEIGHTS, score_day
 from ultraboard.review.ladder_selector import load_labels
@@ -146,12 +153,19 @@ def known_bar(code: str, day: str) -> tuple[dict[str, Any], str | None]:
     cached = cached_ohlc(code, day)
     if cached.get("open_pct") is not None:
         return cached, "ohlc_cache/unadjusted"
+    if cached.get("trading_status") == "not_traded":
+        return cached, "ohlc_cache/confirmed_no_bar"
     return {}, None
 
 
 def fetch_bar(code: str, day: str) -> tuple[dict[str, Any], str | None]:
     try:
         bar = fetch_kline_range(code, day, day).get(day) or {}
+    except NoTradingBarError:
+        return {
+            "trading_status": "not_traded",
+            "evidence": "tencent_and_sina_empty",
+        }, "tencent+sina/confirmed_no_bar"
     except Exception as exc:
         return {}, f"{type(exc).__name__}: {exc}"
     return bar, None
@@ -203,6 +217,7 @@ def resolve_bars(
     if not fetch_missing or not missing:
         return resolved
 
+    fetched_by_code: dict[str, dict[str, dict[str, Any]]] = {}
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         futures = {
             pool.submit(fetch_bar, code, day): (code, day)
@@ -210,11 +225,27 @@ def resolve_bars(
         }
         for future in as_completed(futures):
             key = futures[future]
-            bar, error = future.result()
+            bar, detail = future.result()
             if bar:
-                resolved[key] = (bar, "tencent_kline/sina_fallback")
+                resolved[key] = (
+                    bar,
+                    detail or "tencent_kline/sina_fallback",
+                )
+                fetched_by_code.setdefault(key[0], {})[key[1]] = bar
             else:
-                resolved[key] = ({}, error or "历史日K为空")
+                resolved[key] = ({}, detail or "历史日K为空")
+
+    # 网络补数必须落入统一未复权缓存；后续离线运行读取同一真相，不重复缺失。
+    for code, bars in sorted(fetched_by_code.items()):
+        merge_cached_bars(code, bars)
+
+    unresolved = [key for key in missing if not resolved.get(key, ({}, None))[0]]
+    if unresolved:
+        details = ", ".join(
+            f"{code}@{day}: {resolved.get((code, day), ({}, '未解析'))[1]}"
+            for code, day in unresolved
+        )
+        raise RuntimeError(f"候选行动日日K补取后仍不完整：{details}")
     return resolved
 
 
@@ -290,6 +321,7 @@ def build_candidate_result(
             "same_ladder_pk": None,
             "information_cutoff": f"{item['action_date']} 09:25",
             "source": source,
+            "trading_status": bar.get("trading_status") or "traded",
         },
         "surprise_delta": None,
         "surprise_label": "无法计算",
@@ -379,7 +411,7 @@ def apply_actual_layer_pk(rows: list[dict[str, Any]]) -> None:
 def review_days(
     days: list[str],
     *,
-    fetch_missing: bool = False,
+    fetch_missing: bool = True,
     workers: int = 8,
 ) -> list[dict[str, Any]]:
     prepared, expectations = prepare_rows(days)
@@ -635,7 +667,7 @@ def backtest(
     label_path: Path,
     *,
     include_review: bool = False,
-    fetch_missing: bool = False,
+    fetch_missing: bool = True,
     workers: int = 8,
 ) -> dict[str, Any]:
     labels = load_labels(label_path, include_review=include_review)
@@ -793,7 +825,7 @@ def backtest(
 def markdown_review(pack: dict[str, Any]) -> str:
     lines = [
         f"## {pack['node_date']} → {pack['action_date']}｜"
-        f"{pack['stage1']['target_height']}板｜{pack['stage1']['model']}",
+        f"{pack['stage1']['target_height']}板｜模型={pack['stage1']['model']}",
         "",
         "|节点名次|候选|预期E|预期PK|实际A|开盘证据|实际PK|PKΔ|Δ|判断|竞价涨幅|次日晋级*|",
         "|---:|---|---:|---:|---:|---:|---:|---:|---:|---|---:|:---:|",
@@ -835,7 +867,7 @@ def markdown_review(pack: dict[str, Any]) -> str:
         )
     lines.extend([
         "",
-        "\* 次日晋级是收盘后验，只用于校准，不参与 E、A 或 Δ。",
+        "\\* 次日晋级是收盘后验，只用于校准，不参与 E、A 或 Δ。",
         "V2 的 A 由竞价开盘强度与同梯队实际PK组成；单票梯队不计算PK。"
         "竞价量与全市场竞价一字暂未接入。",
     ])
@@ -940,7 +972,12 @@ def main(argv: list[str] | None = None) -> int:
         help="显式读取T+1竞价和收盘结果",
     )
     review_parser.add_argument("dates", nargs="+", help="节点日 YYYY-MM-DD")
-    review_parser.add_argument("--fetch-missing", action="store_true")
+    review_parser.add_argument(
+        "--fetch-missing",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="自动补取并缓存候选行动日日K；用 --no-fetch-missing 进入显式离线模式",
+    )
     review_parser.add_argument("--workers", type=int, default=8)
     review_parser.add_argument(
         "--format", choices=("markdown", "json"), default="markdown"
@@ -952,7 +989,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     backtest_parser.add_argument("--labels", type=Path, required=True)
     backtest_parser.add_argument("--include-review", action="store_true")
-    backtest_parser.add_argument("--fetch-missing", action="store_true")
+    backtest_parser.add_argument(
+        "--fetch-missing",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="自动补取并缓存候选行动日日K；用 --no-fetch-missing 进入显式离线模式",
+    )
     backtest_parser.add_argument("--workers", type=int, default=8)
     backtest_parser.add_argument(
         "--format", choices=("markdown", "json"), default="markdown"

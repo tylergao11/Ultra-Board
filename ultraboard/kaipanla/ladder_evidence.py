@@ -13,13 +13,14 @@
 
 真相源边界：
 - 梯队、公告属性、题材发酵：ladder_daily/by_day/{date}.json
-- 个股题材路径：raw/{date}/zt_pool.json 中该股从 1 板到节点日的逐日 theme
+- 个股梯队列表 theme：raw/{date}/zt_pool.json 的 theme
+- 连板沿途题材：同一真相源中该股从 2 板到节点日的逐日 theme，仅作辅助证据
 - 开盘、首封、换手、日内 OHLC：raw/{date}/zt_pool.json + ohlc.json
 - 市场破板率：raw/{date}/expression.json 的 info[7]
 
 明确不读取人工判断、自动选层、最终高度、未来收益等裁判字段，也不替人工宣布
 “应有竞价”或“资金已迁移”。concepts/raw[12] 是静态概念堆，永不参与题材匹配；
-只有股票在当时连板路径上真实出现过的 theme 才是可用关系。当前原始池没有末封时间，
+公告／自然身份只看最高板日的梯队 theme；断板时看断板前一交易日，不继承更早身份。当前原始池没有末封时间，
 地域也暂不纳入；接口绝不拿首封冒充末封，也不硬编码地域或名称关联。
 """
 from __future__ import annotations
@@ -33,11 +34,8 @@ from pathlib import Path
 from typing import Any
 
 from . import ohlc
-from .announcements import (
-    announcement_type_of,
-    is_announcement_theme,
-    override_for,
-)
+from .announcements import resolve_identity
+from .price_shapes import is_one_price
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -80,10 +78,6 @@ def code_of(value: Any) -> str:
     return str(value or "").zfill(6)
 
 
-def is_chinext(code: str) -> bool:
-    return code.startswith("30")
-
-
 def seal_time(ts: Any) -> str | None:
     seconds = as_int(ts)
     if not seconds:
@@ -112,19 +106,6 @@ def nominal_limit_pct(code: str, name: str | None) -> float:
     if code.startswith(("300", "301", "688", "689")):
         return 20.0
     return 10.0
-
-
-def near_equal(a: Any, b: Any) -> bool:
-    left, right = as_float(a), as_float(b)
-    if left is None or right is None:
-        return False
-    return abs(left - right) <= max(1e-6, abs(right) * 1e-6)
-
-
-def is_one_price(stock: dict[str, Any]) -> bool:
-    return near_equal(stock.get("open"), stock.get("high")) and near_equal(
-        stock.get("high"), stock.get("low")
-    )
 
 
 def raw_pool(day: str) -> dict[str, Any]:
@@ -162,11 +143,79 @@ def cached_ohlc(code: str, day: str) -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def available_trade_days() -> tuple[str, ...]:
-    return tuple(sorted(
+    days = tuple(sorted(
         path.name
         for path in RAW_DIR.iterdir()
         if path.is_dir() and (path / "zt_pool.json").exists()
     ))
+    for day in days:
+        day_dir = RAW_DIR / day
+        if not (day_dir / "_DONE").exists() or (day_dir / "_MISMATCH").exists():
+            raise RuntimeError(f"{day} 主源未完成，禁止进入梯队算法")
+        pool = load_json(day_dir / "zt_pool.json")
+        audit = pool.get("source_reconciliation") or {}
+        stocks = pool.get("stocks") or []
+        if (
+            int(audit.get("included_count", -1)) != len(stocks)
+            or int(audit.get("source_row_count", -1))
+            != len(stocks) + int(audit.get("excluded_bse_count") or 0)
+        ):
+            raise RuntimeError(f"{day} 主源行未完成同源对账，禁止进入梯队算法")
+        ohlc_path = day_dir / "ohlc.json"
+        if not ohlc_path.exists():
+            raise RuntimeError(f"{day} 缺少 OHLC，禁止进入梯队算法")
+        ohlc_doc = load_json(ohlc_path)
+        if not isinstance(ohlc_doc, dict) or str(ohlc_doc.get("date") or "") != day:
+            raise RuntimeError(f"{day} OHLC 日期不一致，禁止进入梯队算法")
+        raw_ohlc_stocks = ohlc_doc.get("stocks")
+        if not isinstance(raw_ohlc_stocks, dict):
+            raise RuntimeError(f"{day} OHLC 股票表格式错误，禁止进入梯队算法")
+        if as_int(ohlc_doc.get("count")) != len(raw_ohlc_stocks):
+            raise RuntimeError(f"{day} OHLC 行数未对账，禁止进入梯队算法")
+
+        expected_ohlc_codes = {
+            code_of(stock.get("code"))
+            for stock in stocks
+            if (as_int(stock.get("boards")) or 0) >= 2
+        }
+        normalized_ohlc: dict[str, dict[str, Any]] = {}
+        for raw_code, bar in raw_ohlc_stocks.items():
+            code = code_of(raw_code)
+            if code in normalized_ohlc:
+                raise RuntimeError(f"{day} OHLC 代码重复，禁止进入梯队算法: {code}")
+            if not isinstance(bar, dict):
+                raise RuntimeError(f"{day} OHLC 行格式错误，禁止进入梯队算法: {code}")
+            normalized_ohlc[code] = bar
+        actual_ohlc_codes = set(normalized_ohlc)
+        if actual_ohlc_codes != expected_ohlc_codes:
+            missing = sorted(expected_ohlc_codes - actual_ohlc_codes)
+            extra = sorted(actual_ohlc_codes - expected_ohlc_codes)
+            raise RuntimeError(
+                f"{day} OHLC 代码未与二板以上梯队对齐，禁止进入梯队算法: "
+                f"missing={missing[:10]} extra={extra[:10]}"
+            )
+        missing_file_fields = [
+            f"{code}:{key}"
+            for code, bar in normalized_ohlc.items()
+            for key in ("open", "close", "high", "low", "prev_close")
+            if as_float(bar.get(key)) is None
+        ]
+        if missing_file_fields:
+            raise RuntimeError(
+                f"{day} OHLC 文件字段不完整，禁止进入梯队算法: "
+                f"{missing_file_fields[:10]}"
+            )
+        missing_ohlc = [
+            code_of(stock.get("code"))
+            for stock in stocks
+            if (as_int(stock.get("boards")) or 0) >= 2
+            and any(stock.get(key) is None for key in ("open", "high", "low", "prev_close"))
+        ]
+        if missing_ohlc:
+            raise RuntimeError(
+                f"{day} 二板以上 OHLC 不完整，禁止进入梯队算法: {missing_ohlc[:10]}"
+            )
+    return days
 
 
 def next_trade_day(day: str) -> str | None:
@@ -174,26 +223,32 @@ def next_trade_day(day: str) -> str | None:
 
 
 def stock_theme_path(end_day: str, code: str, end_height: int) -> dict[str, Any]:
-    """回溯个股当前连板路径上真实出现过的开盘啦 theme。
+    """回溯个股当前连板路径从二板起真实出现过的开盘啦 theme。
 
-    只接受相邻交易日中板高严格按 1 递增到 end_height 的记录。
-    一旦断日、缺票或板高不连续就停止，不向静态 concepts 补属性。
+    板高必须严格按 2 递增到 ``end_height``。个股停牌时会跨过没有该票的
+    市场交易日；若遇到该票但板高不连续则立即停止，不向静态 concepts 补属性。
+    该路径只作沿途证据，不用于公告／自然身份分类。
     """
     expected_height = end_height
     reverse_steps: list[dict[str, Any]] = []
     days = [item for item in available_trade_days() if item <= end_day]
     for route_day in reversed(days):
-        if expected_height < 1:
+        if expected_height < 2:
             break
         stock = raw_stock_map(route_day).get(code)
+        if stock is None:
+            # 连板数以开盘啦为权威；当前仍为 N 板时，中间缺票只能是该股未交易
+            # 或源数据未覆盖，不能把市场交易日误当成该股断板日。
+            continue
         actual_height = as_int((stock or {}).get("boards"))
-        if stock is None or actual_height != expected_height:
+        if actual_height != expected_height:
             break
         reverse_steps.append(
             {
                 "date": route_day,
                 "height": actual_height,
                 "theme": str(stock.get("theme") or ""),
+                "sector_code": str(stock.get("sector_code") or ""),
             }
         )
         expected_height -= 1
@@ -205,7 +260,7 @@ def stock_theme_path(end_day: str, code: str, end_height: int) -> dict[str, Any]
         if theme and theme not in themes:
             themes.append(theme)
     return {
-        "complete": expected_height == 0,
+        "complete": expected_height < 2,
         "themes": themes,
         "steps": steps,
     }
@@ -278,6 +333,7 @@ def market_snapshot(
     expression = load_json(RAW_DIR / day / "expression.json").get("info") or []
     market = by_day.get("market") or {}
     themes = market.get("theme_first_board_counts") or {}
+    ranking = limit_reason_ranking or []
     return {
         "limit_count": as_int(pool.get("count")),
         "max_board": as_int(pool.get("max_board")),
@@ -296,82 +352,104 @@ def market_snapshot(
             {"theme": theme, "first_board_count": as_int(count)}
             for theme, count in sorted(themes.items(), key=lambda item: (-item[1], item[0]))
         ],
-        "limit_reason_ranking": limit_reason_ranking or [],
-        "limit_reason_top_two": (limit_reason_ranking or [])[:2],
+        "limit_reason_ranking": ranking,
+        "limit_reason_top_two": ranking[:2],
+        "limit_reason_ranking_contract": (
+            "开盘啦市场动向口径：按涨停家数降序；家数相同按题材成交额降序；"
+            "再以接口源位置稳定排序"
+        ),
     }
 
 
-def limit_reason_ranking(day: str) -> list[dict[str, Any]]:
-    """读取开盘啦同日涨停原因发酵榜原始次序。
+def stock_amount(stock: dict[str, Any]) -> float:
+    """读取 DailyLimitPerformance 的当日成交额。"""
+    for key in ("amount", "成交额"):
+        value = as_float(stock.get(key))
+        if value is not None:
+            return value
+    raw = stock.get("raw")
+    if isinstance(raw, list) and len(raw) > 11:
+        return as_float(raw[11]) or 0.0
+    return 0.0
 
-    ``GetYTFP_BKHX`` 支持历史 ``Date``。其前二已与最新交易日
-    ``GetPlateInfo_w38`` 的涨停原因榜逐项核对一致。排名以接口原始位置为准，
-    不按数量重排，不把被过滤题材后的下一名递补进前二。
+
+def limit_reason_ranking(day: str) -> list[dict[str, Any]]:
+    """构造进攻模型使用的节点日市场动向排名。
+
+    历史 ``GetYTFP_BKHX`` 的数组位置不是客户端最终展示顺序。2026-03-31 与
+    2025-11-10 的同期客户端画面共同确认：先按涨停家数，再按题材成交额；
+    最高连板不参与这一级排名，最后仅用接口源位置保证完全相同时稳定。
     """
     path = RAW_DIR / day / "sector_ladder.json"
     if not path.exists():
         return []
+    stocks = raw_pool(day).get("stocks") or []
+    stocks_by_theme: dict[str, list[dict[str, Any]]] = {}
+    for stock in stocks:
+        # 市场动向榜与个股都使用梯队列表 theme，维持同一真相源。
+        theme = str(stock.get("theme") or "").strip()
+        if theme:
+            stocks_by_theme.setdefault(theme, []).append(stock)
+
     ranking = []
     seen = set()
-    for rank, sector in enumerate(load_json(path).get("sectors") or [], 1):
+    for fallback_position, sector in enumerate(
+        load_json(path).get("sectors") or [],
+        1,
+    ):
         theme = str(sector.get("name") or "").strip()
         if not theme or theme in seen:
             continue
         seen.add(theme)
+        members = stocks_by_theme.get(theme) or []
+        source_position = as_int(sector.get("source_position")) or fallback_position
         ranking.append({
-            "rank": rank,
             "theme": theme,
             "reported_count": as_int(sector.get("count")) or 0,
+            "turnover_amount": sum(stock_amount(stock) for stock in members),
+            "highest_board": max(
+                (as_int(stock.get("boards")) or 0 for stock in members),
+                default=0,
+            ),
+            "source_position": source_position,
         })
+    ranking.sort(key=lambda row: (
+        -row["reported_count"],
+        -row["turnover_amount"],
+        row["source_position"],
+    ))
+    for rank, row in enumerate(ranking, 1):
+        row["rank"] = rank
+        row["display_color"] = (
+            "red" if rank == 1 else "orange" if rank == 2 else "neutral"
+        )
     return ranking
 
 
 def announcement_identity(
     day: str,
     stock: dict[str, Any],
-    meta: dict[str, Any],
-    route: dict[str, Any],
 ) -> dict[str, Any]:
-    """按覆盖表、连续路径和同日派生元数据解析公告起源。"""
-    override = override_for(stock.get("code"), day)
-    if override:
-        return {
-            "announcement": True,
-            "announcement_type": override["announcement_type"],
-            "announcement_origin_date": override["start_date"],
-            "announcement_source": "manual_event_override",
-        }
-
-    for step in route.get("steps") or []:
-        announcement_type = announcement_type_of(step.get("theme"))
-        if announcement_type:
-            return {
-                "announcement": True,
-                "announcement_type": announcement_type,
-                "announcement_origin_date": step.get("date"),
-                "announcement_source": "limit_path_primary_theme",
-            }
-
-    if meta.get("is_gonggao"):
-        return {
-            "announcement": True,
-            "announcement_type": meta.get("announcement_type"),
-            "announcement_origin_date": meta.get("announcement_origin_date"),
-            "announcement_source": meta.get("announcement_source")
-            or "daily_snapshot",
-        }
-
+    """只按所判断交易日当天梯队 theme 解析公告／自然身份。"""
+    identity = resolve_identity(
+        day=day,
+        theme=stock.get("theme"),
+        sector_code=stock.get("sector_code"),
+    )
     return {
-        "announcement": False,
-        "announcement_type": None,
-        "announcement_origin_date": None,
-        "announcement_source": None,
+        "announcement": identity["is_announcement"],
+        "announcement_type": identity["announcement_type"],
+        "announcement_origin_date": identity["announcement_origin_date"],
+        "announcement_source": identity["announcement_source"],
+        "natural_theme": identity["natural_theme"],
+        "natural_theme_date": identity["natural_theme_date"],
+        "effective_theme": identity["effective_theme"],
     }
 
 
 @lru_cache(maxsize=None)
 def daily_stock_context(day: str) -> dict[str, Any]:
-    """构造同日全涨停池的连续路径与公告身份。
+    """构造同日全涨停池的沿途证据与当日身份。
 
     节点证据和第二阶段初始评分共用这一入口，避免两处分别解释公告身份。
     返回内容严格截止 ``day``，不寻找下一交易日。
@@ -397,8 +475,6 @@ def daily_stock_context(day: str) -> dict[str, Any]:
         code_of(row.get("code")): announcement_identity(
             day,
             row,
-            meta_map.get(code_of(row.get("code"))) or {},
-            routes[code_of(row.get("code"))],
         )
         for row in stocks
     }
@@ -424,7 +500,6 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
         row
         for row in all_stocks
         if (as_int(row.get("boards")) or 0) >= 2
-        and not is_chinext(code_of(row.get("code")))
     ]
     theme_counts = (by_day.get("market") or {}).get("theme_first_board_counts") or {}
     all_routes = context["routes"]
@@ -438,13 +513,18 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
     reason_by_theme = {
         item["theme"]: item for item in reason_ranking
     }
-
-    distinct_themes = {
-        theme
-        for route in routes.values()
-        for theme in route["themes"]
-        if theme and not is_announcement_theme(theme)
+    top_two_themes = {
+        item["theme"] for item in reason_ranking[:2]
     }
+
+    distinct_themes: set[str] = set()
+    for row in ladder_rows:
+        code = code_of(row.get("code"))
+        if identities[code]["announcement"]:
+            continue
+        distinct_themes.update(
+            str(theme) for theme in routes[code]["themes"] if theme
+        )
     histories = {
         theme: theme_history(day, theme, history_days) for theme in distinct_themes
     }
@@ -456,19 +536,15 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
         height_counts[height] = height_counts.get(height, 0) + 1
         if identities[code]["announcement"]:
             continue
-        route = routes[code]
-        for theme in route["themes"]:
-            if is_announcement_theme(theme):
-                continue
-            route_theme_heights.setdefault(theme, []).append(height)
+        for route_theme in routes[code]["themes"]:
+            if route_theme:
+                route_theme_heights.setdefault(str(route_theme), []).append(height)
 
     change = by_day.get("change") or {}
     previous_day = change.get("prev_date")
     broken = []
     for row in change.get("broken") or []:
         code = code_of(row.get("code"))
-        if is_chinext(code):
-            continue
         height = as_int(row.get("boards_before_break") or row.get("boards")) or 0
         theme = str(row.get("theme") or "")
         route = (
@@ -477,6 +553,11 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
             else {"complete": False, "themes": [], "steps": []}
         )
         route_themes = route["themes"] or ([theme] if theme else [])
+        identity = resolve_identity(
+            day=previous_day or day,
+            theme=theme,
+            sector_code=row.get("sector_code"),
+        )
         broken.append(
             {
                 "code": code,
@@ -486,9 +567,9 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
                 "theme_path": route["steps"],
                 "theme_path_complete": route["complete"],
                 "route_themes": route_themes,
-                "announcement": bool(row.get("is_gonggao")),
-                "announcement_type": row.get("announcement_type"),
-                "announcement_origin_date": row.get("announcement_origin_date"),
+                "announcement": identity["is_announcement"],
+                "announcement_type": identity["announcement_type"],
+                "announcement_origin_date": identity["announcement_origin_date"],
             }
         )
     broken.sort(key=lambda row: (-(row["height"] or 0), row["code"]))
@@ -503,9 +584,15 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
         identity = identities[code]
         candidate_ts = raw.get("first_limit_ts")
         route_theme_evidence = []
-        for route_theme in route["themes"]:
-            if is_announcement_theme(route_theme):
-                continue
+        attack_route_themes = (
+            [str(item) for item in route["themes"] if item]
+            if not identity["announcement"]
+            else []
+        )
+        if not attack_route_themes and not identity["announcement"]:
+            natural_theme = str(identity.get("natural_theme") or "")
+            attack_route_themes = [natural_theme] if natural_theme else []
+        for route_theme in attack_route_themes:
             peer_heights = route_theme_heights.get(route_theme) or []
             history = histories.get(route_theme) or []
             same_height_theme_count = sum(item == height for item in peer_heights)
@@ -518,7 +605,8 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
                         for step in route["steps"]
                         if step["theme"] == route_theme
                     ],
-                    "current_theme": route_theme == theme,
+                    "current_theme": route_theme == identity.get("effective_theme"),
+                    "raw_current_theme": route_theme == theme,
                     "first_board_count": as_int(theme_counts.get(route_theme)) or 0,
                     "limit_reason_rank": (
                         reason_item["rank"] if reason_item else None
@@ -526,6 +614,7 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
                     "limit_reason_reported_count": (
                         reason_item["reported_count"] if reason_item else 0
                     ),
+                    "limit_reason_top_two_matched": route_theme in top_two_themes,
                     "ferment_history": history,
                     "ferment_history_supported_days": sum(
                         item["first_board_count"] > 0 for item in history
@@ -546,11 +635,12 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
                     ),
                 }
             )
+        effective_theme = str(identity.get("effective_theme") or theme)
         current_theme_evidence = next(
             (
                 item
                 for item in route_theme_evidence
-                if item["theme"] == theme
+                if item["theme"] == effective_theme
             ),
             {
                 "first_board_count": 0,
@@ -559,7 +649,7 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
                 "ferment_history": [],
                 "ferment_history_supported_days": 0,
                 "ferment_history_count_sum": 0,
-                "timing": theme_timing(all_stocks, theme, candidate_ts),
+                "timing": theme_timing(all_stocks, effective_theme, candidate_ts),
                 "height_core": True,
                 "same_height_count": 1,
                 "same_height_share": 1 / height_counts[height],
@@ -572,6 +662,9 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
                 "code": code,
                 "name": raw.get("name"),
                 "theme": theme,
+                "effective_theme": effective_theme,
+                "natural_theme": identity.get("natural_theme"),
+                "natural_theme_date": identity.get("natural_theme_date"),
                 "theme_path": route["steps"],
                 "theme_path_complete": route["complete"],
                 "route_themes": route["themes"],
@@ -586,7 +679,6 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
                 "first_seal": seal_time(candidate_ts),
                 "final_seal": None,
                 "turnover_pct": as_float(raw.get("turnover_rate")),
-                "limit_open": near_equal(raw.get("open"), raw.get("price")),
                 "one_price": is_one_price(raw),
                 "theme_first_board_count": current_theme_evidence[
                     "first_board_count"
@@ -672,13 +764,17 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
         "broken_previous_ladder": broken,
         "shared_theme_path_layout_candidates": layout_candidates,
         "theme_contract": (
-            "仅使用个股当前连板路径上逐日真实 theme；"
-            "神剑只与节点日涨停原因发酵榜原始前二相交；"
+            "公告或自然身份只取节点日最高板当天的梯队theme；"
+            "节点日为自然票时，进攻模型使用二板起的真实沿途theme与市场动向榜前二相交；"
+            "节点日为公告票时不参与自然进攻候选；榜单按涨停家数、"
+            "题材成交额依次排序，最高连板不参与榜单排序；"
             "concepts/raw[12]、主营联想和静态全属性不参与匹配"
         ),
         "announcement_contract": (
-            "仅并购重组、实控人变更、股权转让三类；"
-            "公告起源沿连续连板段保持且不计入自然题材发酵"
+            "公告型theme统一读取announcement_taxonomy.json，包含ST摘帽、举牌、"
+            "定期报告、订单、再融资、重组等；"
+            "公告或自然身份只看最高板日梯队theme，不追溯、不继承；"
+            "前一日最高自然梯队断板才触发节点，前一日为公告属性的票断板不触发自然节点"
         ),
         "ferment_history_days": history_days,
         "candidates": candidates,
@@ -722,7 +818,7 @@ def pk_evidence(
         node = node_evidence(day, history_days=history_days)
         candidates = [row for row in node["candidates"] if row["height"] == height]
         if not candidates:
-            raise ValueError(f"{day} 不存在排除创业板后的 {height} 板候选")
+            raise ValueError(f"{day} 不存在 {height} 板候选")
         action_day = next_trade_day(day)
         if not action_day:
             raise ValueError(f"{day} 没有可用的下一交易日")
@@ -927,7 +1023,8 @@ def markdown_node(pack: dict[str, Any]) -> str:
         f"公告合同：{pack['announcement_contract']}",
         "",
         "涨停原因发酵前二：" + "、".join(
-            f"{row['rank']}.{row['theme']}({row['reported_count']})"
+            f"{row['rank']}.{row['theme']}({row['reported_count']}家/"
+            f"{row['turnover_amount'] / 1e8:.2f}亿)"
             for row in market["limit_reason_top_two"]
         ),
         "题材首板计数（非排名真相）：" + "、".join(
@@ -936,7 +1033,7 @@ def markdown_node(pack: dict[str, Any]) -> str:
         ),
         "",
     ])
-    lines.append("|板|股票|沿途theme|公告起源|开盘|首封|换手|一字|沿途theme 封前/首板/原因榜名次/历史|当日theme地位|")
+    lines.append("|板|股票|沿途theme|当日公告|开盘|首封|换手|一字|当日自然theme 封前/首板/原因榜名次/历史|当日theme地位|")
     lines.append("|---:|---|---|:---:|---:|---:|---:|:---:|---:|---|")
     for row in pack["candidates"]:
         route_support = []
@@ -987,7 +1084,7 @@ def markdown_pk(pack: dict[str, Any]) -> str:
         if row["node_close"]["announcement"] or auction["action_announcement"]:
             risks.append("公告")
         if auction["zero_ferment_near_limit_risk"]:
-            risks.append("沿途theme零发酵近板")
+            risks.append("当日theme零发酵近板")
         if intraday["opened_at_limit"]:
             risks.append("涨停开勿排队")
         theme_text = format_theme_path(row["node_close"]["theme_path"])

@@ -86,20 +86,8 @@ def amount_of(stock: dict[str, Any]) -> int | None:
     return integer(raw[11])
 
 
-def open_amplitude(stock: dict[str, Any]) -> float | None:
-    raw = stock.get("raw")
-    if not isinstance(raw, list) or len(raw) <= 17:
-        return None
-    return number(raw[17])
-
-
 def one_price_of(stock: dict[str, Any]) -> bool:
-    if is_one_price(stock):
-        return True
-    amplitude = open_amplitude(stock)
-    return seal_time(stock.get("first_limit_ts")) == "09:25:00" and (
-        amplitude is not None and amplitude <= 0.01
-    )
+    return is_one_price(stock)
 
 
 def bar_for(code: str, day: str) -> dict[str, Any]:
@@ -156,6 +144,8 @@ def daily_market_payload(day: str) -> dict[str, Any]:
                 "rank": int(row["rank"]),
                 "theme": str(row["theme"]),
                 "count": int(row.get("reported_count") or 0),
+                "turnoverAmount": int(row.get("turnover_amount") or 0),
+                "displayColor": str(row.get("display_color") or "neutral"),
             }
             for row in ranking
         ],
@@ -183,6 +173,8 @@ def daily_stock_rows(day: str) -> list[dict[str, Any]]:
             "boards": int(stock.get("boards") or 0),
             "boardsDesc": str(stock.get("boards_desc") or ""),
             "theme": str(stock.get("theme") or ""),
+            "effectiveTheme": str(identity.get("effective_theme") or ""),
+            "naturalTheme": identity.get("natural_theme"),
             "routeThemes": [str(item) for item in route.get("themes") or []],
             "themePath": [
                 {
@@ -305,7 +297,10 @@ def build_review_snapshot(day: str) -> dict[str, Any]:
     if not detector["is_break_node"]:
         raise ValueError(f"{day} 不是自然最高梯队全部断板节点")
     score = score_day(day)
-    target_height = int(score["stage1"]["target_height"])
+    target_value = score["stage1"].get("target_height")
+    if target_value is None:
+        raise ValueError(f"{day} 第一阶段没有自然目标梯队，不发布复盘快照")
+    target_height = int(target_value)
     context = daily_stock_context(day)
     market = daily_market_payload(day)
     reason_by_theme = {
@@ -315,7 +310,6 @@ def build_review_snapshot(day: str) -> dict[str, Any]:
         stock
         for stock in context["stocks"]
         if int(stock.get("boards") or 0) == target_height
-        and not code_of(stock.get("code")).startswith("30")
     ]
     scored_by_code = {
         row["code"]: row for row in score.get("candidates") or []
@@ -341,6 +335,7 @@ def build_review_snapshot(day: str) -> dict[str, Any]:
             "scoreRank": integer((scored or {}).get("rank")),
             "grade": (scored or {}).get("expectation_grade"),
             "theme": str(stock.get("theme") or ""),
+            "effectiveTheme": str(identity.get("effective_theme") or ""),
             "routeThemes": [
                 {
                     "name": str(theme),
@@ -406,7 +401,6 @@ def build_review_snapshot(day: str) -> dict[str, Any]:
         members = [
             stock for stock in context["stocks"]
             if int(stock.get("boards") or 0) == height
-            and not code_of(stock.get("code")).startswith("30")
         ]
         if not members:
             continue
@@ -428,6 +422,7 @@ def build_review_snapshot(day: str) -> dict[str, Any]:
         "dataCutoff": f"{day} 收盘",
         "publishedAt": china_iso(day, "18:00:00"),
         "targetHeight": target_height,
+        "buyModel": str(score["stage1"].get("model") or "无"),
         "market": {
             "limitCount": market["limitCount"],
             "firstBoardCount": market["firstBoardCount"],
@@ -451,6 +446,11 @@ def build_review_snapshot(day: str) -> dict[str, Any]:
 
 
 def action_status(row: dict[str, Any]) -> tuple[str, str]:
+    trading_status = str(
+        (row.get("actual_auction") or {}).get("trading_status") or ""
+    )
+    if trading_status == "not_traded":
+        return "停牌/无交易", "行动日经双行情源确认无日K，不属于数据缺失"
     actual = as_float((row.get("actual_auction") or {}).get("score"))
     delta = as_float(row.get("surprise_delta"))
     normalized = as_float((row.get("actual_auction") or {}).get("normalized_open"))
@@ -471,7 +471,7 @@ def build_auction_snapshot(day: str) -> dict[str, Any] | None:
     action_day = next_trade_day(day)
     if not action_day:
         return None
-    pack = review_days([day], fetch_missing=False)[0]
+    pack = review_days([day], fetch_missing=True)[0]
     rows = pack.get("candidates") or []
     covered = [
         row for row in rows
@@ -574,10 +574,15 @@ def build_seed_sql() -> tuple[str, dict[str, int]]:
     days = list(available_trade_days())
     bundles = [build_daily_bundle(day) for day in days]
     nodes = list_break_nodes()
-    reviews = [build_review_snapshot(row["date"]) for row in nodes]
+    selected_nodes = [
+        row
+        for row in nodes
+        if score_day(row["date"])["stage1"].get("target_height") is not None
+    ]
+    reviews = [build_review_snapshot(row["date"]) for row in selected_nodes]
     auctions = [
         snapshot
-        for row in nodes
+        for row in selected_nodes
         if (snapshot := build_auction_snapshot(row["date"])) is not None
     ]
     statements = [
@@ -676,6 +681,11 @@ def publish(base_url: str, token: str) -> dict[str, int]:
     headers = {"Authorization": f"Bearer {token}"}
     days = list(available_trade_days())
     nodes = list_break_nodes()
+    selected_nodes = [
+        node
+        for node in nodes
+        if score_day(node["date"])["stage1"].get("target_height") is not None
+    ]
     for day in days:
         response = requests.post(
             f"{base}/api/ingest/daily",
@@ -684,7 +694,7 @@ def publish(base_url: str, token: str) -> dict[str, int]:
             timeout=60,
         )
         response.raise_for_status()
-    for node in nodes:
+    for node in selected_nodes:
         review = build_review_snapshot(node["date"])
         response = requests.post(
             f"{base}/api/ingest/review",
@@ -704,7 +714,7 @@ def publish(base_url: str, token: str) -> dict[str, int]:
             response.raise_for_status()
     return {
         "trading_days": len(days),
-        "break_nodes": len(nodes),
+        "break_nodes": len(selected_nodes),
     }
 
 

@@ -3,7 +3,8 @@
 
 节点是集合事件，不是“最高层任意一只断板”：上一交易日最高自然梯队 H 中，
 只要仍有一只股票在当日晋级 H+1，当日就不是节点；只有该层全部断板，才形成
-节点。公告起源票和创业板票不进入自然最高梯队集合。
+节点。上一交易日最高板 theme 为公告的票不进入自然最高梯队集合；身份不追溯、
+不继承。不同涨跌幅制度按真实连板数统一参与。
 
 该模块只读取截至节点日的客观交易日数据，不读取人工标签或后续结果。
 """
@@ -15,7 +16,6 @@ from ultraboard.kaipanla.ladder_evidence import (
     available_trade_days,
     code_of,
     daily_stock_context,
-    is_chinext,
 )
 
 
@@ -43,7 +43,6 @@ def detect_break_node(day: str) -> dict[str, Any]:
         height = int(stock.get("boards") or 0)
         if (
             height >= 2
-            and not is_chinext(code)
             and not previous["identities"][code]["announcement"]
         ):
             previous_natural.append({

@@ -2,10 +2,10 @@
 """开盘啦历史回灌：2025-10-01 ~ 今天。
 
 落盘到 data/kaipanla/raw/YYYY-MM-DD/：
-  sentiment.json      情绪统计（含 SJZT，用作校验基准）
+  sentiment.json      情绪统计（含 SJZT，作为跨接口范围参考）
   expression.json     梯队情绪指标
-  zt_pool.json        完整涨停池，每只票带真实连板数
-  sector_ladder.json  涨停原因发酵榜原序 + 板块核心梯队 + 反包板标记
+  zt_pool.json        完整涨停池，每只票带真实连板数与梯队列表 theme
+  sector_ladder.json  涨停原因题材家数 + 源序 + 板块核心梯队 + 反包板标记
   _DONE               仅当校验全过才写
 
 已验证的接口语义（勿凭猜测改动）：
@@ -14,20 +14,23 @@
     PidType 5   = 「5 板及以上」，组内可能出现 6/7/8 板
     真实连板数 = 个股数组下标 15，绝不能用 PidType 顶替
     下标 18 = 描述文字，如 "7连板" / "3天2板"，仅作备注
+    下标 5/19 = 梯队列表 theme 及其代码，是本项目唯一 theme 真相
   GetYTFP_BKHX
     历史参数是 Date（大写），不是 Day
-    List 原始顺序是节点日发酵榜顺序；不得按 Count 重新排序
+    List 保留历史接口源字段；市场动向排名使用开盘啦家数与涨停池题材成交额
     TD 按 TDType 分组：0=反包板 1=首板 2=2连板 … 9=打开高度标注
 
 硬规则：
-  - 不含 ST（对齐 SJZT，不含 STZT）
+  - 不含 ST；北交所源行进入排除审计账，不进入打板体系
   - 不含北交所（920/83x 等）
   - 反包板按真实连板数归队，不抬高梯队；仅打 is_fanbao 标记
-  - 涨停池总数必须等于 SJZT，少一只都不写 _DONE
+  - DailyLimitPerformance 每一条源记录都必须被解析或明确记入排除账
+  - SJZT 含本项目排除的北交所等口径，只作跨接口参考，不再冒充同口径总数
   - 网络/接口失败 → 立即停；数据校验不符 → 记录并继续，收尾统一报告
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from datetime import date, datetime, timedelta
@@ -49,7 +52,13 @@ END = date.today()
 # 接口只提供 1~5；5 表示「5 板及以上」
 MAX_PID = 5
 
-REQUIRED = ("sentiment.json", "expression.json", "zt_pool.json", "sector_ladder.json", "_DONE")
+REQUIRED = (
+    "sentiment.json",
+    "expression.json",
+    "zt_pool.json",
+    "sector_ladder.json",
+    "_DONE",
+)
 
 
 def is_bse(code: str) -> bool:
@@ -78,7 +87,21 @@ def day_dir(d: date) -> Path:
 
 def day_complete(d: date) -> bool:
     dd = day_dir(d)
-    return all((dd / name).exists() for name in REQUIRED)
+    if not all((dd / name).exists() for name in REQUIRED):
+        return False
+    if (dd / "_MISMATCH").exists():
+        return False
+    try:
+        pool = _read_json(dd / "zt_pool.json", {})
+        audit = pool.get("source_reconciliation") or {}
+        return (
+            int(audit.get("source_row_count"))
+            == int(audit.get("included_count"))
+            + int(audit.get("excluded_bse_count"))
+            and int(audit.get("included_count")) == len(pool.get("stocks") or [])
+        )
+    except (TypeError, ValueError):
+        return False
 
 
 def _read_json(path: Path, default):
@@ -106,10 +129,15 @@ def has_real_data(dd: Path) -> bool:
 # --------------------------------------------------------------------------- parse
 
 def _rows(body: dict) -> list:
-    info = body.get("info") or []
-    if not info:
-        return []
-    return info[0] if isinstance(info[0], list) else []
+    """读取成功响应的股票数组；响应结构异常必须显式失败。"""
+    if "info" not in body:
+        raise ValueError("响应缺少 info")
+    info = body["info"]
+    if not isinstance(info, list) or not info:
+        raise ValueError(f"响应 info 结构异常: {type(info).__name__}")
+    if not isinstance(info[0], list):
+        raise ValueError("响应 info[0] 不是股票数组")
+    return info[0]
 
 
 def parse_stock(row: list, pid: int) -> tuple[dict[str, Any] | None, str | None]:
@@ -120,9 +148,12 @@ def parse_stock(row: list, pid: int) -> tuple[dict[str, Any] | None, str | None]
     code, name = str(row[0]).strip(), str(row[1]).strip()
     if not code or not name:
         return None, f"代码或名称为空: {row[:3]}"
-    if is_bse(code):
-        return None, None  # 北交所跳过，不算错误
-
+    theme = str(row[5] or "").strip()
+    sector_code = str(row[19] or "").strip()
+    if not theme:
+        return None, f"{code} {name} 梯队列表 theme(raw[5]) 为空"
+    if not sector_code:
+        return None, f"{code} {name} 梯队列表 theme 代码(raw[19]) 为空"
     boards = row[15]
     if not isinstance(boards, int) or boards < 1:
         return None, f"{code} {name} 连板数非法: {boards!r}"
@@ -138,11 +169,13 @@ def parse_stock(row: list, pid: int) -> tuple[dict[str, Any] | None, str | None]
         "name": name,
         "boards": boards,               # 真实连板数，唯一权威
         "boards_desc": row[18] or "",   # "7连板" / "3天2板"，仅备注
-        "theme": row[5] or "",  # 开盘啦主属性（业务唯一题材口径）
+        # 梯队列表字段是算法唯一 theme；不读取个股详情页属性。
+        "theme": theme,
+        "sector_code": sector_code,
         # row[12] 为接口概念堆，仅随 raw 保留供源数据审计，禁止进入题材匹配
-        "sector_code": str(row[19] or ""),
         "first_limit_ts": row[4],
         "turnover_rate": row[14],
+        "amount": row[11],
         "price": row[21],
         "limit_pct": row[22],
         "is_fanbao": False,             # 由 sector_ladder 回填
@@ -153,7 +186,7 @@ def parse_stock(row: list, pid: int) -> tuple[dict[str, Any] | None, str | None]
 def parse_sector_ladder(body: dict) -> tuple[dict, set[str]]:
     """解析板块梯队，返回 (doc, 反包板代码集合)。"""
     sectors, fanbao_codes, fanbao_all = [], set(), []
-    for s in body.get("List") or []:
+    for source_position, s in enumerate(body.get("List") or [], 1):
         tiers: dict[str, list] = {}
         fanbao, height_marks = [], []
         for g in s.get("TD") or []:
@@ -179,6 +212,12 @@ def parse_sector_ladder(body: dict) -> tuple[dict, set[str]]:
             "code": s.get("ZSCode"),
             "name": s.get("ZSName"),
             "count": s.get("Count"),
+            "source_position": source_position,
+            "source_meta": {
+                key: value
+                for key, value in s.items()
+                if key != "TD"
+            },
             "tiers": tiers,          # 键为连板高度
             "fanbao": fanbao,        # 反包板，不计入 tiers
             "height_marks": height_marks,
@@ -188,35 +227,66 @@ def parse_sector_ladder(body: dict) -> tuple[dict, set[str]]:
 
 # --------------------------------------------------------------------------- pull
 
-def pull_pool(client: KaipanlaClient, day: str) -> tuple[list, str | None]:
-    pool, seen = [], set()
+def pull_pool(
+    client: KaipanlaClient,
+    day: str,
+) -> tuple[list, dict[str, Any], str | None]:
+    pool, excluded_bse, seen = [], [], set()
+    source_counts: dict[str, int] = {}
     for pid in range(1, MAX_PID + 1):
         print(f"    pid={pid}/{MAX_PID} ...", flush=True)
         body = client.daily_limit_performance(day, pid)
         if not ok(body):
-            return [], f"拉 pid={pid} 失败: {body.get('errmsg') or body.get('errcode')}"
-        for row in _rows(body):
+            return [], {}, f"拉 pid={pid} 失败: {body.get('errmsg') or body.get('errcode')}"
+        try:
+            rows = _rows(body)
+        except ValueError as exc:
+            return [], {}, f"pid={pid} 响应结构异常: {exc}"
+        source_counts[str(pid)] = len(rows)
+        for row in rows:
             item, err = parse_stock(row, pid)
-            if item is None and err is None:
-                continue  # 北交所
             if err:
-                return [], err
+                return [], {}, err
+            if item is None:
+                return [], {}, "涨停源记录未被解析且没有错误原因"
             if item["code"] in seen:
-                return [], f"重复代码 {item['code']}（跨 pid 出现）"
+                return [], {}, f"重复代码 {item['code']}（跨 pid 出现）"
             seen.add(item["code"])
-            pool.append(item)
+            if is_bse(item["code"]):
+                excluded_bse.append(item)
+            else:
+                pool.append(item)
     pool.sort(key=lambda x: (-x["boards"], x["code"]))
-    return pool, None
+    excluded_bse.sort(key=lambda x: (-x["boards"], x["code"]))
+    audit = {
+        "source_row_count": sum(source_counts.values()),
+        "source_counts_by_pid": source_counts,
+        "included_count": len(pool),
+        "excluded_bse_count": len(excluded_bse),
+        "excluded_bse": excluded_bse,
+    }
+    return pool, audit, None
 
 
-def validate(pool: list, sentiment: dict) -> str | None:
+def validate(pool: list, source_audit: dict[str, Any], sentiment: dict) -> str | None:
+    """校验同一来源内的完整记账；跨接口 SJZT 只作范围参考。"""
     info = sentiment.get("info") or {}
     try:
         sjzt = int(info.get("SJZT"))
     except Exception:
         return "sentiment 缺少 SJZT"
-    if len(pool) != sjzt:
-        return f"涨停池 {len(pool)} 只 ≠ SJZT {sjzt}，差 {sjzt - len(pool)} 只"
+    source_count = int(source_audit.get("source_row_count") or 0)
+    excluded_count = int(source_audit.get("excluded_bse_count") or 0)
+    source_counts = source_audit.get("source_counts_by_pid") or {}
+    if set(source_counts) != {str(pid) for pid in range(1, MAX_PID + 1)}:
+        return "DailyLimitPerformance 未完整记录 1~5 档响应"
+    if len(pool) + excluded_count != source_count:
+        return (
+            f"DailyLimitPerformance 源行 {source_count}，"
+            f"目标市场 {len(pool)} + 明确排除 {excluded_count} 无法对账"
+        )
+    if sjzt > 0 and source_count == 0:
+        return "SJZT 非零但 DailyLimitPerformance 五档合计为零"
     return None
 
 
@@ -247,7 +317,7 @@ def pull_one_day(
     if not ok(expression):
         return "fail", f"{day} expression 失败: {expression.get('errmsg') or expression.get('errcode')}"
 
-    pool, err = pull_pool(client, day)
+    pool, source_audit, err = pull_pool(client, day)
     if err:
         return "fail", f"{day} {err}"
 
@@ -261,7 +331,7 @@ def pull_one_day(
         if s["code"] in fanbao_codes:
             s["is_fanbao"] = True
 
-    verr = validate(pool, sentiment)
+    verr = validate(pool, source_audit, sentiment)
 
     dd.mkdir(parents=True, exist_ok=True)
     _write_json(dd / "sentiment.json", sentiment)
@@ -281,12 +351,37 @@ def pull_one_day(
         "max_board": max_board,
         "board_counts": counts,
         "fanbao_count": n_fanbao,
+        "theme_source": {
+            "action": "DailyLimitPerformance",
+            "field": "stocks[].raw[5]",
+            "sector_code_field": "stocks[].raw[19]",
+        },
+        "source_reconciliation": {
+            **source_audit,
+            "sentiment_sjzt_reference": int(
+                (sentiment.get("info") or {}).get("SJZT")
+            ),
+            "target_scope_delta_vs_sentiment": (
+                int((sentiment.get("info") or {}).get("SJZT")) - len(pool)
+            ),
+            "contract": (
+                "DailyLimitPerformance 源行逐条记账；北交所明确排除；"
+                "HisZhangFuDetail.SJZT 与梯队列表并非同一市场范围，仅作参考"
+            ),
+        },
         "stocks": pool,
     })
 
-    summary = (f"SJZT={len(pool)} 最高板={max_board} 反包={n_fanbao} "
-               f"分布={dict(sorted(counts.items(), key=lambda x: -int(x[0])))}")
+    summary = (
+        f"目标市场={len(pool)} 源行={source_audit['source_row_count']} "
+        f"排除北交所={source_audit['excluded_bse_count']} "
+        f"SJZT参考={(sentiment.get('info') or {}).get('SJZT')} "
+        f"最高板={max_board} 反包={n_fanbao} "
+        f"分布={dict(sorted(counts.items(), key=lambda x: -int(x[0])))}"
+    )
     if verr:
+        if (dd / "_DONE").exists():
+            (dd / "_DONE").unlink()
         (dd / "_MISMATCH").write_text(f"{verr}\n", encoding="utf-8")
         return "mismatch", f"{day} {verr}"
     if (dd / "_MISMATCH").exists():
@@ -297,9 +392,14 @@ def pull_one_day(
 
 # --------------------------------------------------------------------------- main
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
+
+    parser = argparse.ArgumentParser(description="开盘啦历史数据回灌")
+    parser.add_argument("--start", type=date.fromisoformat, default=START)
+    parser.add_argument("--end", type=date.fromisoformat, default=END)
+    args = parser.parse_args(argv)
 
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     # 约 200 交易日 × 8 请求 × 0.75s ≈ 20 分钟
@@ -311,14 +411,19 @@ def main() -> int:
         state["started_at"] = datetime.now().isoformat(timespec="seconds")
 
     non_trading = set(_read_json(NON_TRADING_PATH, []))
-    mismatches: list[str] = list(_read_json(MISMATCH_PATH, []))
+    mismatches: list[str] = [
+        item
+        for item in _read_json(MISMATCH_PATH, [])
+        if (RAW_DIR / str(item)[:10] / "_MISMATCH").exists()
+    ]
+    _write_json(MISMATCH_PATH, mismatches)
 
-    days = trading_days(START, END)
+    days = trading_days(args.start, args.end)
     todo = [d for d in days if not day_complete(d) and d.isoformat() not in non_trading]
 
     print(f"DeviceID: {client.device_id}")
     print("间隔 0.5~1s 随机 | 不含ST | 反包不抬梯队 | 每日 8 次请求 | 目标约20分钟")
-    print(f"区间 {START} ~ {END}")
+    print(f"区间 {args.start} ~ {args.end}")
     print(f"工作日 {len(days)} | 已知假期 {len(non_trading)} | 已完成 "
           f"{sum(1 for d in days if day_complete(d))} | 待拉 {len(todo)}")
     print(f"目录 {RAW_DIR}")
@@ -349,6 +454,11 @@ def main() -> int:
             continue
 
         print(f"  {msg}")
+        mismatches = [
+            item for item in mismatches
+            if not str(item).startswith(f"{d.isoformat()} ")
+        ]
+        _write_json(MISMATCH_PATH, mismatches)
         completed = set(state["completed"])
         completed.add(d.isoformat())
         state["completed"] = sorted(completed)
@@ -358,11 +468,11 @@ def main() -> int:
 
     print("-" * 64)
     if mismatches:
-        print(f"完成，但有 {len(mismatches)} 天数量不符，需人工确认：")
+        print(f"完成，但有 {len(mismatches)} 天源数据未通过同口径校验：")
         for m in mismatches:
             print(f"  - {m}")
     else:
-        print("回灌完成，全部对齐 SJZT。")
+        print("回灌完成，DailyLimitPerformance 源记录已全部对账。")
     return 0
 
 

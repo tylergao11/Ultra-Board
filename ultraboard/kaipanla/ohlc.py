@@ -57,6 +57,10 @@ _SESSION.headers.update({
 })
 
 
+class NoTradingBarError(RuntimeError):
+    """两个日 K 主源均正常响应，但目标区间没有任何交易记录。"""
+
+
 def _read_json(path: Path, default=None):
     if not path.exists():
         return default
@@ -86,6 +90,31 @@ def to_symbol(code: str) -> str | None:
 def to_secid(code: str) -> str | None:
     """兼容旧名。"""
     return to_symbol(code)
+
+
+def merge_cached_bars(
+    code: str,
+    new_bars: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """把补取的统一未复权日 K 合并进按代码缓存。"""
+    normalized_code = str(code).strip().zfill(6)
+    cache_path = CACHE_DIR / f"{normalized_code}.json"
+    cached = _read_json(cache_path, {}) or {}
+    if cached.get("price_mode") != CACHE_PRICE_MODE:
+        cached = {}
+    bars: dict[str, dict[str, Any]] = dict(cached.get("bars") or {})
+    bars.update({day: bar for day, bar in new_bars.items() if bar})
+    if not bars:
+        return {}
+    _write_json(cache_path, {
+        "code": normalized_code,
+        "symbol": to_symbol(normalized_code),
+        "price_mode": CACHE_PRICE_MODE,
+        "beg": min(bars),
+        "end": max(bars),
+        "bars": bars,
+    })
+    return bars
 
 
 def list_raw_days() -> list[str]:
@@ -266,11 +295,14 @@ def fetch_kline_range(
         return {}
     last_err: Exception | None = None
     for attempt in range(retries):
+        tencent_empty = False
+        sina_empty = False
         # 腾讯
         try:
             bars = _fetch_tencent(code, beg, end)
             if bars:
                 return bars
+            tencent_empty = True
         except Exception as e:
             last_err = e
         # 新浪兜底
@@ -278,8 +310,13 @@ def fetch_kline_range(
             bars = _fetch_sina(code, beg, end)
             if bars:
                 return bars
+            sina_empty = True
         except Exception as e:
             last_err = e
+        if tencent_empty and sina_empty:
+            raise NoTradingBarError(
+                f"{code} has no trading bar in {beg}..{end}"
+            )
         time.sleep(0.25 * (attempt + 1))
     raise RuntimeError(f"{code} kline failed: {last_err}")
 
@@ -289,6 +326,7 @@ def load_or_fetch_code(
     beg: str,
     end: str,
     *,
+    required_days: list[str] | None = None,
     force: bool = False,
     sleep_s: float = 0.15,
 ) -> dict[str, dict[str, Any]]:
@@ -300,8 +338,9 @@ def load_or_fetch_code(
 
     need_refresh = force or not bars
     if not need_refresh:
-        # 缓存须覆盖该票用到的起止日（至少含 beg/end 两端）
-        if beg not in bars or end not in bars:
+        # 缓存必须覆盖该票实际进入二板以上梯队的每个交易日。
+        required = required_days or [beg, end]
+        if any(day not in bars for day in required):
             need_refresh = True
 
     if need_refresh:
@@ -309,8 +348,7 @@ def load_or_fetch_code(
         try:
             fetched = fetch_kline_range(code, beg, end)
         except Exception as e:
-            print(f"  FAIL {code}: {e}", flush=True)
-            return bars
+            raise RuntimeError(f"{code} OHLC 补数失败: {e}") from e
         if fetched:
             # 窄区间补数只能增量覆盖同日期，不能抹掉缓存中其他历史日期。
             # force=True 时 bars 本来就是空字典，仍保持完整重拉语义。
@@ -398,11 +436,27 @@ def enrich(
         ds = sorted(by_code[code])
         c_beg, c_end = ds[0], ds[-1]
         bars = load_or_fetch_code(
-            code, c_beg, c_end, force=force, sleep_s=sleep_s
+            code,
+            c_beg,
+            c_end,
+            required_days=ds,
+            force=force,
+            sleep_s=sleep_s,
         )
         code_bars[code] = bars
         if i % 50 == 0 or i == len(by_code):
             print(f"  fetch {i}/{len(by_code)}", flush=True)
+
+    missing_requirements = {
+        code: sorted(day for day in required_days if day not in code_bars[code])
+        for code, required_days in by_code.items()
+        if any(day not in code_bars[code] for day in required_days)
+    }
+    if missing_requirements:
+        sample = list(missing_requirements.items())[:5]
+        raise RuntimeError(
+            f"OHLC 必需交易日缺失，共 {len(missing_requirements)} 只，示例={sample}"
+        )
 
     patched = 0
     for day in raw_days:
@@ -418,6 +472,9 @@ def enrich(
                 continue
             ge2_codes.add(str(s.get("code") or "").zfill(6))
         day_map = {c: ohlc_map[c] for c in ge2_codes if c in ohlc_map}
+        if len(day_map) != len(ge2_codes):
+            missing = sorted(ge2_codes - set(day_map))
+            raise RuntimeError(f"{day} OHLC 不完整: 缺 {missing[:10]}")
         _write_json(RAW_DIR / day / "ohlc.json", {
             "date": day,
             "source": "tencent_kline/sina_fallback",
@@ -425,7 +482,12 @@ def enrich(
             "stocks": day_map,
         })
         if patch_zt_pool:
-            patched += merge_into_zt_pool(day, day_map)
+            patched_day = merge_into_zt_pool(day, day_map)
+            if patched_day != len(ge2_codes):
+                raise RuntimeError(
+                    f"{day} zt_pool OHLC 挂载不完整: {patched_day}/{len(ge2_codes)}"
+                )
+            patched += patched_day
         hit = len(day_map)
         total = len(ge2_codes)
         print(f"  {day} ohlc ≥2 {hit}/{total}", flush=True)

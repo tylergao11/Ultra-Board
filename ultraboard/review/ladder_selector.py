@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""第一阶段统一选层器：神剑进攻、合富防守、皆无则二板。
+"""第一阶段统一选层器：进攻模型优先，其次逐层检查防守模型，皆无则看自然二板。
 
 选择器只调用节点日证据包，不读取 T+1、人工标签或隔离区。只有显式执行
 ``backtest --labels ...`` 时，才把外部人工标签用于结果对照；标签永不进入选层。
@@ -20,13 +20,13 @@ from typing import Any
 from ultraboard.kaipanla.ladder_evidence import node_evidence
 
 
-POLICY_VERSION = "stage1_attack_defense_v2_limit_reason_top2"
-MODEL_SHENJIAN = "神剑"
-MODEL_HEFU = "合富"
+POLICY_VERSION = "stage1_attack_first_v9_route_theme_semantics"
+MODEL_ATTACK = "进攻模型"
+MODEL_DEFENSE = "防守模型"
 MODEL_NONE = "无"
 
-# 用户冻结口径：节点日涨停原因发酵榜前二与最高自然板沿途 theme 相交。
-SHENJIAN_LIMIT_REASON_TOP_N = 2
+# 节点日市场动向榜按家数、题材成交额排序后，取严格前二。
+ATTACK_LIMIT_REASON_TOP_N = 2
 
 
 def _by_height(rows: list[dict[str, Any]]) -> dict[int, list[dict[str, Any]]]:
@@ -42,10 +42,7 @@ def _attack_triggers(row: dict[str, Any]) -> list[dict[str, Any]]:
     triggers = []
     for theme in row.get("route_theme_evidence") or []:
         reason_rank = theme.get("limit_reason_rank")
-        if (
-            reason_rank is not None
-            and int(reason_rank) <= SHENJIAN_LIMIT_REASON_TOP_N
-        ):
+        if reason_rank is not None and theme.get("limit_reason_top_two_matched"):
             triggers.append({
                 "theme": theme["theme"],
                 "limit_reason_rank": int(reason_rank),
@@ -96,7 +93,7 @@ def select_ladder(day: str) -> dict[str, Any]:
         if natural_highest is not None
         else []
     )
-    god_triggers = [
+    attack_triggers = [
         {
             "code": row["code"],
             "name": row["name"],
@@ -106,158 +103,84 @@ def select_ladder(day: str) -> dict[str, Any]:
         if _attack_triggers(row)
     ]
 
-    hefu_checks = []
+    defense_checks = []
     for height in sorted(
         {int(row["height"]) for row in natural_rows},
         reverse=True,
     ):
         layer = grouped.get(height) or []
         natural_layer = [row for row in layer if not row.get("announcement")]
-        natural_turnover_companions = [
-            row for row in natural_layer if not row.get("one_price")
-        ]
         anchors = [row for row in layer if row.get("one_price")]
-        higher_natural = [
-            row for row in natural_rows if int(row["height"]) > height
-        ]
-        higher_theme_owners: dict[str, list[str]] = {}
-        for higher in higher_natural:
-            for theme in higher.get("route_themes") or []:
-                higher_theme_owners.setdefault(theme, []).append(higher["name"])
-        anchor_rows = []
-        for row in anchors:
-            anchor_theme = str(row.get("theme") or "")
-            shared_higher_themes = (
-                [anchor_theme]
-                if anchor_theme and anchor_theme in higher_theme_owners
-                else []
-            )
-            eligible = bool(row.get("announcement")) or not shared_higher_themes
-            anchor_rows.append({
+        anchor_rows = [
+            {
                 "code": row["code"],
                 "name": row["name"],
                 "announcement": bool(row.get("announcement")),
                 "role": "量能" if row.get("announcement") else "自然一字",
-                "eligible": eligible,
-                "suppressed_by_higher_themes": shared_higher_themes,
-                "higher_theme_owners": {
-                    theme: higher_theme_owners[theme]
-                    for theme in shared_higher_themes
-                },
-            })
-        eligible_anchors = [row for row in anchor_rows if row["eligible"]]
-        eligible_natural_anchors = [
-            row for row in eligible_anchors if not row["announcement"]
+            }
+            for row in anchors
         ]
-        eligible_announcement_anchors = [
-            row for row in eligible_anchors if row["announcement"]
-        ]
-        hefu_checks.append({
+        defense_checks.append({
             "height": height,
-            "valid": bool(natural_layer and eligible_anchors),
+            "valid": bool(natural_layer and anchor_rows),
             "natural_candidates": [
                 {"code": row["code"], "name": row["name"]}
                 for row in natural_layer
             ],
-            "natural_turnover_companions": [
-                {"code": row["code"], "name": row["name"]}
-                for row in natural_turnover_companions
-            ],
             "one_price_anchors": anchor_rows,
-            "eligible_one_price_anchors": eligible_anchors,
-            "eligible_natural_one_price_anchors": eligible_natural_anchors,
-            "eligible_announcement_one_price_anchors": (
-                eligible_announcement_anchors
-            ),
+            "natural_one_price_anchors": [
+                row for row in anchor_rows if not row["announcement"]
+            ],
+            "announcement_one_price_anchors": [
+                row for row in anchor_rows if row["announcement"]
+            ],
         })
-
-    highest_hefu = next(
-        (
-            item
-            for item in hefu_checks
-            if item["height"] == natural_highest and item["valid"]
-        ),
-        None,
-    )
 
     selected_height: int | None
     model: str | None
     selected_by: str
     reason: str
-    if (
-        natural_highest is not None
-        and god_triggers
-        and highest_hefu
-        and highest_hefu["natural_turnover_companions"]
-    ):
+    if natural_highest is not None and attack_triggers:
         selected_height = natural_highest
-        model = MODEL_HEFU
-        selected_by = "highest_layer_attack_defense_overlap_hefu_precedence"
+        model = MODEL_ATTACK
+        selected_by = "highest_natural_market_direction_top2_attack"
         trigger_text = "、".join(
             f"{item['name']}:{'/'.join(theme['theme'] for theme in item['themes'])}"
-            for item in god_triggers
-        )
-        anchor_text = "、".join(
-            f"{item['name']}({item['role']})"
-            for item in highest_hefu["eligible_one_price_anchors"]
+            for item in attack_triggers
         )
         reason = (
-            f"最高自然梯队{selected_height}板同时命中涨停原因榜前二({trigger_text})"
-            f"与真一字结构({anchor_text})；二选一按一字结构归为合富"
-        )
-    elif natural_highest is not None and god_triggers:
-        selected_height = natural_highest
-        model = MODEL_SHENJIAN
-        selected_by = "highest_natural_limit_reason_top2_attack"
-        trigger_text = "、".join(
-            f"{item['name']}:{'/'.join(theme['theme'] for theme in item['themes'])}"
-            for item in god_triggers
-        )
-        reason = (
-            f"最高自然梯队为{selected_height}板，沿途theme命中涨停原因榜前二："
-            f"{trigger_text}"
+            f"最高自然梯队为{selected_height}板，沿途theme命中市场动向榜前二："
+            f"{trigger_text}；模型=进攻模型"
         )
     else:
-        lower_hefu = [
-            item
-            for item in hefu_checks
-            if item["valid"] and item["height"] != natural_highest
-        ]
-        lower_natural_anchor_hefu = [
-            item
-            for item in lower_hefu
-            if item["eligible_natural_one_price_anchors"]
-        ]
-        valid_hefu = highest_hefu or (
-            min(lower_natural_anchor_hefu, key=lambda item: item["height"])
-            if lower_natural_anchor_hefu
-            else min(lower_hefu, key=lambda item: item["height"])
-            if lower_hefu
-            else None
+        # defense_checks 已按高度降序；取首个有效结构，不能越过三板直接落到二板。
+        valid_defense = next(
+            (item for item in defense_checks if item["valid"]),
+            None,
         )
-        if valid_hefu:
-            selected_height = int(valid_hefu["height"])
-            model = MODEL_HEFU
-            selected_by = "highest_valid_one_price_defense"
+        if valid_defense:
+            selected_height = int(valid_defense["height"])
+            model = MODEL_DEFENSE
+            selected_by = "highest_valid_defense_structure"
             anchor_text = "、".join(
                 f"{item['name']}({item['role']})"
-                for item in valid_hefu["eligible_one_price_anchors"]
+                for item in valid_defense["one_price_anchors"]
             )
             reason = (
-                "最高自然梯队未形成神剑；优先检查最高层自身防守，若不成立则"
-                "先找未受高层同题材压制的自然一字层，再以公告一字作量能兜底。"
-                f"本次为{selected_height}板：{anchor_text}"
+                "最高自然梯队未形成进攻模型；防守模型按高度从高到低检查，"
+                "选择首个含合格真一字锚与自然候选的梯队。"
+                f"本次为{selected_height}板：{anchor_text}；模型=防守模型"
             )
-        elif 2 in grouped:
+        elif any(int(row["height"]) == 2 for row in natural_rows):
             selected_height = 2
             model = MODEL_NONE
-            selected_by = "two_board_floor_fallback"
-            reason = "神剑与合富均不成立；梯队下沉到最低可选的二板"
+            selected_by = "natural_two_board_floor_fallback"
+            reason = "进攻模型与防守模型均不成立；存在自然二板，梯队下沉到二板"
         else:
             selected_height = None
             model = None
-            selected_by = "no_two_board_floor"
-            reason = "神剑与合富均不成立，且节点日不存在二板梯队"
+            selected_by = "no_natural_two_board_candidate"
+            reason = "进攻模型与防守模型均不成立，且不存在自然二板候选；本日不选层"
 
     selected_rows = grouped.get(selected_height, []) if selected_height else []
     return {
@@ -270,19 +193,24 @@ def select_ladder(day: str) -> dict[str, Any]:
         "selected_by": selected_by,
         "reason": reason,
         "natural_highest": natural_highest,
-        "shenjian_check": {
+        "attack_check": {
             "only_height": natural_highest,
-            "limit_reason_top_n": SHENJIAN_LIMIT_REASON_TOP_N,
-            "matched": bool(god_triggers),
-            "triggers": god_triggers,
+            "limit_reason_top_n": ATTACK_LIMIT_REASON_TOP_N,
+            "ranking_contract": evidence["market"]["limit_reason_ranking_contract"],
+            "matched": bool(attack_triggers),
+            "triggers": attack_triggers,
         },
-        "hefu_checks": hefu_checks,
+        "defense_checks": defense_checks,
         "selected_layer": [_stock_brief(row) for row in selected_rows],
         "limit_reason_top_two": evidence["market"]["limit_reason_top_two"],
         "contracts": {
             "future_data": "禁止读取T+1；本结果只使用information_cutoff当日及以前",
             "announcement": evidence["announcement_contract"],
             "theme": evidence["theme_contract"],
+            "defense": (
+                "同层至少一只真一字与至少一只自然票；可为同一只股票，"
+                "不要求同题材，不使用高层题材压制；进攻模型命中时一律进攻优先"
+            ),
             "candidate_boundary": "脚本只选梯队；第二阶段AI只能在已选梯队内选票或放弃",
         },
     }
@@ -350,7 +278,7 @@ def backtest(path: Path, *, include_review: bool = False) -> dict[str, Any]:
 
 def markdown_selection(result: dict[str, Any]) -> str:
     lines = [
-        f"## {result['date']}｜{result['target_height'] or '无'}板｜{result['model'] or '无目标'}",
+        f"## {result['date']}｜{result['target_height'] or '无'}板｜模型={result['model'] or '无目标'}",
         "",
         result["reason"],
         f"最高自然梯队：{result['natural_highest'] or '无'}板",
@@ -369,7 +297,8 @@ def markdown_selection(result: dict[str, Any]) -> str:
     lines.extend([
         "",
         "涨停原因发酵前二：" + "、".join(
-            f"{row['rank']}.{row['theme']}({row['reported_count']})"
+            f"{row['rank']}.{row['theme']}({row['reported_count']}家/"
+            f"{row['turnover_amount'] / 1e8:.2f}亿)"
             for row in result["limit_reason_top_two"]
         ),
         "",

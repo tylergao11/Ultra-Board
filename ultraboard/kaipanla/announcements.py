@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
-"""公告起源的唯一分类合同。
+"""梯队列表 theme 的公告／自然分类合同。
 
-算法只识别三类公告：并购重组、实控人变更、股权转让。原始主属性一旦在
-连续连板段中命中公告，后续即使 theme 漂移也保持公告起源。源数据漏标只允许
-通过 ``data/kaipanla/announcement_overrides.json`` 修正，禁止在算法中按股票名
-或节点日期写特判。
+公告型 theme 只从 ``data/kaipanla/announcement_taxonomy.json`` 加载。身份只看
+当前最高板日的梯队 theme；断板时即看断板前一交易日，不继承更早身份。
 """
 from __future__ import annotations
 
@@ -15,118 +13,79 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[2]
-OVERRIDE_PATH = ROOT / "data" / "kaipanla" / "announcement_overrides.json"
-
-ANNOUNCEMENT_TYPES = frozenset({
-    "并购重组",
-    "实控人变更",
-    "股权转让",
-})
-
-
-def code_of(value: Any) -> str:
-    return str(value or "").zfill(6)
-
-
-def announcement_type_of(theme: Any) -> str | None:
-    """把开盘啦主属性归一到三种公告类型；其他属性一律返回 ``None``。"""
-    text = str(theme or "").strip()
-    if not text:
-        return None
-    for announcement_type in ANNOUNCEMENT_TYPES:
-        if text in {
-            announcement_type,
-            f"{announcement_type}概念",
-            f"{announcement_type}[公告板]",
-        }:
-            return announcement_type
-    return None
-
-
-def is_announcement_theme(theme: Any) -> bool:
-    return announcement_type_of(theme) is not None
+TAXONOMY_PATH = ROOT / "data" / "kaipanla" / "announcement_taxonomy.json"
 
 
 @lru_cache(maxsize=1)
-def load_overrides() -> tuple[dict[str, Any], ...]:
-    if not OVERRIDE_PATH.exists():
-        return ()
-    payload = json.loads(OVERRIDE_PATH.read_text(encoding="utf-8-sig"))
+def load_taxonomy() -> dict[str, Any]:
+    payload = json.loads(TAXONOMY_PATH.read_text(encoding="utf-8-sig"))
     if payload.get("schema_version") != 1:
-        raise ValueError(f"不支持的公告覆盖表版本: {OVERRIDE_PATH}")
-
-    rows: list[dict[str, Any]] = []
-    for raw in payload.get("events") or []:
-        row = dict(raw)
-        row["code"] = code_of(row.get("code"))
-        announcement_type = str(row.get("announcement_type") or "")
-        if announcement_type not in ANNOUNCEMENT_TYPES:
-            raise ValueError(
-                f"公告覆盖类型不在三类合同中: {row.get('name')} {announcement_type}"
-            )
-        start_date = str(row.get("start_date") or "")
-        end_date = str(row.get("end_date") or "")
-        if not start_date or not end_date or start_date > end_date:
-            raise ValueError(f"公告覆盖日期非法: {row}")
-        rows.append(row)
-    return tuple(rows)
+        raise ValueError(f"不支持的公告分类表版本: {TAXONOMY_PATH}")
+    if not payload.get("exact_themes") or not payload.get("sector_codes"):
+        raise ValueError(f"公告分类表缺少主题或板块代码: {TAXONOMY_PATH}")
+    return payload
 
 
-def override_for(code: Any, day: str) -> dict[str, Any] | None:
-    normalized = code_of(code)
-    for row in load_overrides():
-        if (
-            row["code"] == normalized
-            and row["start_date"] <= day <= row["end_date"]
-        ):
-            return dict(row)
+ANNOUNCEMENT_TYPES = frozenset(
+    str(theme).strip()
+    for theme in load_taxonomy()["exact_themes"]
+    if str(theme).strip()
+)
+ANNOUNCEMENT_SECTOR_CODES = {
+    str(code).strip(): str(theme).strip()
+    for code, theme in load_taxonomy()["sector_codes"].items()
+}
+ANNOUNCEMENT_THEME_PREFIXES = tuple(
+    str(prefix).strip()
+    for prefix in load_taxonomy().get("theme_prefixes") or []
+    if str(prefix).strip()
+)
+
+
+def announcement_type_of(theme: Any, sector_code: Any = None) -> str | None:
+    """按唯一分类表识别公告型梯队 theme；其他 theme 返回 ``None``。"""
+    text = str(theme or "").strip()
+    normalized_code = str(sector_code or "").strip()
+    if normalized_code in ANNOUNCEMENT_SECTOR_CODES:
+        return text or ANNOUNCEMENT_SECTOR_CODES[normalized_code]
+    normalized_text = text.removesuffix("[公告板]").removesuffix("概念")
+    if normalized_text in ANNOUNCEMENT_TYPES:
+        return normalized_text
+    if any(normalized_text.startswith(prefix) for prefix in ANNOUNCEMENT_THEME_PREFIXES):
+        return normalized_text
     return None
+
+
+def is_announcement_theme(theme: Any, sector_code: Any = None) -> bool:
+    return announcement_type_of(theme, sector_code) is not None
 
 
 def resolve_identity(
     *,
-    code: Any,
     day: str,
     theme: Any,
-    boards: int,
-    previous: dict[str, Any] | None,
+    sector_code: Any = None,
 ) -> dict[str, Any]:
-    """解析当日公告起源，``previous`` 只能是上一交易日同股记录。"""
-    override = override_for(code, day)
-    if override:
+    """只按 ``day`` 当天梯队 theme 分类；更早交易日身份不继承。"""
+    theme_text = str(theme or "").strip()
+    direct_type = announcement_type_of(theme, sector_code)
+    if not direct_type:
         return {
-            "is_announcement": True,
-            "announcement_type": override["announcement_type"],
-            "announcement_origin_date": override["start_date"],
-            "announcement_source": "manual_event_override",
-        }
-
-    previous_boards = int((previous or {}).get("boards") or 0)
-    if (
-        previous
-        and bool(previous.get("is_gonggao"))
-        and boards == previous_boards + 1
-    ):
-        return {
-            "is_announcement": True,
-            "announcement_type": previous.get("announcement_type"),
-            "announcement_origin_date": previous.get("announcement_origin_date"),
-            "announcement_source": previous.get("announcement_source")
-            or "limit_run_inheritance",
-        }
-
-    direct_type = announcement_type_of(theme)
-    if direct_type:
-        return {
-            "is_announcement": True,
-            "announcement_type": direct_type,
-            "announcement_origin_date": day,
-            "announcement_source": "daily_primary_theme",
+            "is_announcement": False,
+            "announcement_type": None,
+            "announcement_origin_date": None,
+            "announcement_source": None,
+            "natural_theme": theme_text or None,
+            "natural_theme_date": day if theme_text else None,
+            "effective_theme": theme_text,
         }
 
     return {
-        "is_announcement": False,
-        "announcement_type": None,
-        "announcement_origin_date": None,
-        "announcement_source": None,
+        "is_announcement": True,
+        "announcement_type": direct_type,
+        "announcement_origin_date": day,
+        "announcement_source": "same_day_ladder_theme",
+        "natural_theme": None,
+        "natural_theme_date": None,
+        "effective_theme": theme_text,
     }
