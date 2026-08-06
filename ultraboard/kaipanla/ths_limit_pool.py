@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """同花顺历史涨停池的板上行为事实层。
 
-只采集日内行为字段：首封、终封和炸板次数。题材仍以
-开盘啦涨停梯队为唯一真相源；同花顺 reason_type 永不进入题材判断。
+只采集日内行为字段：首封、终封和炸板次数。题材唯一真相来自
+``data/ths/strong_wind``；接口 reason_type 不进入题材判断。
 
 用法：
 
@@ -139,7 +139,7 @@ def fetch_day(day: str) -> dict[str, Any]:
             "endpoint": ENDPOINT,
             "fetched_at": datetime.now(CN_TZ).isoformat(timespec="seconds"),
             "query": params,
-            "theme_contract": "请求不含reason_type，题材只认开盘啦theme",
+            "theme_contract": "请求不含 reason_type；题材只认 data/ths/strong_wind",
         },
         "count": len(stocks),
         "stocks": stocks,

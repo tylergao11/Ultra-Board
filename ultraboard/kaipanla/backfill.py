@@ -5,7 +5,7 @@
   sentiment.json      情绪统计（含 SJZT，作为跨接口范围参考）
   expression.json     梯队情绪指标
   zt_pool.json        完整涨停池，每只票带真实连板数与梯队列表 theme
-  sector_ladder.json  涨停原因题材家数 + 源序 + 板块核心梯队 + 反包板标记
+  sector_ladder.json  遗留原始分类快照；正式节点与模型读侧禁用
   _DONE               仅当校验全过才写
 
 已验证的接口语义（勿凭猜测改动）：
@@ -14,10 +14,10 @@
     PidType 5   = 「5 板及以上」，组内可能出现 6/7/8 板
     真实连板数 = 个股数组下标 15，绝不能用 PidType 顶替
     下标 18 = 描述文字，如 "7连板" / "3天2板"，仅作备注
-    下标 5/19 = 梯队列表 theme 及其代码，是本项目唯一 theme 真相
+    下标 5/19 = 上游梯队列表 theme 及其代码，仅按原样留档，正式读侧禁用
   GetYTFP_BKHX
     历史参数是 Date（大写），不是 Day
-    List 保留历史接口源字段；市场动向排名使用开盘啦家数与涨停池题材成交额
+    List 保留历史接口源字段；其市场动向排名不进入正式节点与模型
     TD 按 TDType 分组：0=反包板 1=首板 2=2连板 … 9=打开高度标注
 
 硬规则：
@@ -158,7 +158,7 @@ def parse_stock(row: list, pid: int) -> tuple[dict[str, Any] | None, str | None]
         "name": name,
         "boards": boards,               # 真实连板数，唯一权威
         "boards_desc": row[18] or "",   # "7连板" / "3天2板"，仅备注
-        # 梯队列表字段是算法唯一 theme；不读取个股详情页属性。
+        # 原样保存上游梯队字段；正式节点与模型不读取这里的 theme。
         "theme": theme,
         "sector_code": sector_code,
         # row[12] 为接口概念堆，仅随 raw 保留供源数据审计，禁止进入题材匹配

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Ultra-Board: 连板复盘辅助。
+"""Ultra-Board：同花顺题材真相驱动的连板复盘辅助。
 
 分层：
-  kaipanla/  采集与补全（写 raw）
-  review/    复盘派生（读 raw → 写 ladder_daily 等）
+  ths/       唯一题材真相校验、节点检测与模型冻结
+  kaipanla/  板数、OHLC 与封板过程等客观事实采集/补全
   limits.py  价位规则校验
 
 入口见仓库根 README.md。

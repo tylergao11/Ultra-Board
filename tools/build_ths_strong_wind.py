@@ -35,7 +35,7 @@ except ImportError as exc:  # pragma: no cover - user-facing dependency check
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_IMAGE_ROOT = ROOT / "data" / "ths" / "strong_wind_images"
 DEFAULT_OUTPUT_DIR = ROOT / "data" / "ths" / "strong_wind"
-DEFAULT_RAW_ROOT = ROOT / "data" / "kaipanla" / "raw"
+DEFAULT_LIMIT_POOL_ROOT = ROOT / "data" / "ths" / "limit_pool"
 DEFAULT_MANUAL_REVIEWS = ROOT / "data" / "ths" / "strong_wind_manual_reviews.json"
 
 DATE_STEM_RE = re.compile(r"^\d{8}$")
@@ -44,7 +44,7 @@ BOARD_TOKEN_RE = re.compile(r"^(?:首板|[一二三四五六七八九十百\d]+�
 TIME_TOKEN_RE = re.compile(r"^\d{1,2}[:：]\d{2}(?:[:：]\d{2})?$")
 TITLE_SPLIT_RE = re.compile(r"[：:]")
 IMAGE_DATE_FORMAT = "%Y%m%d"
-FALLBACK_GROUP_TITLES = frozenset({"其他", "其他概念", "未分类"})
+FALLBACK_GROUP_TITLES = frozenset({"其他", "其他概念", "其它概念", "未分类"})
 
 _OCR_ENGINE: RapidOCR | None = None
 
@@ -102,23 +102,24 @@ def add_stock_rows(target: dict[str, str], rows: Iterable[dict[str, Any]]) -> No
             target[code] = name
 
 
-def load_day_stock_map(raw_root: Path, day: str) -> dict[str, str]:
-    day_dir = raw_root / day
+def load_day_stock_map(limit_pool_root: Path, day: str) -> dict[str, str]:
+    pool_path = limit_pool_root / f"{day}.json"
     result: dict[str, str] = {}
-
-    zt_pool_path = day_dir / "zt_pool.json"
-    if zt_pool_path.exists():
-        payload = load_json(zt_pool_path)
-        add_stock_rows(result, payload.get("stocks", []))
-        reconciliation = payload.get("source_reconciliation", {})
-        add_stock_rows(result, reconciliation.get("excluded_bse", []))
-
-    ths_pool_path = day_dir / "ths_limit_pool.json"
-    if ths_pool_path.exists():
-        add_stock_rows(result, load_json(ths_pool_path).get("stocks", []))
-
+    if not pool_path.exists():
+        raise FileNotFoundError(f"no Tonghuashun limit pool found for {day}: {pool_path}")
+    payload = load_json(pool_path)
+    source = payload.get("source") or {}
+    stocks = payload.get("stocks")
+    if (
+        payload.get("date") != day
+        or source.get("provider") != "tonghuashun_limit_up_pool"
+        or not isinstance(stocks, list)
+        or payload.get("count") != len(stocks)
+    ):
+        raise ValueError(f"invalid Tonghuashun limit pool: {pool_path}")
+    add_stock_rows(result, stocks)
     if not result:
-        raise FileNotFoundError(f"no daily stock pool found for {day}: {day_dir}")
+        raise ValueError(f"empty Tonghuashun limit pool: {pool_path}")
     return result
 
 
@@ -227,9 +228,12 @@ def ocr_tiled(
 
 def clean_title(raw_text: str) -> str:
     text = str(raw_text).strip().replace("|", "")
-    text = re.sub(r"^[^\u4e00-\u9fffA-Za-z]+", "", text)
+    text = re.sub(r"^[^\u4e00-\u9fffA-Za-z0-9]+", "", text)
     text = TITLE_SPLIT_RE.split(text, maxsplit=1)[0]
-    return text.strip(" -—_/｜")
+    text = text.strip(" -—_/｜")
+    if text == "Al应用":
+        return "AI应用"
+    return text
 
 
 def title_for_band(
@@ -243,7 +247,9 @@ def title_for_band(
     combined = " ".join(det.text for det in candidates)
     title = clean_title(combined)
     has_chinese = any("\u4e00" <= char <= "\u9fff" for char in title)
-    is_market_acronym = bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9+./-]{1,15}", title))
+    is_market_acronym = bool(
+        re.fullmatch(r"(?=.*[A-Za-z])[A-Za-z0-9+./-]{2,16}", title)
+    )
     if title and (has_chinese or is_market_acronym):
         return title, None
     return f"未识别分组{rank}", f"第{rank}组标题无法识别: {combined!r}"
@@ -457,6 +463,22 @@ def apply_manual_additions(
     return groups
 
 
+def clear_resolved_addition_issues(
+    issues: list[str], additions: list[dict[str, Any]]
+) -> list[str]:
+    addition_codes = {
+        normalize_code(addition.get("code", "")) for addition in additions
+    }
+    return [
+        issue
+        for issue in issues
+        if not (
+            "图片股票未匹配当天涨停池" in issue
+            and any(code and code in issue for code in addition_codes)
+        )
+    ]
+
+
 def validate_document(document: dict[str, Any]) -> None:
     groups = document.get("groups")
     if not isinstance(groups, list) or not groups:
@@ -487,7 +509,7 @@ def relative_source_path(path: Path) -> str:
 def process_image(path_text: str, config: dict[str, Any]) -> dict[str, Any]:
     image_path = Path(path_text)
     day = parse_image_day(image_path)
-    stock_map = load_day_stock_map(Path(config["raw_root"]), day)
+    stock_map = load_day_stock_map(Path(config["limit_pool_root"]), day)
     fallback_reviews, stock_additions = load_manual_reviews(
         Path(config["manual_reviews_path"]), day
     )
@@ -524,6 +546,7 @@ def process_image(path_text: str, config: dict[str, Any]) -> dict[str, Any]:
 
     groups = reclassify_fallback_groups(groups, fallback_reviews, issues)
     groups = apply_manual_additions(groups, stock_additions)
+    issues = clear_resolved_addition_issues(issues, stock_additions)
 
     recognized: set[str] = set()
     output_groups: list[dict[str, Any]] = []
@@ -627,7 +650,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tile-overlap", type=int, default=120)
     parser.add_argument("--image-root", type=Path, default=DEFAULT_IMAGE_ROOT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--raw-root", type=Path, default=DEFAULT_RAW_ROOT)
+    parser.add_argument(
+        "--limit-pool-root", type=Path, default=DEFAULT_LIMIT_POOL_ROOT
+    )
     parser.add_argument(
         "--manual-reviews", type=Path, default=DEFAULT_MANUAL_REVIEWS
     )
@@ -652,7 +677,7 @@ def main() -> int:
             runnable.append(image)
 
     config = {
-        "raw_root": str(args.raw_root.resolve()),
+        "limit_pool_root": str(args.limit_pool_root.resolve()),
         "manual_reviews_path": str(args.manual_reviews.resolve()),
         "min_score": args.min_score,
         "tile_height": args.tile_height,

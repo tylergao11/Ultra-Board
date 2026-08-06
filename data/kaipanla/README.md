@@ -1,49 +1,36 @@
-# 开盘啦主源与派生
+# 客观行情事实缓存
+
+`data/kaipanla/` 不再是题材真相源。这里保留采集所得的板数、OHLC、封板时间等客观事实，供同花顺节点入口做价格与连板结构计算。
 
 ## 结构
 
-```
+```text
 data/kaipanla/
-  device_id.txt              # 开盘啦 DeviceID，固定复用
+  device_id.txt
   backfill_state.json
-  announcement_taxonomy.json # 公告型 theme 唯一分类表
-  ohlc_cache/                # 日 K 按代码缓存（gitignore）
-  raw/YYYY-MM-DD/            # 主源日目录
-    zt_pool.json             # 涨停池（≥2 可含 open/open_pct）
-    ohlc.json                # 当日 ≥2 板 OHLC（梯队算法就绪门禁）
-    ths_limit_pool.json       # 同花顺首封/终封/炸板次数（按需补）
-    sector_ladder.json        # 涨停原因题材家数 + 接口源字段/源序 + 板块梯队 + 反包
-    sentiment.json
-    expression.json
-    _DONE | _MISMATCH
-  ladder_daily/              # 复盘派生：严格截至同日的梯队逐日变化
+  ohlc_cache/
+  raw/YYYY-MM-DD/
+    zt_pool.json       # 板数、代码、名称及挂载后的 OHLC 等客观事实
+    ohlc.json          # 二板及以上 OHLC 补全证据
+    ths_limit_pool.json# 同花顺首封、终封与炸板次数
+    sentiment.json     # 原始情绪快照，节点模型不读取其题材
+    expression.json    # 原始表达快照，节点模型不读取其题材
+    sector_ladder.json # 遗留原始分类快照，禁止进入节点与模型判断
 ```
 
-## 主命令（在仓库根执行）
+## 使用边界
 
-```bash
-python -m ultraboard.kaipanla.backfill   # 回灌 raw
-python -m ultraboard.kaipanla.ohlc       # 补 ≥2 板开盘价（首板不写）
-python -m ultraboard.kaipanla.ths_limit_pool 2025-12-16 # 补板上行为事实
-python -m ultraboard.review.ladder_daily # 生成 ladder_daily/
+- 唯一题材、公告身份和风口排名真相是 `data/ths/strong_wind/YYYY-MM-DD.json`。
+- `zt_pool.json` 中即使仍保留历史 `theme`、`raw` 或 `sector_code`，也只属于原始采集记录；正式读侧禁止访问这些字段。
+- 节点入口对白名单字段取值：`code`、`boards`、`open`、`high`、`low`。股票名称和主分组采用同花顺日文件。
+- 真一字只认同一价格口径下 `open == high == low`；T 字、开板回封、高开快速封板都不是一字锚。
+- 二板及以上缺少板数或 OHLC 时直接失败，不以封板时间、开盘涨停或默认值替代。
+- 本目录不再产生梯队日录、公告分类表或任何题材派生结果。
+
+采集命令：
+
+```powershell
+python -m ultraboard.kaipanla.backfill
+python -m ultraboard.kaipanla.ohlc
+python -m ultraboard.kaipanla.ths_limit_pool 2026-08-06
 ```
-
-## 口径摘要
-
-- 个股 `theme` = `DailyLimitPerformance` 梯队列表字段 `raw[5]`；代码为 `raw[19]`（**禁止读取个股详情属性或接口概念堆 raw[12]/concepts**）
-- `zt_pool.json.source_reconciliation` 对 `DailyLimitPerformance` 每条源记录逐条记账；北交所记录明确放入排除账。`HisZhangFuDetail.SJZT` 市场范围更宽，只作跨接口参考，不能再用它制造假缺口
-- `_DONE` 只表示四份开盘啦主源已通过同源对账；梯队算法还会逐日强制检查 `ohlc.json` 与每只 ≥2 板的 `open/high/low/prev_close`，任一缺失即整体拒绝运行
-- 成功响应若缺少合法 `info[0]`、中心 `theme/raw[5]` 或 `sector_code/raw[19]`，采集直接失败，不写完成标记
-- 进攻模型排名 = `sector_ladder.json` 题材家数 + `zt_pool.json` 同 theme 成交额，按同期客户端画面确认的“家数、成交额”排序后取前二；最高连板不参与该榜排序
-- 创业板与主板均按各自真实连板数进入梯队；不得按代码前缀整板过滤
-- 公告型 theme 只认 `announcement_taxonomy.json`；涵盖 ST摘帽、举牌、定期报告、订单、再融资、重组等，不包含仍戴帽的 ST／*ST 股票
-- 公告／自然身份只看最高板当天的梯队 theme；断板时看断板前一交易日，不继承更早身份
-- 前一日最高自然梯队断板才触发节点；若该票断板前一日 theme 为公告，其断板不触发自然节点
-- 真一字只认同一价格口径下开盘价=最高价=最低价；不得用 09:25 首封或开盘涨停代替
-- 梯队材料只列 **≥2 板**；首板 `theme` 可作市场宽度计数，但不改变任何股票的当日身份
-- **开盘%** 仅 ≥2 板；来自日 K 挂载，非开盘啦 raw 自带
-- `ths_limit_pool.json` 只请求首封、终封和炸板次数；不采集同花顺板型或题材，禁止覆盖开盘啦 `theme`
-- 数值换手率只允许保留在源记录中溯源；节点证据、换手/分歧标签、地位侧预期评分和公开接口均禁止读取
-- 跟随链：安全日文件只保存截至该日已经发生的路径；完整后续路径进入隐藏隔离区
-
-扩展约定见仓库根 `README.md`。
