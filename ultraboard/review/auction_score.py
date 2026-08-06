@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""显式后验入口：计算 T+1 09:25 实际竞价分 A 与超预期差 Δ。
+"""显式后验入口：计算 T+1 09:25 竞价强度 A 与地位预期差 G_position。
 
-节点日预期 E 由 ``candidate_initial_score`` 生成且严格截止 T。本模块才允许
-寻找下一交易日；收盘晋级结果只放在独立的 ``after_close_outcome`` 字段，绝不
-参与 E、A 或 Δ 的计算。
+节点日地位预期 E_position 由 ``candidate_initial_score`` 生成且严格截止 T。本模块才允许
+寻找下一交易日；G_position=A-E_position 只说明竞价相对地位要求的偏离，不是最终超预期。
+收盘晋级结果只放在独立的 ``after_close_outcome`` 字段，绝不参与 E_position、A 或
+G_position 的计算。
 
 历史数据只有最终竞价开盘价，没有竞价成交额和 09:20~09:25 队列轨迹，因此
 自身竞价证据暂时只由开盘涨幅相对该股涨停幅度的位置构成；多票梯队再加入
@@ -56,7 +57,7 @@ from ultraboard.review.layer_pk import (
 )
 
 
-POLICY_VERSION = "stage2_auction_surprise_v2_layer_pk"
+POLICY_VERSION = "stage2_auction_position_gap_v3_layer_pk"
 
 # 横轴是竞价涨幅 / 个股涨停幅度。平开为 50，涨停开为 100，跌停开为 0。
 OPEN_SCORE_POINTS = (
@@ -118,16 +119,16 @@ def opening_strength_evidence(
     }
 
 
-def surprise_label(delta: float) -> str:
-    if delta >= 15:
-        return "大幅超预期"
-    if delta >= 7:
-        return "超预期"
-    if delta > -7:
-        return "符合预期"
-    if delta > -15:
-        return "不及预期"
-    return "大幅不及预期"
+def position_gap_label(gap: float) -> str:
+    if gap >= 15:
+        return "大幅高于地位预期"
+    if gap >= 7:
+        return "高于地位预期"
+    if gap > -7:
+        return "符合地位预期"
+    if gap > -15:
+        return "低于地位预期"
+    return "大幅低于地位预期"
 
 
 def absolute_label(score: float, normalized_open: float) -> str:
@@ -292,7 +293,7 @@ def build_candidate_result(
     source: str | None,
 ) -> dict[str, Any]:
     candidate = item["candidate"]
-    expected = float(candidate["expected_auction_score"])
+    expected = float(candidate["position_expectation_score"])
     open_pct = as_float(bar.get("open_pct"))
     opening = (
         opening_strength_evidence(candidate["code"], candidate["name"], open_pct)
@@ -306,8 +307,8 @@ def build_candidate_result(
         "name": candidate["name"],
         "height": candidate["height"],
         "scoring_theme": candidate["scoring_theme"],
-        "expected_auction_score": round(expected, 2),
-        "expected_score_evidence": candidate["same_ladder_pk"],
+        "position_expectation_score": round(expected, 2),
+        "position_score_evidence": candidate["same_ladder_pk"],
         "actual_auction": {
             **(opening or {
                 "open_pct": None,
@@ -323,10 +324,10 @@ def build_candidate_result(
             "source": source,
             "trading_status": bar.get("trading_status") or "traded",
         },
-        "surprise_delta": None,
-        "surprise_label": "无法计算",
+        "position_gap": None,
+        "position_gap_label": "无法计算",
         "absolute_auction_label": "无法计算",
-        "node_component_scores": candidate["component_scores"],
+        "position_component_scores": candidate["component_scores"],
         "after_close_outcome": outcome_of(
             candidate,
             item["action_stock"],
@@ -336,7 +337,7 @@ def build_candidate_result(
 
 
 def apply_actual_layer_pk(rows: list[dict[str, Any]]) -> None:
-    """在同一节点整层竞价都准备好后，统一计算实际 PK、A 与 Δ。"""
+    """在同一节点整层竞价都准备好后，统一计算实际 PK、A 与地位预期差。"""
     layer_size = len(rows)
     opening_scores = {
         row["code"]: float(row["actual_auction"]["opening_strength_evidence_score"])
@@ -355,7 +356,7 @@ def apply_actual_layer_pk(rows: list[dict[str, Any]]) -> None:
         auction = row["actual_auction"]
         opening_score = auction["opening_strength_evidence_score"]
         pk_score = actual_pk.get(row["code"])
-        expected_pk_score = row["expected_score_evidence"]["expected_pk_score"]
+        position_pk_score = row["position_score_evidence"]["position_pk_score"]
         can_compose = opening_score is not None and (
             layer_size == 1 or comparable
         )
@@ -374,9 +375,9 @@ def apply_actual_layer_pk(rows: list[dict[str, Any]]) -> None:
             "covered_candidate_count": len(opening_scores),
             "peer_count": max(0, layer_size - 1),
             "actual_pk_score": pk_score if comparable else None,
-            "pk_surprise_delta": (
-                round(float(pk_score) - float(expected_pk_score), 2)
-                if comparable and expected_pk_score is not None
+            "position_pk_gap": (
+                round(float(pk_score) - float(position_pk_score), 2)
+                if comparable and position_pk_score is not None
                 else None
             ),
             "configured_weight": PK_WEIGHT,
@@ -388,7 +389,7 @@ def apply_actual_layer_pk(rows: list[dict[str, Any]]) -> None:
                 else (
                     "梯队仅一只自然票，无对手，PK因子缺席"
                     if layer_size == 1
-                    else "同梯队竞价数据未完整，最终A与Δ不降级计算"
+                    else "同梯队竞价数据未完整，最终A与地位预期差不降级计算"
                 )
             ),
         }
@@ -399,9 +400,9 @@ def apply_actual_layer_pk(rows: list[dict[str, Any]]) -> None:
         if final_score is None:
             continue
 
-        delta = round(final_score - float(row["expected_auction_score"]), 2)
-        row["surprise_delta"] = delta
-        row["surprise_label"] = surprise_label(delta)
+        gap = round(final_score - float(row["position_expectation_score"]), 2)
+        row["position_gap"] = gap
+        row["position_gap_label"] = position_gap_label(gap)
         row["absolute_auction_label"] = absolute_label(
             final_score,
             float(auction["normalized_open"]),
@@ -443,14 +444,17 @@ def review_days(
             "stage1": expectation["stage1"],
             "candidates": rows,
             "contracts": {
-                "expected_E": "只由节点日T及以前的自身证据与预期层内PK冻结",
+                "position_E": "只由节点日T及以前的地位证据与预期层内PK冻结",
                 "actual_A": "只使用T+1集合竞价开盘强度与实际层内PK；V2不含竞价量",
-                "delta": "Δ=A-E；A与E在同一0至100刻度",
+                "position_gap": (
+                    "G_position=A-E_position；只表示竞价相对地位要求的偏离，"
+                    "不是最终超预期，也不生成买卖结论"
+                ),
                 "same_ladder_pk": (
-                    "E与A都比较冻结梯队内全部自然票；单票时因子缺席。"
+                    "E_position与A都比较冻结梯队内全部自然票；单票时因子缺席。"
                     "多票竞价缺任一票时不降级计算最终A"
                 ),
-                "after_close": "仅供事后校准，绝不参与E、A或Δ",
+                "after_close": "仅供事后校准，绝不参与E_position、A或G_position",
                 "auction_one_price_factor": "按当前约定不接入，权重为0",
             },
         })
@@ -480,11 +484,11 @@ def scores_at_pk_weight(
     row: dict[str, Any],
     weight: float,
 ) -> tuple[float, float, float]:
-    expected_evidence = row["expected_score_evidence"]
+    expected_evidence = row["position_score_evidence"]
     actual_pk = row["actual_auction"]["same_ladder_pk"]
     expected, _ = compose_score(
         float(expected_evidence["candidate_evidence_score"]),
-        expected_evidence["expected_pk_score"],
+        expected_evidence["position_pk_score"],
         weight=weight,
     )
     actual, _ = compose_score(
@@ -505,7 +509,6 @@ def pk_weight_comparison(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ]
         expected = [item[1] for item in scored]
         actual = [item[2] for item in scored]
-        deltas = [item[3] for item in scored]
         continued = [item for item in scored if item[0]["after_close_outcome"]["continued_limit"]]
         failed = [item for item in scored if not item[0]["after_close_outcome"]["continued_limit"]]
         strong_positive = [
@@ -517,11 +520,11 @@ def pk_weight_comparison(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
         continued_actual = [item[2] for item in continued]
         failed_actual = [item[2] for item in failed]
-        continued_delta = [item[3] for item in continued]
-        failed_delta = [item[3] for item in failed]
+        continued_gap = [item[3] for item in continued]
+        failed_gap = [item[3] for item in failed]
         variants.append({
             "pk_weight": weight,
-            "mean_expected_E": mean_or_none(expected),
+            "mean_position_E": mean_or_none(expected),
             "mean_actual_A": mean_or_none(actual),
             "mae": mean_or_none([
                 abs(left - right) for left, right in zip(expected, actual)
@@ -536,12 +539,12 @@ def pk_weight_comparison(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 if continued_actual and failed_actual
                 else None
             ),
-            "continued_vs_failed_delta_gap": (
-                round(mean(continued_delta) - mean(failed_delta), 2)
-                if continued_delta and failed_delta
+            "continued_vs_failed_position_gap": (
+                round(mean(continued_gap) - mean(failed_gap), 2)
+                if continued_gap and failed_gap
                 else None
             ),
-            "strong_and_positive": {
+            "strong_and_above_position": {
                 "count": len(strong_positive),
                 "continued_count": strong_positive_continued,
                 "continued_rate": (
@@ -587,53 +590,53 @@ def same_ladder_pk_diagnostics(
     failed = [
         row for row in rows if not row["after_close_outcome"]["continued_limit"]
     ]
-    expected_leaders = []
+    position_leaders = []
     actual_leaders = []
     actual_non_leaders = []
     for pack in multi_packs:
         candidates = pack["candidates"]
-        expected_leader = max(
+        position_leader = max(
             candidates,
-            key=lambda row: row["expected_score_evidence"]["candidate_evidence_score"],
+            key=lambda row: row["position_score_evidence"]["candidate_evidence_score"],
         )
         actual_leader = max(
             candidates,
             key=lambda row: row["actual_auction"]["opening_strength_evidence_score"],
         )
-        expected_leaders.append(expected_leader)
+        position_leaders.append(position_leader)
         actual_leaders.append(actual_leader)
         actual_non_leaders.extend(
             row for row in candidates if row is not actual_leader
         )
 
-    expected_pk = [
-        float(row["expected_score_evidence"]["expected_pk_score"])
+    position_pk = [
+        float(row["position_score_evidence"]["position_pk_score"])
         for row in rows
     ]
     actual_pk = [
         float(row["actual_auction"]["same_ladder_pk"]["actual_pk_score"])
         for row in rows
     ]
-    pk_delta = lambda row: (
+    pk_position_gap = lambda row: (
         float(row["actual_auction"]["same_ladder_pk"]["actual_pk_score"])
-        - float(row["expected_score_evidence"]["expected_pk_score"])
+        - float(row["position_score_evidence"]["position_pk_score"])
     )
     return {
         "multi_candidate_node_count": len(all_multi_packs),
         "auction_covered_node_count": len(multi_packs),
         "candidate_count": len(rows),
-        "expected_vs_actual_pk_pearson": (
+        "position_vs_actual_pk_pearson": (
             round(value, 4)
-            if (value := pearson(expected_pk, actual_pk)) is not None
+            if (value := pearson(position_pk, actual_pk)) is not None
             else None
         ),
-        "mean_pk_surprise_continued": mean_or_none([
-            pk_delta(row) for row in continued
+        "mean_pk_position_gap_continued": mean_or_none([
+            pk_position_gap(row) for row in continued
         ]),
-        "mean_pk_surprise_not_continued": mean_or_none([
-            pk_delta(row) for row in failed
+        "mean_pk_position_gap_not_continued": mean_or_none([
+            pk_position_gap(row) for row in failed
         ]),
-        "node_expected_layer_leader": rate_summary(expected_leaders),
+        "node_position_layer_leader": rate_summary(position_leaders),
         "auction_actual_layer_leader": rate_summary(actual_leaders),
         "auction_actual_non_leader": rate_summary(actual_non_leaders),
     }
@@ -647,18 +650,18 @@ def outcome_summary(rows: list[dict[str, Any]], continued: bool) -> dict[str, An
     ]
     return {
         "count": len(subset),
-        "mean_expected_E": mean_or_none([
-            float(row["expected_auction_score"]) for row in subset
+        "mean_position_E": mean_or_none([
+            float(row["position_expectation_score"]) for row in subset
         ]),
         "mean_actual_A": mean_or_none([
             float(row["actual_auction"]["score"])
             for row in subset
             if row["actual_auction"]["score"] is not None
         ]),
-        "mean_delta": mean_or_none([
-            float(row["surprise_delta"])
+        "mean_position_gap": mean_or_none([
+            float(row["position_gap"])
             for row in subset
-            if row["surprise_delta"] is not None
+            if row["position_gap"] is not None
         ]),
     }
 
@@ -680,23 +683,23 @@ def backtest(
     covered = [
         row for row in rows if row["actual_auction"]["score"] is not None
     ]
-    expected = [float(row["expected_auction_score"]) for row in covered]
+    expected = [float(row["position_expectation_score"]) for row in covered]
     actual = [float(row["actual_auction"]["score"]) for row in covered]
-    deltas = [float(row["surprise_delta"]) for row in covered]
+    gaps = [float(row["position_gap"]) for row in covered]
 
-    by_surprise = []
+    by_position_gap = []
     for label in (
-        "大幅超预期",
-        "超预期",
-        "符合预期",
-        "不及预期",
-        "大幅不及预期",
+        "大幅高于地位预期",
+        "高于地位预期",
+        "符合地位预期",
+        "低于地位预期",
+        "大幅低于地位预期",
     ):
-        subset = [row for row in covered if row["surprise_label"] == label]
+        subset = [row for row in covered if row["position_gap_label"] == label]
         continued_count = sum(
             row["after_close_outcome"]["continued_limit"] for row in subset
         )
-        by_surprise.append({
+        by_position_gap.append({
             "label": label,
             "count": len(subset),
             "continued_count": continued_count,
@@ -708,7 +711,7 @@ def backtest(
     component_correlations = {}
     for component in COMPONENT_NAMES:
         values = [
-            float(row["node_component_scores"][component]) for row in covered
+            float(row["position_component_scores"][component]) for row in covered
         ]
         value = pearson(values, actual)
         component_correlations[component] = (
@@ -717,10 +720,10 @@ def backtest(
 
     auction_matrix = []
     matrix_specs = (
-        ("A强且超预期", lambda row: row["actual_auction"]["score"] >= 80 and row["surprise_delta"] >= 7),
-        ("A强但未超预期", lambda row: row["actual_auction"]["score"] >= 80 and row["surprise_delta"] < 7),
-        ("A弱但超预期", lambda row: row["actual_auction"]["score"] < 80 and row["surprise_delta"] >= 7),
-        ("A弱且未超预期", lambda row: row["actual_auction"]["score"] < 80 and row["surprise_delta"] < 7),
+        ("A强且高于地位预期", lambda row: row["actual_auction"]["score"] >= 80 and row["position_gap"] >= 7),
+        ("A强但未高于地位预期", lambda row: row["actual_auction"]["score"] >= 80 and row["position_gap"] < 7),
+        ("A弱但高于地位预期", lambda row: row["actual_auction"]["score"] < 80 and row["position_gap"] >= 7),
+        ("A弱且未高于地位预期", lambda row: row["actual_auction"]["score"] < 80 and row["position_gap"] < 7),
     )
     for label, predicate in matrix_specs:
         subset = [row for row in covered if predicate(row)]
@@ -745,9 +748,9 @@ def backtest(
         daily_top.append({
             "date": pack["node_date"],
             "name": top["name"],
-            "expected_E": top["expected_auction_score"],
+            "position_E": top["position_expectation_score"],
             "actual_A": top["actual_auction"]["score"],
-            "delta": top["surprise_delta"],
+            "position_gap": top["position_gap"],
             "continued": top["after_close_outcome"]["continued_limit"],
         })
 
@@ -758,10 +761,10 @@ def backtest(
         "node_count": len(packs),
         "candidate_count": len(rows),
         "auction_covered_count": len(covered),
-        "expectation_vs_actual": {
-            "mean_expected_E": mean_or_none(expected),
+        "position_expectation_vs_actual": {
+            "mean_position_E": mean_or_none(expected),
             "mean_actual_A": mean_or_none(actual),
-            "mean_delta": mean_or_none(deltas),
+            "mean_position_gap": mean_or_none(gaps),
             "mae": mean_or_none([
                 abs(left - right) for left, right in zip(expected, actual)
             ]),
@@ -793,13 +796,13 @@ def backtest(
         "pk_weight_comparison": pk_weight_comparison(covered),
         "continued": outcome_summary(covered, True),
         "not_continued": outcome_summary(covered, False),
-        "by_surprise": by_surprise,
-        "absolute_and_surprise_matrix": {
+        "by_position_gap": by_position_gap,
+        "absolute_and_position_gap_matrix": {
             "strong_actual_threshold": 80,
-            "positive_surprise_threshold": 7,
+            "above_position_threshold": 7,
             "rows": auction_matrix,
         },
-        "daily_top_expected": {
+        "daily_top_position": {
             "count": len(daily_top),
             "continued_count": sum(row["continued"] for row in daily_top),
             "continued_rate": (
@@ -827,16 +830,16 @@ def markdown_review(pack: dict[str, Any]) -> str:
         f"## {pack['node_date']} → {pack['action_date']}｜"
         f"{pack['stage1']['target_height']}板｜模型={pack['stage1']['model']}",
         "",
-        "|节点名次|候选|预期E|预期PK|实际A|开盘证据|实际PK|PKΔ|Δ|判断|竞价涨幅|次日晋级*|",
+        "|节点名次|候选|地位E_position|地位侧PK|实际A|开盘证据|实际PK|PK地位差|地位差|判断|竞价涨幅|次日晋级*|",
         "|---:|---|---:|---:|---:|---:|---:|---:|---:|---|---:|:---:|",
     ]
     for row in pack["candidates"]:
         auction = row["actual_auction"]
         actual = auction["score"]
-        delta = row["surprise_delta"]
-        expected_pk = row["expected_score_evidence"]["expected_pk_score"]
+        gap = row["position_gap"]
+        expected_pk = row["position_score_evidence"]["position_pk_score"]
         actual_pk = auction["same_ladder_pk"]["actual_pk_score"]
-        pk_delta = auction["same_ladder_pk"]["pk_surprise_delta"]
+        pk_gap = auction["same_ladder_pk"]["position_pk_gap"]
         expected_pk_text = f"{expected_pk:.2f}" if expected_pk is not None else "—"
         actual_text = f"{actual:.2f}" if actual is not None else "缺失"
         opening_text = (
@@ -845,10 +848,10 @@ def markdown_review(pack: dict[str, Any]) -> str:
             else "缺失"
         )
         actual_pk_text = f"{actual_pk:.2f}" if actual_pk is not None else "—"
-        pk_delta_text = f"{pk_delta:+.2f}" if pk_delta is not None else "—"
-        delta_text = f"{delta:+.2f}" if delta is not None else "—"
+        pk_gap_text = f"{pk_gap:+.2f}" if pk_gap is not None else "—"
+        gap_text = f"{gap:+.2f}" if gap is not None else "—"
         judgment = (
-            f"{row['surprise_label']} / {row['absolute_auction_label']}"
+            f"{row['position_gap_label']} / {row['absolute_auction_label']}"
             if actual is not None
             else "无法计算"
         )
@@ -859,40 +862,40 @@ def markdown_review(pack: dict[str, Any]) -> str:
         )
         lines.append(
             f"|{row['node_rank']}|{row['name']}({row['code']})|"
-            f"{row['expected_auction_score']:.2f}|{expected_pk_text}|"
-            f"{actual_text}|{opening_text}|{actual_pk_text}|{pk_delta_text}|"
-            f"{delta_text}|"
+            f"{row['position_expectation_score']:.2f}|{expected_pk_text}|"
+            f"{actual_text}|{opening_text}|{actual_pk_text}|{pk_gap_text}|"
+            f"{gap_text}|"
             f"{judgment}|{open_pct_text}|"
             f"{'是' if row['after_close_outcome']['continued_limit'] else '否'}|"
         )
     lines.extend([
         "",
-        "\\* 次日晋级是收盘后验，只用于校准，不参与 E、A 或 Δ。",
+        "\\* 次日晋级是收盘后验，只用于校准，不参与 E_position、A 或地位差。",
         "V2 的 A 由竞价开盘强度与同梯队实际PK组成；单票梯队不计算PK。"
-        "竞价量与全市场竞价一字暂未接入。",
+        "竞价量与全市场竞价一字暂未接入；地位差不是最终超预期。",
     ])
     return "\n".join(lines)
 
 
 def markdown_backtest(result: dict[str, Any]) -> str:
-    summary = result["expectation_vs_actual"]
+    summary = result["position_expectation_vs_actual"]
     continued = result["continued"]
     failed = result["not_continued"]
-    daily_top = result["daily_top_expected"]
+    daily_top = result["daily_top_position"]
     pk = result["same_ladder_pk_diagnostics"]
     lines = [
-        "# 竞价预期后验校准",
+        "# 地位预期与竞价强度后验校准",
         "",
         f"节点 {result['node_count']}，候选 {result['candidate_count']}，"
         f"竞价覆盖 {result['auction_covered_count']}。",
-        f"E/A 均值：{summary['mean_expected_E']} / {summary['mean_actual_A']}；"
+        f"E_position/A 均值：{summary['mean_position_E']} / {summary['mean_actual_A']}；"
         f"MAE={summary['mae']}，相关系数={summary['pearson']}。",
-        f"晋级组 {continued['count']}：E/A/Δ 均值 "
-        f"{continued['mean_expected_E']} / {continued['mean_actual_A']} / "
-        f"{continued['mean_delta']:+.2f}。",
-        f"未晋级组 {failed['count']}：E/A/Δ 均值 "
-        f"{failed['mean_expected_E']} / {failed['mean_actual_A']} / "
-        f"{failed['mean_delta']:+.2f}。",
+        f"晋级组 {continued['count']}：E_position/A/地位差均值 "
+        f"{continued['mean_position_E']} / {continued['mean_actual_A']} / "
+        f"{continued['mean_position_gap']:+.2f}。",
+        f"未晋级组 {failed['count']}：E_position/A/地位差均值 "
+        f"{failed['mean_position_E']} / {failed['mean_actual_A']} / "
+        f"{failed['mean_position_gap']:+.2f}。",
         f"节点日预期第一名次日晋级：{daily_top['continued_count']}/"
         f"{daily_top['count']}（{daily_top['continued_rate']:.1%}）。",
         f"多票节点实际竞价层内第一："
@@ -903,10 +906,10 @@ def markdown_backtest(result: dict[str, Any]) -> str:
         f"{pk['auction_actual_non_leader']['count']}"
         f"（{pk['auction_actual_non_leader']['continued_rate']:.1%}）。",
         "",
-        "|超预期分组|样本|晋级|晋级率|",
+        "|相对地位预期分组|样本|晋级|晋级率|",
         "|---|---:|---:|---:|",
     ]
-    for row in result["by_surprise"]:
+    for row in result["by_position_gap"]:
         rate = (
             f"{row['continued_rate']:.1%}"
             if row["continued_rate"] is not None
@@ -917,10 +920,10 @@ def markdown_backtest(result: dict[str, Any]) -> str:
         )
     lines.extend([
         "",
-        "|实际A与Δ交叉|样本|晋级|晋级率|",
+        "|实际A与地位差交叉|样本|晋级|晋级率|",
         "|---|---:|---:|---:|",
     ])
-    for row in result["absolute_and_surprise_matrix"]["rows"]:
+    for row in result["absolute_and_position_gap_matrix"]["rows"]:
         rate = (
             f"{row['continued_rate']:.1%}"
             if row["continued_rate"] is not None
@@ -931,11 +934,11 @@ def markdown_backtest(result: dict[str, Any]) -> str:
         )
     lines.extend([
         "",
-        "|PK权重|E/A相关|MAE|晋级-失败 A差|晋级-失败 Δ差|A强且超预期 命中|",
+        "|PK权重|E_position/A相关|MAE|晋级-失败 A差|晋级-失败地位差|A强且高于地位预期 命中|",
         "|---:|---:|---:|---:|---:|---:|",
     ])
     for row in result["pk_weight_comparison"]:
-        selected = row["strong_and_positive"]
+        selected = row["strong_and_above_position"]
         selected_rate = (
             f"{selected['continued_count']}/{selected['count']} "
             f"({selected['continued_rate']:.1%})"
@@ -945,7 +948,7 @@ def markdown_backtest(result: dict[str, Any]) -> str:
         lines.append(
             f"|{row['pk_weight']:.0%}|{row['pearson']}|{row['mae']}|"
             f"{row['continued_vs_failed_actual_A_gap']}|"
-            f"{row['continued_vs_failed_delta_gap']}|{selected_rate}|"
+            f"{row['continued_vs_failed_position_gap']}|{selected_rate}|"
         )
     lines.extend([
         "",

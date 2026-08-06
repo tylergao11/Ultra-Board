@@ -36,19 +36,14 @@ from ultraboard.kaipanla.ladder_evidence import (
 from ultraboard.limits import limit_down_price, limit_up_price
 from ultraboard.review.auction_score import review_days
 from ultraboard.review.break_nodes import detect_break_node, list_break_nodes
-from ultraboard.review.candidate_initial_score import score_day
+from ultraboard.review.candidate_initial_score import DIMENSION_LABELS, score_day
 
 
 ROOT = Path(__file__).resolve().parents[1]
 NON_TRADING_PATH = ROOT / "data" / "kaipanla" / "non_trading_days.json"
 CN_TZ = timezone(timedelta(hours=8))
-COMPONENT_LABELS = {
-    "layer_model_height": "梯队结构",
-    "market_theme_position": "市场题材",
-    "candidate_theme_role": "板块地位",
-    "seal_initiative": "上板主动性",
-    "post_seal_propagation": "后续助攻",
-}
+PUBLIC_SCHEMA_VERSION = 2
+COMPONENT_LABELS = DIMENSION_LABELS
 COMPONENT_PUBLIC_KEYS = {
     "layer_model_height": "layer_structure",
     "market_theme_position": "market_theme",
@@ -56,8 +51,6 @@ COMPONENT_PUBLIC_KEYS = {
     "seal_initiative": "seal_initiative",
     "post_seal_propagation": "post_seal_support",
 }
-VOLUME_SHRINK_MAX = 0.75
-VOLUME_BURST_MIN = 1.50
 
 
 def compact_json(value: Any) -> str:
@@ -121,7 +114,7 @@ def daily_market_payload(day: str) -> dict[str, Any]:
         limit_reason_ranking=ranking,
     )
     return {
-        "schemaVersion": 1,
+        "schemaVersion": PUBLIC_SCHEMA_VERSION,
         "tradeDate": day,
         "dataCutoff": f"{day} 收盘",
         "limitCount": int(market.get("limit_count") or 0),
@@ -144,7 +137,7 @@ def daily_market_payload(day: str) -> dict[str, Any]:
                 "rank": int(row["rank"]),
                 "theme": str(row["theme"]),
                 "count": int(row.get("reported_count") or 0),
-                "turnoverAmount": int(row.get("turnover_amount") or 0),
+                "themeAmount": int(row.get("theme_amount") or 0),
                 "displayColor": str(row.get("display_color") or "neutral"),
             }
             for row in ranking
@@ -187,7 +180,6 @@ def daily_stock_rows(day: str) -> list[dict[str, Any]]:
             "sectorCode": str(stock.get("sector_code") or ""),
             "firstLimitAt": integer(stock.get("first_limit_ts")),
             "firstLimitTime": seal_time(stock.get("first_limit_ts")),
-            "turnoverPct": number(stock.get("turnover_rate")),
             "amount": amount_of(stock),
             "closePrice": number(bar.get("close") or stock.get("price")),
             "limitPct": number(stock.get("limit_pct")),
@@ -218,23 +210,13 @@ def build_daily_bundle(day: str) -> dict[str, Any]:
         compact_json({"market": market, "stocks": stocks}).encode("utf-8")
     ).hexdigest()[:20]
     return {
-        "schemaVersion": 1,
+        "schemaVersion": PUBLIC_SCHEMA_VERSION,
         "tradeDate": day,
         "publishedAt": china_iso(day, "18:00:00"),
         "revision": revision,
         "market": market,
         "stocks": stocks,
     }
-
-
-def volume_state(ratio: float | None) -> str:
-    if ratio is None:
-        return "量能缺失"
-    if ratio <= VOLUME_SHRINK_MAX:
-        return "缩量"
-    if ratio >= VOLUME_BURST_MIN:
-        return "爆量"
-    return "平量"
 
 
 def previous_high_result(
@@ -277,7 +259,6 @@ def previous_high_result(
         "theme": str(leader.get("theme") or ""),
         "routeThemes": [str(item) for item in route.get("themes") or []],
         "outcome": outcome,
-        "volumeState": volume_state(ratio),
         "volumeRatio": round(ratio, 2) if ratio is not None else None,
         "openPct": (
             round((open_price / prev_close - 1) * 100, 2)
@@ -331,9 +312,10 @@ def build_review_snapshot(day: str) -> dict[str, Any]:
             "code": code,
             "name": str(stock.get("name") or ""),
             "height": target_height,
-            "score": number((scored or {}).get("expected_auction_score")),
-            "scoreRank": integer((scored or {}).get("rank")),
-            "grade": (scored or {}).get("expectation_grade"),
+            "positionScore": number(
+                (scored or {}).get("position_expectation_score")
+            ),
+            "positionRank": integer((scored or {}).get("rank")),
             "theme": str(stock.get("theme") or ""),
             "effectiveTheme": str(identity.get("effective_theme") or ""),
             "routeThemes": [
@@ -351,7 +333,6 @@ def build_review_snapshot(day: str) -> dict[str, Any]:
             "metrics": {
                 "openPct": number(stock.get("open_pct")),
                 "firstSeal": seal_time(stock.get("first_limit_ts")),
-                "turnoverPct": number(stock.get("turnover_rate")),
             },
             "components": [
                 {
@@ -386,8 +367,8 @@ def build_review_snapshot(day: str) -> dict[str, Any]:
             },
         })
     candidates.sort(key=lambda row: (
-        row["score"] is None,
-        -(row["score"] or 0),
+        row["positionScore"] is None,
+        -(row["positionScore"] or 0),
         row["metrics"]["firstSeal"] or "99:99:99",
         row["code"],
     ))
@@ -415,7 +396,7 @@ def build_review_snapshot(day: str) -> dict[str, Any]:
         })
 
     return {
-        "schemaVersion": 1,
+        "schemaVersion": PUBLIC_SCHEMA_VERSION,
         "capability": "break_day",
         "nodeDate": day,
         "actionDate": next_expected_trade_day(day),
@@ -452,19 +433,13 @@ def action_status(row: dict[str, Any]) -> tuple[str, str]:
     if trading_status == "not_traded":
         return "停牌/无交易", "行动日经双行情源确认无日K，不属于数据缺失"
     actual = as_float((row.get("actual_auction") or {}).get("score"))
-    delta = as_float(row.get("surprise_delta"))
-    normalized = as_float((row.get("actual_auction") or {}).get("normalized_open"))
-    if actual is None or delta is None:
+    position_gap = as_float(row.get("position_gap"))
+    if actual is None or position_gap is None:
         return "数据待齐", "冻结梯队内竞价数据尚未完整"
-    if normalized is not None and normalized >= 0.995:
-        return "观察", "涨停价竞价；历史数据没有委托队列，不能判断是否买得到"
-    if delta <= -15:
-        return "预期破坏", "实际竞价相对节点日要求大幅走弱"
-    if actual >= 80 and delta >= 7:
-        return "等待上板确认", "竞价强度与超预期幅度同时成立"
-    if actual >= 70 and delta >= -7:
-        return "观察", "竞价保持强势，但仍需等价格行为确认"
-    return "暂不操作", "竞价强度或相对预期不足"
+    return (
+        "待最终评分",
+        "当前只有竞价强度与地位预期差；尚未合入爆量评分和个股次日任务",
+    )
 
 
 def build_auction_snapshot(day: str) -> dict[str, Any] | None:
@@ -495,10 +470,12 @@ def build_auction_snapshot(day: str) -> dict[str, Any] | None:
             "code": row["code"],
             "name": row["name"],
             "theme": row["scoring_theme"],
-            "nodeScore": number(row["expected_auction_score"]),
+            "positionScore": number(row["position_expectation_score"]),
             "auctionScore": number(auction.get("score")),
-            "delta": number(row.get("surprise_delta")),
-            "surpriseLabel": str(row.get("surprise_label") or "无法计算"),
+            "positionGap": number(row.get("position_gap")),
+            "positionGapLabel": str(
+                row.get("position_gap_label") or "无法计算"
+            ),
             "auctionLabel": str(row.get("absolute_auction_label") or "无法计算"),
             "openPct": number(auction.get("open_pct")),
             "limitPct": number(auction.get("limit_pct")),
@@ -517,7 +494,7 @@ def build_auction_snapshot(day: str) -> dict[str, Any] | None:
         row["code"],
     ))
     return {
-        "schemaVersion": 1,
+        "schemaVersion": PUBLIC_SCHEMA_VERSION,
         "capability": "break_day",
         "nodeDate": day,
         "actionDate": action_day,
@@ -610,7 +587,7 @@ def build_seed_sql() -> tuple[str, dict[str, int]]:
     stock_columns = [
         "trade_date", "revision", "code", "name", "boards", "boards_desc",
         "theme", "route_themes", "theme_path", "sector_code", "first_limit_at",
-        "first_limit_time", "turnover_pct", "amount", "close_price", "limit_pct",
+        "first_limit_time", "amount", "close_price", "limit_pct",
         "open_price", "high_price", "low_price", "previous_close", "open_pct",
         "volume", "is_fanbao", "is_announcement", "announcement_type",
         "announcement_origin_date", "is_one_price",
@@ -624,7 +601,7 @@ def build_seed_sql() -> tuple[str, dict[str, int]]:
                 stock["boards"], stock["boardsDesc"], stock["theme"],
                 compact_json(stock["routeThemes"]), compact_json(stock["themePath"]),
                 stock["sectorCode"], stock["firstLimitAt"], stock["firstLimitTime"],
-                stock["turnoverPct"], stock["amount"], stock["closePrice"],
+                stock["amount"], stock["closePrice"],
                 stock["limitPct"], stock["openPrice"], stock["highPrice"],
                 stock["lowPrice"], stock["previousClose"], stock["openPct"],
                 stock["volume"], stock["isFanbao"], stock["isAnnouncement"],

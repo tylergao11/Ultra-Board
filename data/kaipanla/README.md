@@ -11,6 +11,7 @@ data/kaipanla/
   raw/YYYY-MM-DD/            # 主源日目录
     zt_pool.json             # 涨停池（≥2 可含 open/open_pct）
     ohlc.json                # 当日 ≥2 板 OHLC（梯队算法就绪门禁）
+    ths_limit_pool.json       # 同花顺首封/终封/炸板次数（按需补）
     sector_ladder.json        # 涨停原因题材家数 + 接口源字段/源序 + 板块梯队 + 反包
     sentiment.json
     expression.json
@@ -23,6 +24,7 @@ data/kaipanla/
 ```bash
 python -m ultraboard.kaipanla.backfill   # 回灌 raw
 python -m ultraboard.kaipanla.ohlc       # 补 ≥2 板开盘价（首板不写）
+python -m ultraboard.kaipanla.ths_limit_pool 2025-12-16 # 补板上行为事实
 python -m ultraboard.review.ladder_daily # 生成 ladder_daily/
 ```
 
@@ -40,6 +42,8 @@ python -m ultraboard.review.ladder_daily # 生成 ladder_daily/
 - 真一字只认同一价格口径下开盘价=最高价=最低价；不得用 09:25 首封或开盘涨停代替
 - 梯队材料只列 **≥2 板**；首板 `theme` 可作市场宽度计数，但不改变任何股票的当日身份
 - **开盘%** 仅 ≥2 板；来自日 K 挂载，非开盘啦 raw 自带
+- `ths_limit_pool.json` 只请求首封、终封和炸板次数；不采集同花顺板型或题材，禁止覆盖开盘啦 `theme`
+- 数值换手率只允许保留在源记录中溯源；节点证据、真实爆量分、地位侧预期评分和公开接口均禁止读取
 - 跟随链：安全日文件只保存截至该日已经发生的路径；完整后续路径进入隐藏隔离区
 
 扩展约定见仓库根 `README.md`。

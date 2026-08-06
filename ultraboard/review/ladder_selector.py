@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
-"""第一阶段统一选层器：进攻模型优先，其次逐层检查防守模型，皆无则看自然二板。
+"""节点批次选层器：节点日冻结一次，普通交易日只追踪最近节点批次。
 
-选择器只调用节点日证据包，不读取 T+1、人工标签或隔离区。只有显式执行
+节点日内部仍按进攻模型优先、防守模型次之、皆无则看自然二板。查询任意交易日
+时，先回溯最近有效节点，再追踪当日冻结的原始成员；禁止用查询日的新梯队重选。
+选择与追踪均不读取查询日之后、人工标签或隔离区。只有显式执行
 ``backtest --labels ...`` 时，才把外部人工标签用于结果对照；标签永不进入选层。
 
 用法：
@@ -17,10 +19,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from ultraboard.kaipanla.ladder_evidence import node_evidence
+from ultraboard.kaipanla.ladder_evidence import (
+    available_trade_days,
+    node_evidence,
+    raw_stock_map,
+)
+from ultraboard.review.break_nodes import detect_break_node, latest_break_node
 
 
-POLICY_VERSION = "stage1_attack_first_v9_route_theme_semantics"
+POLICY_VERSION = "stage1_node_batch_v10_active_tracking"
 MODEL_ATTACK = "进攻模型"
 MODEL_DEFENSE = "防守模型"
 MODEL_NONE = "无"
@@ -78,7 +85,10 @@ def _stock_brief(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def select_ladder(day: str) -> dict[str, Any]:
+def _freeze_node_ladder(
+    day: str,
+    node_trigger: dict[str, Any],
+) -> dict[str, Any]:
     evidence = node_evidence(day, history_days=0)
     rows = evidence["candidates"]
     grouped = _by_height(rows)
@@ -185,9 +195,14 @@ def select_ladder(day: str) -> dict[str, Any]:
     selected_rows = grouped.get(selected_height, []) if selected_height else []
     return {
         "policy_version": POLICY_VERSION,
-        "stage": "node_close_ladder_selection",
+        "stage": "node_batch_frozen_selection",
         "date": day,
+        "query_date": day,
+        "node_date": day,
+        "is_node_date": True,
         "information_cutoff": day,
+        "selection_information_cutoff": day,
+        "node_trigger": node_trigger,
         "target_height": selected_height,
         "model": model,
         "selected_by": selected_by,
@@ -205,6 +220,13 @@ def select_ladder(day: str) -> dict[str, Any]:
         "limit_reason_top_two": evidence["market"]["limit_reason_top_two"],
         "contracts": {
             "future_data": "禁止读取T+1；本结果只使用information_cutoff当日及以前",
+            "node_trigger": (
+                "上一交易日最高自然梯队全部断板才形成节点；"
+                "只要仍有一只晋级就不产生新节点"
+            ),
+            "batch": (
+                "目标梯队只在节点日冻结一次；后续交易日不得用当日新梯队重选或补入新票"
+            ),
             "announcement": evidence["announcement_contract"],
             "theme": evidence["theme_contract"],
             "defense": (
@@ -214,6 +236,153 @@ def select_ladder(day: str) -> dict[str, Any]:
             "candidate_boundary": "脚本只选梯队；第二阶段AI只能在已选梯队内选票或放弃",
         },
     }
+
+
+def select_node_ladder(day: str) -> dict[str, Any]:
+    """严格在真实节点日冻结目标梯队；非节点日拒绝重新选层。"""
+    node_trigger = detect_break_node(day)
+    if not node_trigger["is_break_node"]:
+        raise ValueError(f"{day} 不是节点日：{node_trigger['reason']}")
+    return _freeze_node_ladder(day, node_trigger)
+
+
+def _track_batch_member(
+    member: dict[str, Any],
+    *,
+    node_date: str,
+    query_date: str,
+    trade_days: list[str],
+) -> dict[str, Any]:
+    node_height = int(member["height"])
+    last_height = node_height
+    last_active_date = node_date
+    exit_date: str | None = None
+    observed_exit_height: int | None = None
+    current_theme = (
+        (raw_stock_map(node_date).get(member["code"]) or {}).get("theme") or ""
+    )
+
+    node_index = trade_days.index(node_date)
+    query_index = trade_days.index(query_date)
+    for route_day in trade_days[node_index + 1 : query_index + 1]:
+        stock = raw_stock_map(route_day).get(member["code"])
+        actual_height = int(stock.get("boards") or 0) if stock else None
+        if actual_height == last_height + 1:
+            last_height = actual_height
+            last_active_date = route_day
+            current_theme = stock.get("theme") or ""
+            continue
+        exit_date = route_day
+        observed_exit_height = actual_height
+        break
+
+    active = exit_date is None
+    return {
+        **member,
+        "node_height": node_height,
+        "status": "active" if active else "exited",
+        "status_label": "在队" if active else "断板离队",
+        "current_height": last_height if active else None,
+        "last_height": last_height,
+        "last_active_date": last_active_date,
+        "exit_date": exit_date,
+        "observed_exit_height": observed_exit_height,
+        "current_theme": current_theme if active else None,
+    }
+
+
+def _track_frozen_batch(
+    frozen: dict[str, Any],
+    query_date: str,
+) -> list[dict[str, Any]]:
+    trade_days = list(available_trade_days())
+    if query_date not in trade_days:
+        raise ValueError(f"不存在交易日数据: {query_date}")
+    node_date = str(frozen["node_date"])
+    if trade_days.index(query_date) < trade_days.index(node_date):
+        raise ValueError(f"查询日 {query_date} 早于节点日 {node_date}")
+    return [
+        _track_batch_member(
+            member,
+            node_date=node_date,
+            query_date=query_date,
+            trade_days=trade_days,
+        )
+        for member in frozen["selected_layer"]
+    ]
+
+
+def _no_active_node(day: str) -> dict[str, Any]:
+    return {
+        "policy_version": POLICY_VERSION,
+        "stage": "active_node_batch_tracking",
+        "date": day,
+        "query_date": day,
+        "node_date": None,
+        "is_node_date": False,
+        "information_cutoff": day,
+        "selection_information_cutoff": None,
+        "node_trigger": None,
+        "target_height": None,
+        "model": None,
+        "selected_by": "no_active_break_node",
+        "reason": f"截至{day}尚未检测到有效节点，无法建立节点批次",
+        "tracking_reason": "没有可继承的节点批次",
+        "natural_highest": None,
+        "attack_check": {},
+        "defense_checks": [],
+        "selected_layer": [],
+        "batch_members": [],
+        "active_layer": [],
+        "active_natural_candidates": [],
+        "limit_reason_top_two": [],
+        "contracts": {
+            "future_data": f"只读取{day}及以前，不读取后续交易日",
+            "node_trigger": (
+                "上一交易日最高自然梯队全部断板才形成节点；"
+                "只要仍有一只晋级就不产生新节点"
+            ),
+            "batch": "没有有效节点时不从普通交易日临时创建目标梯队",
+        },
+    }
+
+
+def select_ladder(day: str) -> dict[str, Any]:
+    """查询任意交易日所属的最近节点批次，并追踪冻结成员至当日。"""
+    node_trigger = latest_break_node(day)
+    if node_trigger is None:
+        return _no_active_node(day)
+
+    node_date = str(node_trigger["date"])
+    frozen = _freeze_node_ladder(node_date, node_trigger)
+    members = _track_frozen_batch(frozen, day)
+    active_layer = [row for row in members if row["status"] == "active"]
+    result = {
+        **frozen,
+        "stage": "active_node_batch_tracking",
+        "date": day,
+        "query_date": day,
+        "is_node_date": day == node_date,
+        "information_cutoff": day,
+        "batch_members": members,
+        "active_layer": active_layer,
+        "active_natural_candidates": [
+            row for row in active_layer if not row["announcement"]
+        ],
+        "tracking_reason": (
+            f"{day}形成新节点并冻结本批次"
+            if day == node_date
+            else f"{day}未形成更新节点，沿用{node_date}冻结的节点批次"
+        ),
+    }
+    result["contracts"] = {
+        **frozen["contracts"],
+        "future_data": (
+            f"选层只读取{node_date}及以前；批次追踪只读取{day}及以前；"
+            "不读取查询日后的交易数据"
+        ),
+    }
+    return result
 
 
 def load_labels(path: Path, *, include_review: bool) -> list[dict[str, Any]]:
@@ -229,7 +398,7 @@ def backtest(path: Path, *, include_review: bool = False) -> dict[str, Any]:
     labels = load_labels(path, include_review=include_review)
     rows = []
     for label in labels:
-        prediction = select_ladder(str(label["date"]))
+        prediction = select_node_ladder(str(label["date"]))
         expected_height = label.get("target_height")
         expected_model = label.get("model")
         height_hit = prediction["target_height"] == expected_height
@@ -277,32 +446,61 @@ def backtest(path: Path, *, include_review: bool = False) -> dict[str, Any]:
 
 
 def markdown_selection(result: dict[str, Any]) -> str:
+    node_date = result.get("node_date")
+    if node_date is None:
+        return "\n".join([
+            f"## {result['date']}｜无有效节点批次",
+            "",
+            result["reason"],
+            "",
+            f"信息边界：只到{result['date']}，不含后续交易日。",
+        ])
+
+    if result["date"] == node_date:
+        title = (
+            f"## {result['date']}｜新节点批次{result['target_height'] or '无'}板｜"
+            f"模型={result['model'] or '无目标'}"
+        )
+    else:
+        title = (
+            f"## {result['date']}｜沿用{node_date}节点批次｜"
+            f"冻结{result['target_height'] or '无'}板｜模型={result['model'] or '无目标'}"
+        )
     lines = [
-        f"## {result['date']}｜{result['target_height'] or '无'}板｜模型={result['model'] or '无目标'}",
+        title,
         "",
         result["reason"],
-        f"最高自然梯队：{result['natural_highest'] or '无'}板",
+        result.get("tracking_reason") or "",
+        f"节点日最高自然梯队：{result['natural_highest'] or '无'}板",
         "",
-        "目标层角色：",
+        "冻结批次：",
     ]
-    for row in result["selected_layer"]:
+    members = result.get("batch_members") or result["selected_layer"]
+    for row in members:
         tags = [row["role"]]
         if row["one_price"]:
             tags.append("一字")
         if row["announcement_type"]:
             tags.append(row["announcement_type"])
+        if row.get("status") == "active":
+            tags.append(f"在队 {row['node_height']}→{row['current_height']}板")
+        elif row.get("status") == "exited":
+            tags.append(f"{row['exit_date']}断板离队")
         lines.append(f"- {row['name']}({row['code']})：{' / '.join(tags)}")
-    if not result["selected_layer"]:
+    if not members:
         lines.append("- 无")
     lines.extend([
         "",
-        "涨停原因发酵前二：" + "、".join(
+        "节点日涨停原因发酵前二：" + "、".join(
             f"{row['rank']}.{row['theme']}({row['reported_count']}家/"
-            f"{row['turnover_amount'] / 1e8:.2f}亿)"
+            f"{row['theme_amount'] / 1e8:.2f}亿)"
             for row in result["limit_reason_top_two"]
         ),
         "",
-        "信息边界：只到节点日收盘，不含 T+1。",
+        (
+            f"信息边界：选层截止{node_date}；批次追踪截止{result['date']}；"
+            "不读取查询日后的交易数据。"
+        ),
     ])
     return "\n".join(lines)
 
@@ -345,8 +543,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    select_parser = subparsers.add_parser("select", help="只使用节点日证据统一选层")
-    select_parser.add_argument("dates", nargs="+", help="节点日 YYYY-MM-DD")
+    select_parser = subparsers.add_parser(
+        "select",
+        help="查询任意交易日所属的最近节点批次",
+    )
+    select_parser.add_argument("dates", nargs="+", help="查询交易日 YYYY-MM-DD")
     select_parser.add_argument(
         "--format", choices=("markdown", "json"), default="markdown"
     )

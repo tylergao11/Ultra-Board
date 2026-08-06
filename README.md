@@ -21,18 +21,20 @@ python -m ultraboard.review.ladder_daily
 python -m ultraboard.kaipanla.ladder_evidence node 2025-12-12
 python -m ultraboard.kaipanla.ladder_evidence pk 2025-12-12:2
 
-# 5) 第一阶段统一选层（严格不读 T+1）
-python -m ultraboard.review.ladder_selector select 2025-12-12
+# 5) 查询任意交易日所属的节点批次：节点日冻结，普通日只追踪（不读查询日之后）
+python -m ultraboard.review.ladder_selector select 2025-11-06
 
 # 显式事后回测；普通 select 不读取标签
 python -m ultraboard.review.ladder_selector backtest --labels .blind-test-quarantine/labels/stage1_locked.json
 
-# 6) 第二阶段节点日竞价预期分 E（含冻结层内预期 PK，仍严格不读 T+1）
-python -m ultraboard.review.candidate_initial_score 2025-12-24
+# 6) 日内真实爆量证据：按需补同花顺终封/炸板事实，不读取换手率
+python -m ultraboard.review.true_volume_score 2025-12-16 --code 001208 --fetch-missing
 
-# 7) 显式后验：T+1 实际竞价 A、超预期差 Δ 与收盘晋级校准
+# 7) 第二阶段节点日地位侧预期评分 E_position（仍严格不读 T+1）
+python -m ultraboard.review.expectation_score 2025-12-24
+
+# 8) 显式后验：T+1 竞价强度 A、地位预期差 G_position 与收盘校准
 python -m ultraboard.review.auction_score review 2025-12-24 --fetch-missing
-python -m ultraboard.review.auction_score backtest --labels .blind-test-quarantine/labels/stage1_locked.json --fetch-missing
 ```
 
 依赖：
@@ -45,8 +47,8 @@ pip install -r requirements.txt
 
 | 路径 | 角色 |
 |---|---|
-| `ultraboard/kaipanla/` | **采集 / 补全**：接口客户端、回灌、日 K 开盘价 |
-| `ultraboard/review/` | **复盘派生与决策**：节点日统一选层、竞价预期 E，以及显式后验 A/Δ 校准 |
+| `ultraboard/kaipanla/` | **采集 / 补全**：开盘啦主源、同花顺板上行为事实、日 K 开盘价 |
+| `ultraboard/review/` | **复盘派生与决策**：节点日统一选层、真实爆量证据、地位侧预期评分 E_position，以及显式后验竞价强度 A/地位差 G_position |
 | `ultraboard/limits.py` | 涨跌幅 / 一字等**校验**工具（非主采集） |
 | `data/kaipanla/raw/YYYY-MM-DD/` | **主源日目录**（只增不乱改语义） |
 | `data/kaipanla/ladder_daily/` | **派生日录**（可随时重生成） |
@@ -58,7 +60,7 @@ pip install -r requirements.txt
 
 - 客观数据与人工标签共同组成真相库，但事前证据接口禁止读取人工标签。
 - `docs/主升梯队资金迁移与逐日个股PK经验.md` 是唯一判断经验源。
-- 第一阶段选层由 `ladder_selector` 按唯一规则自动完成；第二阶段生成节点日竞价预期 E，并对同梯队自然票做预期／实际 PK，再由显式后验入口计算实际 A 与 Δ。单票梯队不伪造 PK，最终选票、放弃与买卖状态仍不自动宣判。
+- 第一阶段先检测真实节点，只在节点日冻结一次目标梯队；查询普通交易日时沿用最近节点批次，仅更新原成员的晋级或离队状态，不用当日新梯队重选。第二阶段把“真实爆量”和“地位侧预期”分开：前者验证量是否伴随真实筹码交互，后者衡量梯队身位、板块发酵、板块地位、主动性与带动性时序。两者尚不机械合成为最终正常预期；次日任务仍由人工意图判断。显式后验只计算竞价强度 `A` 与相对地位要求的 `G_position`，不冒充最终超预期。
 - README 与命令参数构成薄接口契约；临时赛马、排名和收益报告不长期保存。
 - 节点日盲测只走 `ladder_evidence node DATE`；隔离区仅在用户明确授权事后研究时开放。
 
@@ -74,7 +76,7 @@ pip install -r requirements.txt
    - 价位规则校验 → `ultraboard/limits.py` 或同级小模块
 4. **正式入口唯一**：正式能力放在 `ultraboard/`，临时探针用完即删。
 
-后续可加（当前未做门禁）：爆量规则、修全量 `_MISMATCH`、全历史 OHLC 覆盖、09:25 实时竞价采集器。
+后续可加（当前未做门禁）：终封后分钟／逐笔成交分布、修全量 `_MISMATCH`、全历史 OHLC 覆盖、09:25 实时竞价采集器。
 
 ## 包导入
 

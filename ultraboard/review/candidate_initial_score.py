@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""第二阶段节点日竞价预期分：只在第一阶段冻结梯队内给自然票排序。
+"""第二阶段节点日预期评分：只在第一阶段冻结梯队内给自然票排序。
 
-它把节点日可见的身位、涨停原因榜位置、个股板块地位、首封主动性和首封后
-的同题材传播压成自身证据，再加入冻结梯队内全部自然票的预期 PK，形成一个
-可解释的次日竞价预期分。该入口严格截止节点日，绝不读取实际竞价；实际竞价
-与超预期差由显式后验入口另算。
+它把节点日可见的梯队身位、板块发酵、个股板块地位、上板主动性和后续发酵
+时序压成自身证据，再加入冻结梯队内全部自然票的预期 PK，形成一个可解释的
+次日预期评分。该入口严格截止节点日，绝不读取实际竞价；实际竞价
+与地位预期差由显式后验入口另算。
 
 用法：
 
@@ -31,7 +31,7 @@ from ultraboard.review.ladder_selector import (
     MODEL_ATTACK,
     MODEL_DEFENSE,
     MODEL_NONE,
-    select_ladder,
+    select_node_ladder,
 )
 from ultraboard.review.layer_pk import (
     PK_GAP_SCALE,
@@ -41,7 +41,15 @@ from ultraboard.review.layer_pk import (
 )
 
 
-POLICY_VERSION = "stage2_node_auction_expectation_v3_effective_theme"
+POLICY_VERSION = "stage2_node_expectation_v4_five_dimensions"
+
+DIMENSION_LABELS = {
+    "layer_model_height": "梯队身位",
+    "market_theme_position": "板块发酵",
+    "candidate_theme_role": "板块地位",
+    "seal_initiative": "主动性",
+    "post_seal_propagation": "带动性时序",
+}
 
 # 唯一权重真相源。日内主动性 + 后续传播合计 40%。
 WEIGHTS = {
@@ -236,7 +244,6 @@ def propagation_strength(timeline: dict[str, Any]) -> tuple[float, dict[str, flo
 
 def candidate_role_strength(
     *,
-    current_member: bool,
     candidate_height: int,
     natural_members: list[dict[str, Any]],
 ) -> tuple[float, str, int | None, int]:
@@ -247,8 +254,6 @@ def candidate_role_strength(
         if sector_max is not None
         else 0
     )
-    if not current_member:
-        return 35.0, "沿途题材关联，但节点日有效自然题材不在该板块", sector_max, sector_max_count
     if candidate_height == sector_max and sector_max_count == 1:
         return 100.0, "节点日有效自然题材成员，且为唯一最高身位", sector_max, sector_max_count
     if candidate_height == sector_max:
@@ -304,7 +309,8 @@ def theme_profile(
         or raw_candidate.get("theme")
         or ""
     ).strip()
-    current_member = candidate_effective_theme == theme
+    if candidate_effective_theme != theme:
+        raise ValueError(f"{candidate['name']} 评分题材不是节点日有效题材")
     timeline = timeline_groups(
         natural_members,
         candidate_code,
@@ -320,7 +326,6 @@ def theme_profile(
     market_score = rounded(0.80 * rank_score + 0.20 * breadth_score)
 
     role_score, role, sector_max, sector_max_count = candidate_role_strength(
-        current_member=current_member,
         candidate_height=candidate_height,
         natural_members=natural_members,
     )
@@ -333,15 +338,11 @@ def theme_profile(
 
     return {
         "theme": theme,
-        "current_theme_matched": current_member,
-        "raw_current_theme_matched": (
-            str(raw_candidate.get("theme") or "").strip() == theme
-        ),
         "route_path_steps": theme_evidence.get("path_steps") or [],
         "limit_reason_rank": reason_rank,
         "limit_reason_reported_count": reported_count,
         "pool_current_theme_count": len(raw_current_members),
-        "pool_effective_natural_theme_count": len(effective_members),
+        "pool_effective_natural_theme_count": len(natural_members),
         "reported_count_matches_pool": (
             reported_count == len(raw_current_members)
             if reason_rank is not None
@@ -377,15 +378,6 @@ def theme_profile(
             "seal_initiative": initiative_score,
             "post_seal_propagation": propagation_score,
         },
-        "theme_thesis_score": rounded(
-            (
-                market_score
-                + role_score
-                + initiative_score
-                + propagation_score
-            )
-            / 4.0
-        ),
         "announcement_volume": [
             {
                 **member_brief(row),
@@ -399,18 +391,6 @@ def theme_profile(
     }
 
 
-def grade_of(score: float) -> str:
-    if score >= 85:
-        return "强"
-    if score >= 75:
-        return "偏强"
-    if score >= 65:
-        return "中上"
-    if score >= 55:
-        return "观察"
-    return "弱"
-
-
 def score_candidate(
     *,
     candidate: dict[str, Any],
@@ -420,7 +400,14 @@ def score_candidate(
     reason_by_theme: dict[str, dict[str, Any]],
     natural_layer_count: int,
 ) -> dict[str, Any]:
-    theme_evidence_rows = list(candidate.get("route_theme_evidence") or [])
+    current_theme = str(
+        candidate.get("effective_theme") or candidate.get("theme") or ""
+    ).strip()
+    theme_evidence_rows = [
+        row
+        for row in (candidate.get("route_theme_evidence") or [])
+        if str(row.get("theme") or "").strip() == current_theme
+    ]
     if not theme_evidence_rows and (
         candidate.get("effective_theme") or candidate.get("theme")
     ):
@@ -428,33 +415,23 @@ def score_candidate(
             "theme": candidate.get("effective_theme") or candidate["theme"],
             "path_steps": [],
         }]
-    profiles = [
-        theme_profile(
-            candidate=candidate,
-            raw_candidate=raw_candidate,
-            theme_evidence=row,
-            context=context,
-            reason_by_theme=reason_by_theme,
-        )
-        for row in theme_evidence_rows
-    ]
-    if not profiles:
-        raise ValueError(f"{candidate['name']} 没有可评分的连续连板 theme")
-
-    best = max(
-        profiles,
-        key=lambda row: (
-            row["theme_thesis_score"],
-            bool(row["current_theme_matched"]),
-            -(row["limit_reason_rank"] or 10**6),
-        ),
+    if not theme_evidence_rows:
+        raise ValueError(f"{candidate['name']} 没有可评分的当前有效 theme")
+    if len(theme_evidence_rows) != 1:
+        raise ValueError(f"{candidate['name']} 当前有效 theme 证据重复")
+    profile = theme_profile(
+        candidate=candidate,
+        raw_candidate=raw_candidate,
+        theme_evidence=theme_evidence_rows[0],
+        context=context,
+        reason_by_theme=reason_by_theme,
     )
     model_score = MODEL_STRENGTH.get(selection.get("model"), 0.0)
     height_score = height_strength(int(candidate["height"]))
     layer_score = rounded(0.60 * model_score + 0.40 * height_score)
     components = {
         "layer_model_height": layer_score,
-        **best["component_scores"],
+        **profile["component_scores"],
     }
     contributions = {
         name: round(components[name] * weight, 2)
@@ -463,16 +440,14 @@ def score_candidate(
     candidate_evidence_score = rounded(sum(contributions.values()))
 
     warnings = []
-    if not best["current_theme_matched"]:
-        warnings.append("命中来自沿途题材，但不等于节点日有效自然题材，板块核心地位不直接记入")
-    if best["limit_reason_rank"] is None:
+    if profile["limit_reason_rank"] is None:
         warnings.append("评分题材未进入节点日涨停原因榜，市场题材分受限")
-    if best["timeline"]["missing_time_count"]:
+    if profile["timeline"]["missing_time_count"]:
         warnings.append("部分自然队友缺首封时间，时序分证据不完整")
-    if best["reported_count_matches_pool"] is False:
+    if profile["reported_count_matches_pool"] is False:
         warnings.append("开盘啦榜单报告家数与本地主theme池数量不同；排名仍以开盘啦报告家数为准")
-    if best["timeline"]["timed_peer_count"] == 0:
-        warnings.append("没有可比较的自然队友首封，不能证明板块传播")
+    if profile["timeline"]["timed_peer_count"] == 0:
+        warnings.append("没有可比较的自然队友首封，不能形成带动性时序证据")
 
     first_seal = seal_time(raw_candidate.get("first_limit_ts"))
     return {
@@ -480,18 +455,14 @@ def score_candidate(
         "code": candidate["code"],
         "name": candidate["name"],
         "height": int(candidate["height"]),
-        "expected_auction_score": None,
-        "expectation_grade": None,
-        "score_is_probability": False,
-        "scoring_theme": best["theme"],
+        "position_expectation_score": None,
+        "scoring_theme": profile["theme"],
         "day_performance": {
             "current_theme": candidate.get("theme"),
             "effective_theme": candidate.get("effective_theme"),
             "open_pct": candidate.get("open_pct"),
             "first_seal": first_seal,
-            "turnover_pct": candidate.get("turnover_pct"),
             "one_price": bool(candidate.get("one_price")),
-            "one_price_direct_weight": 0.0,
         },
         "layer_context": {
             "model": selection.get("model"),
@@ -504,33 +475,18 @@ def score_candidate(
         "component_scores": components,
         "candidate_evidence_contributions": contributions,
         "_candidate_evidence_score": candidate_evidence_score,
-        "selected_theme_evidence": best,
-        "alternative_theme_scores": [
-            {
-                "theme": row["theme"],
-                "current_theme_matched": row["current_theme_matched"],
-                "limit_reason_rank": row["limit_reason_rank"],
-                "theme_thesis_score": row["theme_thesis_score"],
-                "component_scores": row["component_scores"],
-            }
-            for row in sorted(
-                profiles,
-                key=lambda row: row["theme_thesis_score"],
-                reverse=True,
-            )
-            if row is not best
-        ],
+        "selected_theme_evidence": profile,
         "warnings": warnings,
     }
 
 
 def score_day(day: str) -> dict[str, Any]:
-    selection = select_ladder(day)
+    selection = select_node_ladder(day)
     target_height = selection.get("target_height")
     if target_height is None:
         return {
             "policy_version": POLICY_VERSION,
-            "stage": "node_close_auction_expectation",
+            "stage": "node_close_position_expectation",
             "date": day,
             "information_cutoff": day,
             "stage1": selection,
@@ -566,24 +522,23 @@ def score_day(day: str) -> dict[str, Any]:
         )
         for row in natural_layer
     ]
-    expected_pk = layer_pk_scores({
+    position_pk_by_code = layer_pk_scores({
         row["code"]: float(row["_candidate_evidence_score"])
         for row in candidates
     })
     for row in candidates:
         candidate_evidence_score = float(row.pop("_candidate_evidence_score"))
-        pk_score = expected_pk[row["code"]]
-        expected_score, effective_weight = compose_score(
+        pk_score = position_pk_by_code[row["code"]]
+        position_score, effective_weight = compose_score(
             candidate_evidence_score,
             pk_score,
         )
-        row["expected_auction_score"] = expected_score
-        row["expectation_grade"] = grade_of(expected_score)
+        row["position_expectation_score"] = position_score
         row["same_ladder_pk"] = {
             "available": pk_score is not None,
             "peer_count": max(0, len(candidates) - 1),
             "candidate_evidence_score": round(candidate_evidence_score, 2),
-            "expected_pk_score": pk_score,
+            "position_pk_score": pk_score,
             "configured_weight": PK_WEIGHT,
             "effective_weight": effective_weight,
             "gap_scale": PK_GAP_SCALE,
@@ -595,7 +550,7 @@ def score_day(day: str) -> dict[str, Any]:
         }
     candidates.sort(
         key=lambda row: (
-            -row["expected_auction_score"],
+            -row["position_expectation_score"],
             row["day_performance"]["first_seal"] or "99:99:99",
             row["code"],
         )
@@ -605,7 +560,7 @@ def score_day(day: str) -> dict[str, Any]:
 
     return {
         "policy_version": POLICY_VERSION,
-        "stage": "node_close_auction_expectation",
+        "stage": "node_close_position_expectation",
         "date": day,
         "information_cutoff": day,
         "stage1": {
@@ -614,8 +569,13 @@ def score_day(day: str) -> dict[str, Any]:
             "reason": selection.get("reason"),
         },
         "score_semantics": (
-            "节点日冻结的次日竞价预期分E；分越高，要求次日09:25给出越强的实际竞价"
+            "节点日冻结的地位侧预期评分E_position；分越高，板块与梯队地位要求"
+            "次日09:25给出越强的实际竞价，但它尚未与个股日内任务合成最终正常预期"
         ),
+        "dimensions": [
+            {"key": key, "label": DIMENSION_LABELS[key], "weight": weight}
+            for key, weight in WEIGHTS.items()
+        ],
         "weights": {
             "candidate_evidence_components": WEIGHTS,
             "same_ladder_pk": PK_WEIGHT,
@@ -654,16 +614,21 @@ def score_day(day: str) -> dict[str, Any]:
             ),
             "theme": node["theme_contract"],
             "theme_selection": (
-                "公告身份只按节点日最高板theme判定；节点日为自然票时，"
-                "二板起沿途每个真实theme分别形成完整论点，禁止跨theme拼分"
+                "公告身份只按节点日最高板theme判定；选梯队可使用二板起沿途theme，"
+                "但个股预期评分只采用节点日当前有效theme的发酵与地位；"
+                "沿途旧theme只旁列，禁止抬分或跨theme拼分"
             ),
             "announcement": node["announcement_contract"],
             "one_price": "一字形态本身直接权重为0；只能通过首封时刻、板块地位和此后传播体现",
+            "dimension_boundary": (
+                "本分只回答梯队与板块地位要求市场给予多强预期；真实爆量、换手完成"
+                "与次日任务由true_volume_score及人工意图判断独立处理，不混入本分"
+            ),
         },
         "source_gaps": [
             "原始涨停池只有首封时间，没有末封时间、开板次数和候选首封瞬间仍在封板的队友数",
-            "因此前/同秒/后只描述首次触板顺序，不宣称队友当时仍封住，也不宣称因果带动",
-            "当前分值是竞价预期刻度，不是次日连板概率或百分比成功率",
+            "因此带动性只表示前/同秒/后时序，不宣称队友当时仍封住，也不宣称因果带动",
+            "当前分值是地位侧预期刻度，不是最终正常预期、次日连板概率或成功率",
         ],
     }
 
@@ -679,19 +644,18 @@ def markdown_score(result: dict[str, Any]) -> str:
     if candidates:
         lines.extend([
             "",
-            "|名次|候选|竞价预期E|自身证据|预期PK|评分题材|榜位|节点日theme|首封|自然队友 前/同秒/后|市场|板块地位|主动性|传播|",
-            "|---:|---|---:|---:|---:|---|---:|:---:|---|---:|---:|---:|---:|---:|",
+            "|名次|候选|地位预期E_position|自身证据|地位侧PK|评分题材|榜位|首封|自然队友 前/同秒/后|板块发酵|板块地位|主动性|带动性时序|",
+            "|---:|---|---:|---:|---:|---|---:|---|---:|---:|---:|---:|---:|",
         ])
         for row in candidates:
             evidence = row["selected_theme_evidence"]
             timeline = evidence["timeline"]
             scores = row["component_scores"]
             lines.append(
-                f"|{row['rank']}|{row['name']}({row['code']})|{row['expected_auction_score']:.2f} {row['expectation_grade']}|"
+                f"|{row['rank']}|{row['name']}({row['code']})|{row['position_expectation_score']:.2f}|"
                 f"{row['same_ladder_pk']['candidate_evidence_score']:.2f}|"
-                f"{row['same_ladder_pk']['expected_pk_score'] if row['same_ladder_pk']['expected_pk_score'] is not None else '—'}|"
+                f"{row['same_ladder_pk']['position_pk_score'] if row['same_ladder_pk']['position_pk_score'] is not None else '—'}|"
                 f"{row['scoring_theme']}|{evidence['limit_reason_rank'] or '榜外'}|"
-                f"{'是' if evidence['current_theme_matched'] else '否'}|"
                 f"{row['day_performance']['first_seal'] or '缺失'}|"
                 f"{timeline['before_count']}/{timeline['same_second_count']}/{timeline['after_count']}|"
                 f"{scores['market_theme_position']:.2f}|{scores['candidate_theme_role']:.2f}|"
@@ -716,9 +680,10 @@ def markdown_score(result: dict[str, Any]) -> str:
     if result.get("contracts"):
         lines.extend([
             "",
-            "口径：一字本身直接权重为 0；日内主动性与首封后传播合计 40%。"
+            "口径：一字本身直接权重为 0；主动性与带动性时序合计 40%。"
             "多票梯队在自身证据外加入同梯队PK；单票梯队自动取消PK。"
-            "只读节点日，不含 T+1；当前分数是竞价预期E，不是连板成功率。",
+            "只读节点日，不含 T+1；当前分数是地位侧预期E_position，"
+            "不是最终正常预期或连板成功率。",
         ])
     return "\n".join(lines)
 

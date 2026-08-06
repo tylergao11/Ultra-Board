@@ -15,7 +15,7 @@
 - 梯队、公告属性、题材发酵：ladder_daily/by_day/{date}.json
 - 个股梯队列表 theme：raw/{date}/zt_pool.json 的 theme
 - 连板沿途题材：同一真相源中该股从 2 板到节点日的逐日 theme，仅作辅助证据
-- 开盘、首封、换手、日内 OHLC：raw/{date}/zt_pool.json + ohlc.json
+- 开盘、首封、成交量额、日内 OHLC：raw/{date}/zt_pool.json + ohlc.json
 - 市场破板率：raw/{date}/expression.json 的 info[7]
 
 明确不读取人工判断、自动选层、最终高度、未来收益等裁判字段，也不替人工宣布
@@ -93,10 +93,6 @@ def pct(value: float | None) -> str:
 
 def number(value: float | None, digits: int = 2) -> str:
     return "—" if value is None else f"{value:.{digits}f}"
-
-
-def rate(value: float | None) -> str:
-    return "—" if value is None else f"{value:.2f}%"
 
 
 def nominal_limit_pct(code: str, name: str | None) -> float:
@@ -406,7 +402,7 @@ def limit_reason_ranking(day: str) -> list[dict[str, Any]]:
         ranking.append({
             "theme": theme,
             "reported_count": as_int(sector.get("count")) or 0,
-            "turnover_amount": sum(stock_amount(stock) for stock in members),
+            "theme_amount": sum(stock_amount(stock) for stock in members),
             "highest_board": max(
                 (as_int(stock.get("boards")) or 0 for stock in members),
                 default=0,
@@ -415,7 +411,7 @@ def limit_reason_ranking(day: str) -> list[dict[str, Any]]:
         })
     ranking.sort(key=lambda row: (
         -row["reported_count"],
-        -row["turnover_amount"],
+        -row["theme_amount"],
         row["source_position"],
     ))
     for rank, row in enumerate(ranking, 1):
@@ -678,7 +674,6 @@ def node_evidence(day: str, history_days: int = 3) -> dict[str, Any]:
                 "open_pct": as_float(raw.get("open_pct")),
                 "first_seal": seal_time(candidate_ts),
                 "final_seal": None,
-                "turnover_pct": as_float(raw.get("turnover_rate")),
                 "one_price": is_one_price(raw),
                 "theme_first_board_count": current_theme_evidence[
                     "first_board_count"
@@ -882,7 +877,6 @@ def pk_evidence(
                         "open_pct": candidate["open_pct"],
                         "first_seal": candidate["first_seal"],
                         "final_seal": None,
-                        "turnover_pct": candidate["turnover_pct"],
                         "one_price": candidate["one_price"],
                         "theme_first_board_count": candidate[
                             "theme_first_board_count"
@@ -923,7 +917,6 @@ def pk_evidence(
                         "touched_limit": touched,
                         "continued": bool(action),
                         "one_price": bool(touched and is_one_price(bar or action)),
-                        "turnover_pct": as_float(action.get("turnover_rate")),
                         "theme_first_board_count": as_int(
                             action_theme_counts.get(action_theme)
                         )
@@ -940,7 +933,7 @@ def pk_evidence(
                 "action_date": action_day,
                 "candidates": rows,
                 "source_gap": (
-                    "末封时间和盘中分时换手快照缺失；地域暂不纳入；"
+                    "末封时间和炸板次数缺失；地域暂不纳入；"
                     "应有竞价与关系类型须由人工判断，收盘结果不得倒灌到盘中买点"
                 ),
             }
@@ -1024,7 +1017,7 @@ def markdown_node(pack: dict[str, Any]) -> str:
         "",
         "涨停原因发酵前二：" + "、".join(
             f"{row['rank']}.{row['theme']}({row['reported_count']}家/"
-            f"{row['turnover_amount'] / 1e8:.2f}亿)"
+            f"{row['theme_amount'] / 1e8:.2f}亿)"
             for row in market["limit_reason_top_two"]
         ),
         "题材首板计数（非排名真相）：" + "、".join(
@@ -1033,8 +1026,8 @@ def markdown_node(pack: dict[str, Any]) -> str:
         ),
         "",
     ])
-    lines.append("|板|股票|沿途theme|当日公告|开盘|首封|换手|一字|当日自然theme 封前/首板/原因榜名次/历史|当日theme地位|")
-    lines.append("|---:|---|---|:---:|---:|---:|---:|:---:|---:|---|")
+    lines.append("|板|股票|沿途theme|当日公告|开盘|首封|一字|当日自然theme 封前/首板/原因榜名次/历史|当日theme地位|")
+    lines.append("|---:|---|---|:---:|---:|---:|:---:|---:|---|")
     for row in pack["candidates"]:
         route_support = []
         for item in row["route_theme_evidence"]:
@@ -1061,8 +1054,7 @@ def markdown_node(pack: dict[str, Any]) -> str:
         lines.append(
             f"|{row['height']}|{row['name']} `{row['code']}`|{path_text}|"
             f"{row['announcement_type'] if row['announcement'] else '否'}|{pct(row['open_pct'])}|"
-            f"{row['first_seal'] or '—'}|{rate(row['turnover_pct'])}|"
-            f"{'是' if row['one_price'] else '否'}|"
+            f"{row['first_seal'] or '—'}|{'是' if row['one_price'] else '否'}|"
             f"{'；'.join(route_support) or '—'}|{row['theme']}:{position}|"
         )
     lines.extend(["", f"数据缺口：{pack['source_gap']}。"])
@@ -1073,8 +1065,8 @@ def markdown_pk(pack: dict[str, Any]) -> str:
     lines = [
         f"## {pack['node_date']}｜冻结{pack['frozen_height']}板 → {pack['action_date']}个股PK",
         "",
-        "|股票|沿途theme|实际竞价|相对涨停|09:25风险|盘中首封|最低涨幅|首封前可见首板|收盘换手*|连板*|",
-        "|---|---|---:|---:|---|---:|---:|---:|---:|:---:|",
+        "|股票|沿途theme|实际竞价|相对涨停|09:25风险|盘中首封|最低涨幅|首封前可见首板|连板*|",
+        "|---|---|---:|---:|---|---:|---:|---:|:---:|",
     ]
     for row in pack["candidates"]:
         auction = row["available_at_09_25"]
@@ -1096,13 +1088,13 @@ def markdown_pk(pack: dict[str, Any]) -> str:
             f"{'、'.join(risks) or '—'}|"
             f"{intraday['first_seal'] or '—'}|{pct(intraday['low_pct'])}|"
             f"{intraday['theme_first_boards_already_sealed'] if intraday['theme_first_boards_already_sealed'] is not None else '—'}|"
-            f"{rate(close['turnover_pct'])}|{'是' if close['continued'] else '否'}|"
+            f"{'是' if close['continued'] else '否'}|"
         )
     lines.extend(
         [
             "",
             "判断边界：应有竞价、补涨/切换/让位、布局线索是否兑现以及 buy/abstain 均由人工基于本包判断；脚本不自动评分。",
-            "说明：收盘换手、最终发酵数和是否连板只可用于复盘或下一交易日，不能倒灌到盘中买点。",
+            "说明：最终发酵数和是否连板只可用于复盘或下一交易日，不能倒灌到盘中买点。",
             f"数据缺口：{pack['source_gap']}。",
         ]
     )

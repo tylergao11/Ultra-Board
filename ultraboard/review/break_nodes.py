@@ -97,6 +97,19 @@ def detect_break_node(day: str) -> dict[str, Any]:
     }
 
 
+def latest_break_node(day: str) -> dict[str, Any] | None:
+    """返回截至 ``day`` 最近一次有效节点；只回看，不读取其后交易日。"""
+    days = list(available_trade_days())
+    if day not in days:
+        raise ValueError(f"不存在交易日数据: {day}")
+    index = days.index(day)
+    for candidate_day in reversed(days[: index + 1]):
+        result = detect_break_node(candidate_day)
+        if result["is_break_node"]:
+            return result
+    return None
+
+
 def list_break_nodes() -> list[dict[str, Any]]:
     return [
         result
