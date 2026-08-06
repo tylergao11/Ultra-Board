@@ -23,6 +23,7 @@ import urllib3
 urllib3.disable_warnings()
 
 HIS_URL = "https://apphis.longhuvip.com/w1/api/index.php"
+CURRENT_URL = "https://apphq.longhuvip.com/w1/api/index.php"
 SECTOR_URL = "https://apphwhq.longhuvip.com/w1/api/index.php"
 VERSION = "5.21.0.2"
 APIV = "w42"
@@ -99,8 +100,19 @@ class KaipanlaClient:
     def his_zhangfu(self, day: str) -> dict[str, Any]:
         return self.post(HIS_URL, {"a": "HisZhangFuDetail", "c": "HisHomeDingPan"}, day)
 
+    def current_zhangfu(self) -> dict[str, Any]:
+        """读取最新交易日情绪统计；响应正文自带日期。"""
+        return self.post(CURRENT_URL, {"a": "ZhangFuDetail", "c": "HomeDingPan"})
+
     def zhangting_expression(self, day: str) -> dict[str, Any]:
         return self.post(HIS_URL, {"a": "ZhangTingExpression", "c": "HisHomeDingPan"}, day)
+
+    def current_zhangting_expression(self) -> dict[str, Any]:
+        """读取最新梯队指标；当前接口可能返回反爬占位符。"""
+        return self.post(
+            CURRENT_URL,
+            {"a": "ZhangTingExpression", "c": "HomeDingPan"},
+        )
 
     def latest_plate_info(self, index: int = 0) -> dict[str, Any]:
         """最新交易日涨停原因板块。

@@ -115,17 +115,6 @@ def _write_json(path: Path, obj) -> None:
     path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def has_real_data(dd: Path) -> bool:
-    """目录里是否已有可用数据。用于避免误删。"""
-    f = dd / "sentiment.json"
-    if not f.exists():
-        return False
-    try:
-        return isinstance(_read_json(f, {}).get("info"), dict)
-    except Exception:
-        return False
-
-
 # --------------------------------------------------------------------------- parse
 
 def _rows(body: dict) -> list:
@@ -302,10 +291,8 @@ def pull_one_day(
     sentiment = client.his_zhangfu(day)
     if not ok(sentiment):
         if str(sentiment.get("errcode")) == "1020":
-            # 假期或当日未入库。只有在目录里没有可用数据时才清理，避免误删。
-            if dd.exists() and not has_real_data(dd):
-                for p in dd.iterdir():
-                    p.unlink()
+            # 假期或当日未入库。不同采集源彼此独立，绝不删除同日已有原始证据。
+            if dd.exists() and not any(dd.iterdir()):
                 dd.rmdir()
             if d < date.today():
                 non_trading.add(day)
@@ -386,6 +373,8 @@ def pull_one_day(
         return "mismatch", f"{day} {verr}"
     if (dd / "_MISMATCH").exists():
         (dd / "_MISMATCH").unlink()
+    if (dd / "_CURRENT_SNAPSHOT").exists():
+        (dd / "_CURRENT_SNAPSHOT").unlink()
     (dd / "_DONE").write_text(f"ok {summary}\n", encoding="utf-8")
     return "ok", summary
 
