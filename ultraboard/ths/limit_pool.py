@@ -2,7 +2,7 @@
 """采集同花顺历史涨停池客观事实。
 
 产物写入 ``data/ths/limit_pool/YYYY-MM-DD.json``，包含连板数、连板描述、
-首封、终封、炸板次数、板型与真一字身份。题材不从此接口读取。
+首封、终封、炸板次数、板型与真一字身份。具体分类不从此接口读取。
 
 用法：
 
@@ -28,7 +28,7 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = ROOT / "data" / "ths" / "limit_pool"
-STRONG_WIND_DIR = ROOT / "data" / "ths" / "strong_wind"
+KAIPANLA_RAW_DIR = ROOT / "data" / "kaipanla" / "raw"
 ENDPOINT = "https://data.10jqka.com.cn/dataapi/limit_up/limit_up_pool"
 STOCK_LINE_ENDPOINT = "https://d.10jqka.com.cn/v6/line/hs_{code}/01/{period}.js"
 CN_TZ = timezone(timedelta(hours=8))
@@ -361,7 +361,7 @@ def fetch_day(day: str) -> dict[str, Any]:
             },
             "stock_trade_days_endpoint": STOCK_LINE_ENDPOINT,
             "boards_contract": "首板与N天N板直接采用同花顺无歧义描述；N天M板(N>M)沿个股实际交易日倒推涨停池连续出现记录，M只作上限",
-            "theme_contract": "本接口只提供客观涨停事实；题材只认 strong_wind",
+            "attribute_contract": "本接口只提供客观涨停事实；具体分类只认开盘啦",
         },
         "count": len(stocks),
         "stocks": stocks,
@@ -494,10 +494,15 @@ def _selected_days(args: argparse.Namespace) -> list[str]:
         end = date.fromisoformat(args.end).isoformat()
         if start > end:
             raise ValueError("--start 不能晚于 --end")
-        for directory in (STRONG_WIND_DIR, OUTPUT_DIR):
-            for path in directory.glob("*.json"):
-                if DAY_RE.fullmatch(path.stem) and start <= path.stem <= end:
-                    selected.add(path.stem)
+        source_days = (
+            KAIPANLA_RAW_DIR.iterdir() if KAIPANLA_RAW_DIR.exists() else ()
+        )
+        for path in source_days:
+            if path.is_dir() and DAY_RE.fullmatch(path.name) and start <= path.name <= end:
+                selected.add(path.name)
+        for path in OUTPUT_DIR.glob("*.json"):
+            if DAY_RE.fullmatch(path.stem) and start <= path.stem <= end:
+                selected.add(path.stem)
     if not selected:
         raise ValueError("请提供交易日，或同时提供 --start/--end")
     return sorted(selected)
