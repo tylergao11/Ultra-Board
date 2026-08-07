@@ -47,6 +47,48 @@ python tools/extract_attribution_evidence.py 2026-08-06 --decision-view
 
 该视图只读取日期 T 与上一交易日，标注 `information_cutoff=T`。默认保留全部涨停，板数只是事实；`--candidate-min-boards` 只能缩小展示范围，不能成为交易排除条件。视图展示上一梯队去向、T 日一字/换手状态、候选属性的首封与最终回封双时序；真一字只作为方向与身位指引，并映射同身位、共享属性的非一字票，不自动生成核心、评分或买点。
 
+## 五日动态事实包
+
+默认读取截止日及之前五个本地数据日。每日 `stocks` 只展开全市场二板及
+以上，但二板以上只是明细展示阈值，不是动态链起点：凡窗口内进入二板及
+以上的股票，`stock_paths` 和 `board_sequence_facts` 都会自动回带其可用的
+首板事实，完整记录 `1_to_2`：
+
+```powershell
+python tools/market_replay.py 2026-07-24
+```
+
+市场逐日观察链与个股来源连板链分开保存。若个股中间没有当日记录，逐日路径
+保持 `null`；只有同花顺 `consecutive_limit_up_dates` 明确确认连板日期时，
+`board_sequence_facts` 才跨过空档连接板数。空档不会被自动标记为失败、停牌，
+也不会伪造开盘啦属性的删除和重新增加。
+
+传入题材后，精确匹配开盘啦 `theme/themes`，返回该题材五日内的全部
+涨停股票，包括首板：
+
+```powershell
+python tools/market_replay.py 2026-07-24 --theme 智能电网
+```
+
+尚未进入二板的首板不会因此塞入默认明细。只有明确需要全市场首板时才展开
+全部涨停：
+
+```powershell
+python tools/market_replay.py 2026-07-24 --include-all-first-boards
+```
+
+沿相同参数继续到下一个本地数据日：
+
+```powershell
+python tools/market_replay.py 2026-07-24 --theme 智能电网 --next
+```
+
+输出保留同花顺 `stories` 的当日原始记录，但故事不覆盖开盘啦个股属性。
+默认包同时提供紧凑题材索引。尚未进入二板的首板明细仍留在本地来源中，
+按 `--theme` 下钻读取；已发生的一进二路径则自动返回，不需要额外参数。
+所有输出都标注 `information_cutoff`、逐日来源覆盖和源间股票差异，不生成
+爆发、打断、对手、接力、核心、评分或买点判断。
+
 ## 目录角色
 
 | 路径 | 角色 |

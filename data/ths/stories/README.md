@@ -19,3 +19,28 @@
 ```
 
 `story` 是主要字段；`context` 只是标题前半句的宽泛背景，不得用于覆盖开盘啦分类。
+
+如标题下同时录入同花顺图片中可见的个股故事，在对应故事项内增加可选
+`stocks` 数组：
+
+```json
+{
+  "source_position": 1,
+  "story": "市场并购重组持续活跃；龙头十连板",
+  "context": "并购重组",
+  "headline": "并购重组：市场并购重组持续活跃；龙头十连板",
+  "stocks": [
+    {
+      "stock_position": 1,
+      "code": "603221",
+      "name": "爱丽家居",
+      "story": "图片中可见的个股故事原文",
+      "mapping_status": "matched_same_day_stock"
+    }
+  ]
+}
+```
+
+只有能与同日开盘啦或同花顺涨停池唯一对应时才填写 `code`；否则使用
+`code=null`、`mapping_status=unresolved`。个股故事不得生成或覆盖
+`theme/themes`，完整五日接口合同见 `docs/五日动态事实包契约.md`。
