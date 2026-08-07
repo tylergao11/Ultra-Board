@@ -47,47 +47,34 @@ python tools/extract_attribution_evidence.py 2026-08-06 --decision-view
 
 该视图只读取日期 T 与上一交易日，标注 `information_cutoff=T`。默认保留全部涨停，板数只是事实；`--candidate-min-boards` 只能缩小展示范围，不能成为交易排除条件。视图展示上一梯队去向、T 日一字/换手状态、候选属性的首封与最终回封双时序；真一字只作为方向与身位指引，并映射同身位、共享属性的非一字票，不自动生成核心、评分或买点。
 
-## 五日动态事实包
+## 单交易日 Agent 事实接口
 
-默认读取截止日及之前五个本地数据日。每日 `stocks` 只展开全市场二板及
-以上，但二板以上只是明细展示阈值，不是动态链起点：凡窗口内进入二板及
-以上的股票，`stock_paths` 和 `board_sequence_facts` 都会自动回带其可用的
-首板事实，完整记录 `1_to_2`：
+默认一次只读取一个交易日，展示当日题材故事，并返回全部首板和高板。每只股票的概览只保留代码、
+名称、板数、板型、主/候选题材和首封时间：
 
 ```powershell
-python tools/market_replay.py 2026-07-24
+python tools/market_day.py 2026-07-24
 ```
 
-市场逐日观察链与个股来源连板链分开保存。若个股中间没有当日记录，逐日路径
-保持 `null`；只有同花顺 `consecutive_limit_up_dates` 明确确认连板日期时，
-`board_sequence_facts` 才跨过空档连接板数。空档不会被自动标记为失败、停牌，
-也不会伪造开盘啦属性的删除和重新增加。
-
-传入题材后，精确匹配开盘啦 `theme/themes`，返回该题材五日内的全部
-涨停股票，包括首板：
+题材、精确板数和板数范围只用于缩小当日集合：
 
 ```powershell
-python tools/market_replay.py 2026-07-24 --theme 智能电网
+python tools/market_day.py 2026-07-24 --theme 智能电网 --board 1
+python tools/market_day.py 2026-07-24 --theme AI应用 --theme 机器人 --theme-match all --min-board 2
 ```
 
-尚未进入二板的首板不会因此塞入默认明细。只有明确需要全市场首板时才展开
-全部涨停：
+价格、市值、换手、封单、终封、开板次数、连板日期和个股故事不进入默认概览，
+由站点 `/api/v1/stocks` 使用 `date` 加可重复的 `code/name` 批量取得。批量详情
+任何一只股票或故事缺失都会整体失败，不存在 partial stories 或 `story=null`。
 
-```powershell
-python tools/market_replay.py 2026-07-24 --include-all-first-boards
-```
+所有输出都标注 `information_cutoff`，不生成爆发、打断、对手、接力、核心、
+评分或买点判断。
 
-沿相同参数继续到下一个本地数据日：
-
-```powershell
-python tools/market_replay.py 2026-07-24 --theme 智能电网 --next
-```
-
-输出保留同花顺 `stories` 的当日原始记录，但故事不覆盖开盘啦个股属性。
-默认包同时提供紧凑题材索引。尚未进入二板的首板明细仍留在本地来源中，
-按 `--theme` 下钻读取；已发生的一进二路径则自动返回，不需要额外参数。
-所有输出都标注 `information_cutoff`、逐日来源覆盖和源间股票差异，不生成
-爆发、打断、对手、接力、核心、评分或买点判断。
+面向其他 Agent 的站点接口位于 `site/`。接口代码、结构化指南、OpenAPI 和
+新闻地址白名单可独立于最终数据开发；最终数据未导出时，`/api/v1/health`
+明确返回 `data.status=pending_export`，不会用旧快照或假数据冒充可用。
+详细使用方式见 [Agent 数据接口使用与经验](docs/Agent数据接口使用与经验.md)和
+[单交易日事实接口契约](docs/单交易日事实接口契约.md)。
 
 ## 目录角色
 

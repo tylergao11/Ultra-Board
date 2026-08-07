@@ -20,7 +20,11 @@ def main() -> int:
             if len(p.stem) == 8 and p.stem.isdigit()
         }
     )
-    files = sorted((ROOT / "data/ths/stories").glob("*.json"))
+    files = sorted(
+        p
+        for p in (ROOT / "data/ths/stories").glob("*.json")
+        if len(p.stem) == 10 and p.stem[4] == "-" and p.stem[7] == "-"
+    )
     have = [p.stem for p in files]
     miss = [d for d in img if d not in set(have)]
     bad: list[tuple[str, str]] = []
