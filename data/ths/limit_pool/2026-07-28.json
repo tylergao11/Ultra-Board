@@ -3,7 +3,7 @@
   "source": {
     "provider": "tonghuashun_limit_up_pool",
     "endpoint": "https://data.10jqka.com.cn/dataapi/limit_up/limit_up_pool",
-    "fetched_at": "2026-08-07T02:01:21+08:00",
+    "fetched_at": "2026-08-07T02:30:30+08:00",
     "query_contract": {
       "fields": [
         "first_limit_up_time",
@@ -16,6 +16,8 @@
       ],
       "filter": "HS,GEM2STAR"
     },
+    "stock_trade_days_endpoint": "https://d.10jqka.com.cn/v6/line/hs_{code}/01/{period}.js",
+    "boards_contract": "首板与N天N板直接采用同花顺无歧义描述；N天M板(N>M)沿个股实际交易日倒推涨停池连续出现记录，M只作上限",
     "theme_contract": "本接口只提供客观涨停事实；题材只认 strong_wind"
   },
   "count": 60,
@@ -25,720 +27,1114 @@
       "name": "深纺织A",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785202476,
       "final_limit_ts": 1785207837,
       "open_count": 1,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "000428",
       "name": "华天酒店",
       "boards": 2,
       "boards_desc": "2天2板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 2,
+      "limit_up_total": 2,
+      "boards_source": "high_days=continuous_window",
+      "consecutive_limit_up_dates": null,
       "first_limit_ts": 1785202395,
       "final_limit_ts": 1785202395,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "000503",
       "name": "国新健康",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785214866,
       "final_limit_ts": 1785214866,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "000517",
       "name": "荣安地产",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785217410,
       "final_limit_ts": 1785217410,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "000533",
       "name": "顺钠股份",
       "boards": 4,
       "boards_desc": "4天4板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 4,
+      "limit_up_total": 4,
+      "boards_source": "high_days=continuous_window",
+      "consecutive_limit_up_dates": null,
       "first_limit_ts": 1785202242,
       "final_limit_ts": 1785216795,
       "open_count": 21,
       "board_type": "T字板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "000566",
       "name": "海南海药",
-      "boards": 3,
+      "boards": 2,
       "boards_desc": "5天3板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 5,
+      "limit_up_total": 3,
+      "boards_source": "tonghuashun_stock_trade_days+daily_limit_up_presence",
+      "consecutive_limit_up_dates": [
+        "2026-07-27",
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785202278,
       "final_limit_ts": 1785202278,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "000659",
       "name": "珠海中富",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785204516,
       "final_limit_ts": 1785204516,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "000779",
       "name": "甘咨询",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785222000,
       "final_limit_ts": 1785222000,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "000859",
       "name": "国风新材",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785202587,
       "final_limit_ts": 1785202587,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "000948",
       "name": "南天信息",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785202869,
       "final_limit_ts": 1785202869,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "001358",
       "name": "兴欣新材",
       "boards": 2,
       "boards_desc": "2天2板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 2,
+      "limit_up_total": 2,
+      "boards_source": "high_days=continuous_window",
+      "consecutive_limit_up_dates": null,
       "first_limit_ts": 1785202542,
       "final_limit_ts": 1785202542,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "001376",
       "name": "百通能源",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785203517,
       "final_limit_ts": 1785204420,
       "open_count": 1,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "002173",
       "name": "创新医疗",
-      "boards": 3,
+      "boards": 2,
       "boards_desc": "4天3板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 4,
+      "limit_up_total": 3,
+      "boards_source": "tonghuashun_stock_trade_days+daily_limit_up_presence",
+      "consecutive_limit_up_dates": [
+        "2026-07-27",
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785202200,
       "final_limit_ts": 1785202266,
       "open_count": 2,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "002195",
       "name": "岩山科技",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785202839,
       "final_limit_ts": 1785202839,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "002199",
       "name": "东晶电子",
-      "boards": 3,
+      "boards": 1,
       "boards_desc": "4天3板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 4,
+      "limit_up_total": 3,
+      "boards_source": "tonghuashun_stock_trade_days+daily_limit_up_presence",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785202386,
       "final_limit_ts": 1785202386,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "002212",
       "name": "天融信",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785215775,
       "final_limit_ts": 1785217209,
       "open_count": 1,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "002279",
       "name": "久其软件",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785203259,
       "final_limit_ts": 1785203259,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "002309",
       "name": "中利集团",
       "boards": 2,
       "boards_desc": "2天2板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 2,
+      "limit_up_total": 2,
+      "boards_source": "high_days=continuous_window",
+      "consecutive_limit_up_dates": null,
       "first_limit_ts": 1785202272,
       "final_limit_ts": 1785202272,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "002310",
       "name": "东方新能",
       "boards": 2,
       "boards_desc": "2天2板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 2,
+      "limit_up_total": 2,
+      "boards_source": "high_days=continuous_window",
+      "consecutive_limit_up_dates": null,
       "first_limit_ts": 1785204045,
       "final_limit_ts": 1785204045,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "002338",
       "name": "奥普光电",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785201900,
       "final_limit_ts": 1785201900,
       "open_count": 0,
       "board_type": "一字板",
-      "one_price": true
+      "one_price": true,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "002387",
       "name": "维信诺",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785203022,
       "final_limit_ts": 1785215019,
       "open_count": 1,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "002388",
       "name": "新亚制程",
       "boards": 3,
       "boards_desc": "3天3板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 3,
+      "limit_up_total": 3,
+      "boards_source": "high_days=continuous_window",
+      "consecutive_limit_up_dates": null,
       "first_limit_ts": 1785202473,
       "final_limit_ts": 1785203103,
       "open_count": 5,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "002642",
       "name": "荣联科技",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785202719,
       "final_limit_ts": 1785202758,
       "open_count": 1,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "002687",
       "name": "乔治白",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785205332,
       "final_limit_ts": 1785205332,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "002795",
       "name": "永和智控",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785215580,
       "final_limit_ts": 1785215580,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "002847",
       "name": "盐津铺子",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785209346,
       "final_limit_ts": 1785209346,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "002869",
       "name": "金溢科技",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785208995,
       "final_limit_ts": 1785208995,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "002889",
       "name": "东方嘉盛",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785202200,
       "final_limit_ts": 1785202200,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "002969",
       "name": "嘉美包装",
       "boards": 2,
       "boards_desc": "2天2板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 2,
+      "limit_up_total": 2,
+      "boards_source": "high_days=continuous_window",
+      "consecutive_limit_up_dates": null,
       "first_limit_ts": 1785202287,
       "final_limit_ts": 1785202371,
       "open_count": 1,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "002995",
       "name": "天地在线",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785203448,
       "final_limit_ts": 1785203448,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "003032",
       "name": "传智教育",
       "boards": 2,
       "boards_desc": "2天2板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 2,
+      "limit_up_total": 2,
+      "boards_source": "high_days=continuous_window",
+      "consecutive_limit_up_dates": null,
       "first_limit_ts": 1785203274,
       "final_limit_ts": 1785208479,
       "open_count": 3,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "300067",
       "name": "安诺其",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785215523,
       "final_limit_ts": 1785217062,
       "open_count": 1,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "300663",
       "name": "科蓝软件",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785203148,
       "final_limit_ts": 1785215175,
       "open_count": 1,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "301421",
       "name": "波长光电",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785201900,
       "final_limit_ts": 1785201900,
       "open_count": 0,
       "board_type": "一字板",
-      "one_price": true
+      "one_price": true,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "600076",
       "name": "康欣新材",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785202200,
       "final_limit_ts": 1785202200,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "600191",
       "name": "华资实业",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785204320,
       "final_limit_ts": 1785221516,
       "open_count": 2,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "600199",
       "name": "金种子酒",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785208021,
       "final_limit_ts": 1785208021,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "600303",
       "name": "曙光股份",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785203116,
       "final_limit_ts": 1785203116,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "600619",
       "name": "海立股份",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785201902,
       "final_limit_ts": 1785201902,
       "open_count": 0,
       "board_type": "一字板",
-      "one_price": true
+      "one_price": true,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "600629",
       "name": "华建集团",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785203152,
       "final_limit_ts": 1785203152,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "600693",
       "name": "东百集团",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785203792,
       "final_limit_ts": 1785203813,
       "open_count": 1,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "600756",
       "name": "浪潮软件",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785206286,
       "final_limit_ts": 1785207537,
       "open_count": 1,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "600775",
       "name": "南京熊猫",
       "boards": 2,
       "boards_desc": "2天2板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 2,
+      "limit_up_total": 2,
+      "boards_source": "high_days=continuous_window",
+      "consecutive_limit_up_dates": null,
       "first_limit_ts": 1785203534,
       "final_limit_ts": 1785203582,
       "open_count": 1,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "600850",
       "name": "电科数字",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785203292,
       "final_limit_ts": 1785203307,
       "open_count": 1,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "600895",
       "name": "张江高科",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785201903,
       "final_limit_ts": 1785201903,
       "open_count": 0,
       "board_type": "一字板",
-      "one_price": true
+      "one_price": true,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "603221",
       "name": "爱丽家居",
       "boards": 6,
       "boards_desc": "6天6板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 6,
+      "limit_up_total": 6,
+      "boards_source": "high_days=continuous_window",
+      "consecutive_limit_up_dates": null,
       "first_limit_ts": 1785201902,
       "final_limit_ts": 1785201902,
       "open_count": 0,
       "board_type": "一字板",
-      "one_price": true
+      "one_price": true,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "603232",
       "name": "格尔软件",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785204288,
       "final_limit_ts": 1785217446,
       "open_count": 2,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "603297",
       "name": "永新光学",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785201902,
       "final_limit_ts": 1785201902,
       "open_count": 0,
       "board_type": "一字板",
-      "one_price": true
+      "one_price": true,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "603358",
       "name": "华达科技",
       "boards": 2,
       "boards_desc": "2天2板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 2,
+      "limit_up_total": 2,
+      "boards_source": "high_days=continuous_window",
+      "consecutive_limit_up_dates": null,
       "first_limit_ts": 1785202264,
       "final_limit_ts": 1785202264,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "603389",
       "name": "亚振家居",
       "boards": 2,
       "boards_desc": "2天2板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 2,
+      "limit_up_total": 2,
+      "boards_source": "high_days=continuous_window",
+      "consecutive_limit_up_dates": null,
       "first_limit_ts": 1785203070,
       "final_limit_ts": 1785203070,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "603400",
       "name": "华之杰",
-      "boards": 2,
+      "boards": 1,
       "boards_desc": "4天2板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 4,
+      "limit_up_total": 2,
+      "boards_source": "tonghuashun_stock_trade_days+daily_limit_up_presence",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785221373,
       "final_limit_ts": 1785221373,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "603580",
       "name": "艾艾精工",
-      "boards": 10,
+      "boards": 1,
       "boards_desc": "16天10板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 16,
+      "limit_up_total": 10,
+      "boards_source": "tonghuashun_stock_trade_days+daily_limit_up_presence",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785206558,
       "final_limit_ts": 1785215972,
       "open_count": 5,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "603716",
       "name": "塞力医疗",
       "boards": 2,
       "boards_desc": "2天2板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 2,
+      "limit_up_total": 2,
+      "boards_source": "high_days=continuous_window",
+      "consecutive_limit_up_dates": null,
       "first_limit_ts": 1785202504,
       "final_limit_ts": 1785202546,
       "open_count": 1,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "603917",
       "name": "合力科技",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785204045,
       "final_limit_ts": 1785204045,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "603918",
       "name": "金桥信息",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785204135,
       "final_limit_ts": 1785204153,
       "open_count": 1,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "603928",
       "name": "兴业股份",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785202625,
       "final_limit_ts": 1785202733,
       "open_count": 1,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "603980",
       "name": "吉华集团",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785215389,
       "final_limit_ts": 1785215389,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "605068",
       "name": "明新旭腾",
       "boards": 2,
       "boards_desc": "2天2板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 2,
+      "limit_up_total": 2,
+      "boards_source": "high_days=continuous_window",
+      "consecutive_limit_up_dates": null,
       "first_limit_ts": 1785202710,
       "final_limit_ts": 1785202710,
       "open_count": 0,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 0,
+      "change_tag": "FIRST_LIMIT"
     },
     {
       "code": "605162",
       "name": "新中港",
-      "boards": 3,
+      "boards": 1,
       "boards_desc": "5天3板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 5,
+      "limit_up_total": 3,
+      "boards_source": "tonghuashun_stock_trade_days+daily_limit_up_presence",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785207580,
       "final_limit_ts": 1785208288,
       "open_count": 1,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     },
     {
       "code": "605179",
       "name": "一鸣食品",
       "boards": 1,
       "boards_desc": "首板",
-      "boards_source": "high_days",
+      "limit_up_window_days": 1,
+      "limit_up_total": 1,
+      "boards_source": "high_days=first_board",
+      "consecutive_limit_up_dates": [
+        "2026-07-28"
+      ],
       "first_limit_ts": 1785204641,
       "final_limit_ts": 1785204659,
       "open_count": 1,
       "board_type": "换手板",
-      "one_price": false
+      "one_price": false,
+      "is_again_limit": 1,
+      "change_tag": "LIMIT_BACK"
     }
   ]
 }

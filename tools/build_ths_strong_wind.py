@@ -62,6 +62,10 @@ class ParsedStock:
     code: str
     name: str
     event_text: str
+    theme_rank: int | None = None
+    poster_rank: int | None = None
+    poster_group: str | None = None
+    theme_assignment: str | None = None
 
 
 def get_ocr_engine() -> RapidOCR:
@@ -402,12 +406,20 @@ def reclassify_fallback_groups(
     manual_decisions: dict[str, dict[str, Any]],
     issues: list[str],
 ) -> list[dict[str, Any]]:
-    explicit = [group for group in groups if not is_fallback_group(group["title"])]
-    fallback = [group for group in groups if is_fallback_group(group["title"])]
-    by_title = {group["title"]: group for group in explicit}
+    by_title = {
+        group["title"]: group
+        for group in groups
+        if not is_fallback_group(group["title"])
+    }
+    result: list[dict[str, Any]] = []
 
-    for group in fallback:
+    for group in groups:
+        if not is_fallback_group(group["title"]):
+            result.append(group)
+            continue
+
         unresolved: list[ParsedStock] = []
+        new_groups: list[dict[str, Any]] = []
         for stock in group["_parsed_stocks"]:
             decision = manual_decisions.get(stock.code)
             if decision is None:
@@ -422,16 +434,23 @@ def reclassify_fallback_groups(
                 raise ValueError(f"人工审核题材为空: {stock.code} {stock.name}")
             if theme not in by_title:
                 new_group = {"title": theme, "_parsed_stocks": []}
-                explicit.append(new_group)
+                new_groups.append(new_group)
                 by_title[theme] = new_group
-            by_title[theme]["_parsed_stocks"].append(stock)
+            target = by_title[theme]
+            target_rank = target.get("_source_rank")
+            # 只有并入海报已有明确大类时才继承该大类位次。人工拆出的新题材
+            # 没有同花顺风口排名，不能借“其它概念”的容器位次进入前二风口。
+            stock.theme_rank = target_rank if isinstance(target_rank, int) else None
+            stock.theme_assignment = "manual_fallback_review"
+            target["_parsed_stocks"].append(stock)
+        result.extend(new_groups)
         if unresolved:
             group["_parsed_stocks"] = unresolved
-            explicit.append(group)
+            result.append(group)
 
-    for rank, group in enumerate(explicit, 1):
+    for rank, group in enumerate(result, 1):
         group["rank"] = rank
-    return explicit
+    return result
 
 
 def apply_manual_additions(
@@ -447,19 +466,29 @@ def apply_manual_additions(
             continue
         theme = str(addition["theme"]).strip()
         if theme not in by_title:
-            new_group = {"title": theme, "_parsed_stocks": []}
+            new_group = {
+                "title": theme,
+                "_parsed_stocks": [],
+                "_source_rank": None,
+            }
             groups.append(new_group)
             by_title[theme] = new_group
-        by_title[theme]["_parsed_stocks"].append(
+        target = by_title[theme]
+        target["_parsed_stocks"].append(
             ParsedStock(
                 code=code,
                 name=str(addition["name"]).strip(),
                 event_text=str(addition.get("event", "")).strip(),
+                theme_rank=target.get("_source_rank"),
+                poster_group="人工补录",
+                theme_assignment="manual_addition",
             )
         )
         existing_codes.add(code)
     for rank, group in enumerate(groups, 1):
         group["rank"] = rank
+        if group.get("_source_rank") is None:
+            group["_source_rank"] = rank
     return groups
 
 
@@ -542,7 +571,18 @@ def process_image(path_text: str, config: dict[str, Any]) -> dict[str, Any]:
         issues.extend(f"第{rank}组 {message}" for message in stock_issues)
         if not stocks:
             issues.append(f"第{rank}组未识别到股票: {title}")
-        groups.append({"rank": rank, "title": title, "_parsed_stocks": stocks})
+        assignment = "fallback_unreviewed" if is_fallback_group(title) else "explicit_group"
+        for stock in stocks:
+            stock.theme_rank = rank
+            stock.poster_rank = rank
+            stock.poster_group = title
+            stock.theme_assignment = assignment
+        groups.append({
+            "rank": rank,
+            "title": title,
+            "_source_rank": rank,
+            "_parsed_stocks": stocks,
+        })
 
     groups = reclassify_fallback_groups(groups, fallback_reviews, issues)
     groups = apply_manual_additions(groups, stock_additions)
@@ -551,13 +591,21 @@ def process_image(path_text: str, config: dict[str, Any]) -> dict[str, Any]:
     recognized: set[str] = set()
     output_groups: list[dict[str, Any]] = []
     for rank, group in enumerate(groups, 1):
-        stocks: list[dict[str, str]] = []
+        stocks: list[dict[str, Any]] = []
         for parsed in group.pop("_parsed_stocks"):
             if parsed.code in recognized:
                 issues.append(f"重复股票已移除: {parsed.code} {parsed.name}")
                 continue
             recognized.add(parsed.code)
-            stocks.append({"code": parsed.code, "name": parsed.name})
+            stock = {
+                "code": parsed.code,
+                "name": parsed.name,
+                "theme_rank": parsed.theme_rank,
+                "poster_rank": parsed.poster_rank,
+                "poster_group": parsed.poster_group,
+                "theme_assignment": parsed.theme_assignment,
+            }
+            stocks.append(stock)
         if stocks:
             output_groups.append(
                 {"rank": len(output_groups) + 1, "title": group["title"], "stocks": stocks}
@@ -588,6 +636,160 @@ def atomic_write_json(path: Path, document: dict[str, Any]) -> None:
     payload = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
     temporary.write_text(payload, encoding="utf-8", newline="\n")
     os.replace(temporary, path)
+
+
+def fallback_header_from_image(
+    image_path: Path, *, min_score: float
+) -> tuple[int, int, str]:
+    """Read only the explicit fallback header and its poster position."""
+    with Image.open(image_path) as opened:
+        image = np.array(opened.convert("RGB"))
+    bands = detect_header_bands(image)
+    if not bands:
+        raise ValueError(f"no title bands detected: {image_path}")
+
+    engine = get_ocr_engine()
+    x0 = int(image.shape[1] * 0.1)
+    fallback_names = ("其他概念", "其它概念", "未分类", "其他")
+    # Posters normally place the fallback group last. Start there so this
+    # provenance pass stays much cheaper than re-running full-stock OCR.
+    for index in [len(bands) - 1, *range(len(bands) - 1)]:
+        start, end = bands[index]
+        crop = image[max(0, start - 8) : min(image.shape[0], end + 12), x0:]
+        result, _ = engine(crop)
+        fragments: list[tuple[float, str]] = []
+        for box, raw_text, raw_score in result or []:
+            if float(raw_score) < min_score:
+                continue
+            text = str(raw_text).strip()
+            if not text:
+                continue
+            center_x = (float(box[0][0]) + float(box[2][0])) / 2
+            fragments.append((center_x, text))
+        title = clean_title(" ".join(text for _, text in sorted(fragments)))
+        normalized = normalize_text(title)
+        for fallback_name in fallback_names:
+            remainder = normalized.removeprefix(fallback_name)
+            if normalized.startswith(fallback_name) and len(remainder) <= 1:
+                return index + 1, len(bands), fallback_name
+    raise ValueError(f"fallback header not found: {image_path}")
+
+
+def backfill_legacy_provenance(
+    images: list[Path], args: argparse.Namespace
+) -> int:
+    """Move build-time review provenance into the daily truth documents."""
+    manual = load_json(args.manual_reviews.resolve())
+    if manual.get("version") != 1:
+        raise ValueError(f"unsupported manual review version: {args.manual_reviews}")
+    decision_days = manual.get("fallback_decisions", {})
+    addition_days = manual.get("stock_additions", {})
+    if not isinstance(decision_days, dict) or not isinstance(addition_days, dict):
+        raise ValueError(f"invalid manual review structure: {args.manual_reviews}")
+
+    output_dir = args.output_dir.resolve()
+    written = skipped = 0
+    failures: list[str] = []
+    for image in images:
+        day = parse_image_day(image)
+        decisions = decision_days.get(day, {})
+        additions = addition_days.get(day, [])
+        if not decisions and not additions:
+            skipped += 1
+            continue
+        try:
+            if not isinstance(decisions, dict) or not isinstance(additions, list):
+                raise ValueError(f"invalid manual review day: {day}")
+            output_path = output_dir / f"{day}.json"
+            document = load_json(output_path)
+            groups = document.get("groups")
+            if not isinstance(groups, list) or not groups:
+                raise ValueError(f"invalid daily truth: {output_path}")
+            all_stocks = [stock for group in groups for stock in group.get("stocks", [])]
+            if all_stocks and all("theme_assignment" in stock for stock in all_stocks):
+                skipped += 1
+                continue
+
+            decision_codes = {normalize_code(code) for code in decisions}
+            addition_codes = {
+                normalize_code(row.get("code", ""))
+                for row in additions
+                if isinstance(row, dict)
+            }
+            manual_codes = decision_codes | addition_codes
+            explicit_groups: list[dict[str, Any]] = []
+            for group in groups:
+                codes = {
+                    normalize_code(stock.get("code", ""))
+                    for stock in group.get("stocks", [])
+                    if isinstance(stock, dict)
+                }
+                if any(code and code not in manual_codes for code in codes):
+                    explicit_groups.append(group)
+
+            fallback_rank: int | None = None
+            fallback_title: str | None = None
+            if decision_codes:
+                fallback_rank, source_group_count, fallback_title = (
+                    fallback_header_from_image(image, min_score=float(args.min_score))
+                )
+                if fallback_rank != source_group_count:
+                    raise ValueError(
+                        f"fallback group is not last; run a full rebuild for {day}"
+                    )
+                if len(explicit_groups) + 1 != fallback_rank:
+                    raise ValueError(
+                        f"daily groups cannot reconstruct source ranks: {day}"
+                    )
+
+            explicit_ranks = {
+                id(group): rank for rank, group in enumerate(explicit_groups, 1)
+            }
+            for group in groups:
+                source_rank = explicit_ranks.get(id(group))
+                for stock in group.get("stocks", []):
+                    code = normalize_code(stock.get("code", ""))
+                    if code in decision_codes:
+                        stock.update({
+                            "theme_rank": source_rank,
+                            "poster_rank": fallback_rank,
+                            "poster_group": fallback_title,
+                            "theme_assignment": "manual_fallback_review",
+                        })
+                    elif code in addition_codes:
+                        stock.update({
+                            "theme_rank": source_rank,
+                            "poster_rank": None,
+                            "poster_group": "人工补录",
+                            "theme_assignment": "manual_addition",
+                        })
+                    else:
+                        if source_rank is None:
+                            raise ValueError(
+                                f"unreviewed stock in derived group: {day} {code}"
+                            )
+                        stock.update({
+                            "theme_rank": source_rank,
+                            "poster_rank": source_rank,
+                            "poster_group": group["title"],
+                            "theme_assignment": "explicit_group",
+                        })
+            validate_document(document)
+            if not args.dry_run:
+                atomic_write_json(output_path, document)
+            action = "CHECK" if args.dry_run else "ANNOTATED"
+            print(f"{action} {day} stocks={len(all_stocks)}")
+            written += 1
+        except Exception as exc:
+            failures.append(f"{image.name}: {type(exc).__name__}: {exc}")
+
+    for failure in failures:
+        print(f"FAILED {failure}", file=sys.stderr)
+    print(
+        f"PROVENANCE selected={len(images)} written={written} "
+        f"skipped={skipped} failed={len(failures)}"
+    )
+    return 1 if failures else 0
 
 
 def valid_month(value: str) -> str:
@@ -644,6 +846,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--provenance-only",
+        action="store_true",
+        help="annotate legacy daily files without re-running stock OCR",
+    )
     parser.add_argument("--strict", action="store_true", help="exit 2 when any issues remain")
     parser.add_argument("--min-score", type=float, default=0.35)
     parser.add_argument("--tile-height", type=int, default=1200)
@@ -667,6 +874,11 @@ def main() -> int:
         raise SystemExit(f"manual review file does not exist: {args.manual_reviews}")
     images = collect_images(args)
     output_dir = args.output_dir.resolve()
+
+    if args.provenance_only:
+        if args.workers != 1:
+            raise SystemExit("--provenance-only requires --workers 1")
+        return backfill_legacy_provenance(images, args)
 
     runnable: list[Path] = []
     for image in images:

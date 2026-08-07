@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import argparse
-from bisect import bisect_left
 import json
 import math
 import os
@@ -31,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = ROOT / "data" / "ths" / "limit_pool"
 STRONG_WIND_DIR = ROOT / "data" / "ths" / "strong_wind"
 ENDPOINT = "https://data.10jqka.com.cn/dataapi/limit_up/limit_up_pool"
-CALENDAR_ENDPOINT = "https://d.10jqka.com.cn/v6/line/hs_1A0001/01/last3600.js"
+STOCK_LINE_ENDPOINT = "https://d.10jqka.com.cn/v6/line/hs_{code}/01/{period}.js"
 CN_TZ = timezone(timedelta(hours=8))
 REQUEST_FIELDS = (
     "first_limit_up_time",
@@ -58,7 +57,9 @@ _SESSION.headers.update({
     "Referer": "https://data.10jqka.com.cn/",
 })
 _RAW_DAY_CACHE: dict[str, tuple[list[dict[str, Any]], int]] = {}
-_TRADE_DAYS_CACHE: tuple[str, ...] | None = None
+_RAW_CODE_CACHE: dict[str, frozenset[str]] = {}
+_STOCK_YEAR_DAYS_CACHE: dict[tuple[str, int], tuple[str, ...]] = {}
+_STOCK_ALL_DAYS_CACHE: dict[str, tuple[tuple[str, ...], bool]] = {}
 
 
 def output_path(day: str) -> Path:
@@ -140,70 +141,132 @@ def _fetch_raw_day(day: str) -> tuple[list[dict[str, Any]], int]:
     return result
 
 
-def _trade_days() -> tuple[str, ...]:
-    global _TRADE_DAYS_CACHE
-    if _TRADE_DAYS_CACHE is not None:
-        return _TRADE_DAYS_CACHE
-
-    response = _SESSION.get(CALENDAR_ENDPOINT, timeout=20)
+def _parse_line_response(response: requests.Response, label: str) -> dict[str, Any]:
     response.raise_for_status()
     text = response.text.strip()
     left = text.find("(")
     right = text.rfind(")")
     if left < 0 or right <= left:
-        raise RuntimeError("同花顺上证指数交易日历响应不是合法 JSONP")
+        raise RuntimeError(f"同花顺个股交易日响应不是合法 JSONP: {label}")
     body = json.loads(text[left + 1:right])
-    raw_data = body.get("data") if isinstance(body, dict) else None
-    if not isinstance(raw_data, str) or not raw_data:
-        raise RuntimeError("同花顺上证指数交易日历缺少 data")
+    if not isinstance(body, dict):
+        raise RuntimeError(f"同花顺个股交易日响应不是对象: {label}")
+    return body
+
+
+def _line_days(body: dict[str, Any], label: str) -> tuple[str, ...]:
+    raw_data = body.get("data")
+    if raw_data in (None, ""):
+        return ()
+    if not isinstance(raw_data, str):
+        raise RuntimeError(f"同花顺个股交易日 data 不是字符串: {label}")
 
     days: list[str] = []
     for record in raw_data.split(";"):
         compact = record.split(",", 1)[0]
         if not re.fullmatch(r"\d{8}", compact):
-            raise RuntimeError(f"同花顺交易日格式异常: {compact!r}")
+            raise RuntimeError(f"同花顺个股交易日格式异常: {label} {compact!r}")
         days.append(f"{compact[:4]}-{compact[4:6]}-{compact[6:]}")
     if days != sorted(set(days)):
-        raise RuntimeError("同花顺交易日历存在乱序或重复")
-    _TRADE_DAYS_CACHE = tuple(days)
-    return _TRADE_DAYS_CACHE
+        raise RuntimeError(f"同花顺个股交易日存在乱序或重复: {label}")
+    return tuple(days)
+
+
+def _stock_year_days(code: str, year: int) -> tuple[str, ...]:
+    key = (code, year)
+    cached = _STOCK_YEAR_DAYS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    url = STOCK_LINE_ENDPOINT.format(code=code, period=year)
+    response = _SESSION.get(
+        url,
+        headers={"Referer": f"https://stockpage.10jqka.com.cn/{code}/"},
+        timeout=20,
+    )
+    days = _line_days(_parse_line_response(response, f"{code}/{year}"), f"{code}/{year}")
+    if any(not day.startswith(f"{year:04d}-") for day in days):
+        raise RuntimeError(f"同花顺个股年度交易日越年: {code}/{year}")
+    _STOCK_YEAR_DAYS_CACHE[key] = days
+    return days
+
+
+def _stock_all_days(code: str) -> tuple[tuple[str, ...], bool]:
+    cached = _STOCK_ALL_DAYS_CACHE.get(code)
+    if cached is not None:
+        return cached
+    url = STOCK_LINE_ENDPOINT.format(code=code, period="last3600")
+    response = _SESSION.get(
+        url,
+        headers={"Referer": f"https://stockpage.10jqka.com.cn/{code}/"},
+        timeout=20,
+    )
+    body = _parse_line_response(response, f"{code}/last3600")
+    days = _line_days(body, f"{code}/last3600")
+    total = _as_int(body.get("total"))
+    if total is None or total < len(days):
+        raise RuntimeError(f"同花顺个股全量交易日 total 异常: {code}")
+    result = (days, total == len(days))
+    _STOCK_ALL_DAYS_CACHE[code] = result
+    return result
+
+
+def _recent_stock_days(code: str, day: str, required: int | None) -> tuple[list[str], bool]:
+    if required == 1:
+        return [day], True
+    if required is None:
+        all_days, complete = _stock_all_days(code)
+        eligible = [item for item in all_days if item <= day]
+        if not eligible or eligible[-1] != day:
+            raise RuntimeError(f"同花顺个股交易日不包含涨停日期: {day} {code}")
+        return list(reversed(eligible)), complete
+
+    current_year = int(day[:4])
+    descending: list[str] = []
+    for year in range(current_year, 1989, -1):
+        year_days = _stock_year_days(code, year)
+        if year == current_year:
+            year_days = tuple(item for item in year_days if item <= day)
+            if not year_days or year_days[-1] != day:
+                raise RuntimeError(f"同花顺个股交易日不包含涨停日期: {day} {code}")
+        descending.extend(reversed(year_days))
+        if len(descending) >= required:
+            return descending[:required], True
+    raise RuntimeError(
+        f"同花顺个股交易历史不足以核验涨停窗口: {day} {code} required={required}"
+    )
+
+
+def _raw_day_codes(day: str) -> frozenset[str]:
+    cached = _RAW_CODE_CACHE.get(day)
+    if cached is not None:
+        return cached
+    rows, _ = _fetch_raw_day(day)
+    codes = frozenset(_code(row.get("code")) for row in rows)
+    if "" in codes or len(codes) != len(rows):
+        raise RuntimeError(f"{day} 同花顺涨停池代码异常或重复")
+    _RAW_CODE_CACHE[day] = codes
+    return codes
 
 
 def _derive_consecutive_dates(
     day: str,
-    rows: list[dict[str, Any]],
-) -> dict[str, list[str]]:
-    trade_days = _trade_days()
-    position = bisect_left(trade_days, day)
-    if position >= len(trade_days) or trade_days[position] != day:
-        raise RuntimeError(f"同花顺交易日历不包含涨停池日期: {day}")
-
-    current_codes = {_code(row.get("code")) for row in rows}
-    if "" in current_codes or len(current_codes) != len(rows):
-        raise RuntimeError(f"{day} 同花顺涨停池代码异常或重复")
-    traces = {code: [day] for code in current_codes}
-    active = set(current_codes)
-
-    for previous_day in reversed(trade_days[:position]):
-        if not active:
+    code: str,
+    limit_up_total: int | None,
+) -> list[str]:
+    stock_days, history_complete = _recent_stock_days(code, day, limit_up_total)
+    trace = [day]
+    for previous_day in stock_days[1:]:
+        if code not in _raw_day_codes(previous_day):
             break
-        previous_rows, _ = _fetch_raw_day(previous_day)
-        previous_codes = {_code(row.get("code")) for row in previous_rows}
-        if "" in previous_codes or len(previous_codes) != len(previous_rows):
-            raise RuntimeError(f"{previous_day} 同花顺涨停池代码异常或重复")
-        active.intersection_update(previous_codes)
-        for code in active:
-            traces[code].append(previous_day)
-    if active:
-        raise RuntimeError(f"同花顺交易日历不足以确定 {day} 的当前连板起点")
-
-    return {code: list(reversed(trace)) for code, trace in traces.items()}
+        trace.append(previous_day)
+    if limit_up_total is None and len(trace) == len(stock_days) and not history_complete:
+        raise RuntimeError(f"同花顺个股历史被截断，无法确定当前连板起点: {day} {code}")
+    return list(reversed(trace))
 
 
 def fetch_day(day: str) -> dict[str, Any]:
     date.fromisoformat(day)
     rows, total = _fetch_raw_day(day)
-    consecutive_dates = _derive_consecutive_dates(day, rows)
 
     stocks: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -233,13 +296,27 @@ def fetch_day(day: str) -> dict[str, Any]:
         else:
             window_days = None
             limit_up_total = None
-        trace = consecutive_dates[code]
-        boards = len(trace)
+        if boards_desc == "首板" or (window_days, limit_up_total) == (1, 1):
+            boards = 1
+            boards_source = "high_days=first_board"
+            trace: list[str] | None = [day]
+        elif window_days is not None and window_days == limit_up_total:
+            boards = limit_up_total
+            boards_source = "high_days=continuous_window"
+            trace = None
+        else:
+            trace = _derive_consecutive_dates(day, code, limit_up_total)
+            boards = len(trace)
+            boards_source = "tonghuashun_stock_trade_days+daily_limit_up_presence"
         if limit_up_total is not None and boards > limit_up_total:
             raise RuntimeError(
                 f"{day} {code} 当前 {boards} 连板超过窗口描述 {boards_desc}"
             )
-        if window_days == limit_up_total and boards != limit_up_total:
+        if (
+            window_days is not None
+            and window_days == limit_up_total
+            and boards != limit_up_total
+        ):
             raise RuntimeError(
                 f"{day} {code} 连续窗口描述与逐日涨停池冲突: {boards_desc}, 当前{boards}板"
             )
@@ -261,7 +338,7 @@ def fetch_day(day: str) -> dict[str, Any]:
             "boards_desc": boards_desc,
             "limit_up_window_days": window_days,
             "limit_up_total": limit_up_total,
-            "boards_source": "tonghuashun_daily_limit_up_presence",
+            "boards_source": boards_source,
             "consecutive_limit_up_dates": trace,
             "first_limit_ts": first_ts,
             "final_limit_ts": final_ts,
@@ -282,8 +359,8 @@ def fetch_day(day: str) -> dict[str, Any]:
                 "fields": list(REQUEST_FIELDS),
                 "filter": "HS,GEM2STAR",
             },
-            "trade_calendar_endpoint": CALENDAR_ENDPOINT,
-            "boards_contract": "boards 只由同花顺逐交易日涨停池连续出现记录计算；high_days 仅保留为窗口统计",
+            "stock_trade_days_endpoint": STOCK_LINE_ENDPOINT,
+            "boards_contract": "首板与N天N板直接采用同花顺无歧义描述；N天M板(N>M)沿个股实际交易日倒推涨停池连续出现记录，M只作上限",
             "theme_contract": "本接口只提供客观涨停事实；题材只认 strong_wind",
         },
         "count": len(stocks),
@@ -343,17 +420,33 @@ def validate_payload(payload: dict[str, Any], day: str, path: Path) -> None:
                 raise ValueError(f"同花顺连续窗口与当前连板数冲突: {path} {code}")
         elif window_days is not None or limit_up_total is not None:
             raise ValueError(f"同花顺空 high_days 携带了伪造窗口值: {path} {code}")
-        if row.get("boards_source") != "tonghuashun_daily_limit_up_presence":
-            raise ValueError(f"同花顺连板数来源异常: {path} {code}")
+        boards_source = row.get("boards_source")
         trace = row.get("consecutive_limit_up_dates")
-        if (
-            not isinstance(trace, list)
-            or len(trace) != boards
-            or trace != sorted(set(trace))
-            or trace[-1] != day
-            or any(not isinstance(item, str) or not DAY_RE.fullmatch(item) for item in trace)
-        ):
-            raise ValueError(f"同花顺当前连板日期证据异常: {path} {code}")
+        if boards_source == "high_days=first_board":
+            if (window_days, limit_up_total, boards, trace) != (1, 1, 1, [day]):
+                raise ValueError(f"同花顺首板合同异常: {path} {code}")
+        elif boards_source == "high_days=continuous_window":
+            if (
+                not isinstance(window_days, int)
+                or window_days < 2
+                or window_days != limit_up_total
+                or boards != limit_up_total
+                or trace is not None
+            ):
+                raise ValueError(f"同花顺连续窗口合同异常: {path} {code}")
+        elif boards_source == "tonghuashun_stock_trade_days+daily_limit_up_presence":
+            if (
+                not isinstance(trace, list)
+                or len(trace) != boards
+                or trace != sorted(set(trace))
+                or trace[-1] != day
+                or any(not isinstance(item, str) or not DAY_RE.fullmatch(item) for item in trace)
+            ):
+                raise ValueError(f"同花顺当前连板日期证据异常: {path} {code}")
+            if window_days is not None and window_days == limit_up_total:
+                raise ValueError(f"同花顺无歧义窗口不应进入倒推分支: {path} {code}")
+        else:
+            raise ValueError(f"同花顺连板数来源异常: {path} {code}")
         if row.get("board_type") not in BOARD_TYPES:
             raise ValueError(f"同花顺板型异常: {path} {code}")
         first_ts = row.get("first_limit_ts")
@@ -401,9 +494,10 @@ def _selected_days(args: argparse.Namespace) -> list[str]:
         end = date.fromisoformat(args.end).isoformat()
         if start > end:
             raise ValueError("--start 不能晚于 --end")
-        for path in STRONG_WIND_DIR.glob("*.json"):
-            if DAY_RE.fullmatch(path.stem) and start <= path.stem <= end:
-                selected.add(path.stem)
+        for directory in (STRONG_WIND_DIR, OUTPUT_DIR):
+            for path in directory.glob("*.json"):
+                if DAY_RE.fullmatch(path.stem) and start <= path.stem <= end:
+                    selected.add(path.stem)
     if not selected:
         raise ValueError("请提供交易日，或同时提供 --start/--end")
     return sorted(selected)

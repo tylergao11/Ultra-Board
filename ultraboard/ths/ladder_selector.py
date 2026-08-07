@@ -43,6 +43,12 @@ ANNOUNCEMENT_GROUP_TITLES = frozenset({
     "三季报增长",
 })
 FALLBACK_GROUP_TITLES = frozenset({"其他", "其他概念", "其它概念", "未分类"})
+THEME_ASSIGNMENTS = frozenset({
+    "explicit_group",
+    "manual_fallback_review",
+    "manual_addition",
+    "legacy_group",
+})
 DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 CODE_RE = re.compile(r"^\d{6}$")
 
@@ -123,10 +129,41 @@ def _ths_groups(day: str) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any
                 raise ValueError(f"同花顺股票必填字段异常: {path} rank={rank}")
             if code in stock_map:
                 raise ValueError(f"同花顺股票存在多个主归属: {day} {code}")
+            if "theme_assignment" in stock:
+                theme_rank = stock.get("theme_rank")
+                poster_rank = stock.get("poster_rank")
+                poster_group = stock.get("poster_group")
+                assignment = stock.get("theme_assignment")
+            else:
+                theme_rank = rank
+                poster_rank = rank
+                poster_group = title
+                assignment = "explicit_group"
+            if theme_rank is not None and (
+                isinstance(theme_rank, bool)
+                or not isinstance(theme_rank, int)
+                or theme_rank < 1
+            ):
+                raise ValueError(f"同花顺题材原位次异常: {day} {code}")
+            if poster_rank is not None and (
+                isinstance(poster_rank, bool)
+                or not isinstance(poster_rank, int)
+                or poster_rank < 1
+            ):
+                raise ValueError(f"同花顺海报原位次异常: {day} {code}")
+            if not isinstance(poster_group, str) or not poster_group.strip():
+                raise ValueError(f"同花顺海报原分组异常: {day} {code}")
+            if assignment not in THEME_ASSIGNMENTS:
+                raise ValueError(f"同花顺题材归属来源异常: {day} {code}")
             stock_map[code] = {
                 "name": name.strip(),
                 "group": title,
-                "rank": rank,
+                # 模型只使用海报原位次；rank 是重排后的展示顺序，不能替代它。
+                "rank": theme_rank,
+                "display_rank": rank,
+                "poster_rank": poster_rank,
+                "poster_group": poster_group.strip(),
+                "theme_assignment": assignment,
                 "announcement": _is_announcement_group(title),
             }
     return groups, stock_map
@@ -173,6 +210,10 @@ def _stocks(day: str) -> list[dict[str, Any]]:
             "height": height,
             "one_price": one_price,
             "boards_desc": stock.get("boards_desc"),
+            "limit_up_window_days": stock.get("limit_up_window_days"),
+            "limit_up_total": stock.get("limit_up_total"),
+            "boards_source": stock.get("boards_source"),
+            "consecutive_limit_up_dates": stock.get("consecutive_limit_up_dates"),
             "board_type": stock.get("board_type"),
             "first_limit_ts": stock.get("first_limit_ts"),
             "final_limit_ts": stock.get("final_limit_ts"),
@@ -185,7 +226,11 @@ def _stocks(day: str) -> list[dict[str, Any]]:
         raise ValueError(
             f"同花顺主分组缺少当天涨停股 {len(missing)} 只: {day} {preview}{suffix}"
         )
-    rows.sort(key=lambda row: (-row["height"], row["rank"], row["code"]))
+    rows.sort(key=lambda row: (
+        -row["height"],
+        row["rank"] if row["rank"] is not None else 10**9,
+        row["code"],
+    ))
     return rows
 
 
@@ -257,7 +302,11 @@ def freeze_ladder(day: str, trigger: dict[str, Any]) -> dict[str, Any]:
     attack: list[dict[str, Any]] = []
     if natural_highest is not None:
         for row in natural:
-            if row["height"] != natural_highest or row["rank"] > 2:
+            if (
+                row["height"] != natural_highest
+                or row["rank"] is None
+                or row["rank"] > 2
+            ):
                 continue
             support = [
                 peer
@@ -299,6 +348,17 @@ def freeze_ladder(day: str, trigger: dict[str, Any]) -> dict[str, Any]:
         model = "无模型"
 
     selected = _with_roles(by_height.get(target_height, [])) if target_height else []
+    ladders = []
+    for height in sorted(by_height, reverse=True):
+        layer = _with_roles(by_height[height])
+        ladders.append({
+            "height": height,
+            "count": len(layer),
+            "natural_count": sum(not row["announcement"] for row in layer),
+            "announcement_count": sum(row["announcement"] for row in layer),
+            "one_price_count": sum(row["one_price"] for row in layer),
+            "members": layer,
+        })
     return {
         "date": day,
         "information_cutoff": day,
@@ -312,6 +372,7 @@ def freeze_ladder(day: str, trigger: dict[str, Any]) -> dict[str, Any]:
         "defense_structure": defense,
         "selected_layer": selected,
         "secondary_layer": secondary_layer,
+        "ladders": ladders,
     }
 
 
