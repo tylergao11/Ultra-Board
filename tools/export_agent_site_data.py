@@ -98,9 +98,12 @@ def _export_components_to_directory(
     output_dir: Path,
     start: str | None,
     end: str | None,
+    ready_only: bool,
 ) -> dict[str, Any]:
     source_days = available_days()
-    component_days = _selected_range(source_days, start, end)
+    candidate_days = _selected_range(source_days, start, end)
+    component_days: list[str] = []
+    skipped_day_count = 0
     digest = hashlib.sha256()
     digest.update(
         json.dumps(
@@ -116,9 +119,15 @@ def _export_components_to_directory(
     )
     digest.update(b"\0")
     exported_day_count = 0
-    for day in component_days:
+    for day in candidate_days:
         day_output = build_day_component(day)
-        _require_coverage(day_output)
+        try:
+            _require_coverage(day_output)
+        except ValueError:
+            if not ready_only:
+                raise
+            skipped_day_count += 1
+            continue
 
         day_component = {
             "schema_version": SCHEMA_VERSION,
@@ -134,6 +143,10 @@ def _export_components_to_directory(
         )
         _update_digest(digest, day_path, day_body)
         exported_day_count += 1
+        component_days.append(day)
+
+    if not component_days:
+        raise ValueError("所选范围没有满足发布条件的交易日")
 
     generated_at = datetime.now(CN_TZ).isoformat(timespec="seconds")
     revision = f"sha256:{digest.hexdigest()}"
@@ -152,8 +165,10 @@ def _export_components_to_directory(
             "end": component_days[-1],
         },
         "counts": {
+            "candidate_dates": len(candidate_days),
             "day_components": exported_day_count,
             "available_dates": len(component_days),
+            "skipped_dates": skipped_day_count,
         },
         "source_contract": SOURCE_CONTRACT,
     }
@@ -166,6 +181,7 @@ def export_components(
     output_dir: Path,
     start: str | None,
     end: str | None,
+    ready_only: bool,
 ) -> dict[str, Any]:
     """先在同级临时目录完成全部校验和写入，再原子替换公开目录。"""
     output_dir = output_dir.resolve()
@@ -180,6 +196,7 @@ def export_components(
             output_dir=staging,
             start=start,
             end=end,
+            ready_only=ready_only,
         )
         if output_dir.exists():
             os.replace(output_dir, backup)
@@ -208,6 +225,11 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_OUTPUT,
     )
+    parser.add_argument(
+        "--ready-only",
+        action="store_true",
+        help="只发布完整交易日；不完整日期整体跳过",
+    )
     return parser
 
 
@@ -219,6 +241,7 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=args.output_dir.resolve(),
         start=args.start,
         end=args.end,
+        ready_only=args.ready_only,
     )
     print(
         json.dumps(
