@@ -33,6 +33,14 @@ ENDPOINT = "https://data.10jqka.com.cn/dataapi/limit_up/limit_up_pool"
 STOCK_LINE_ENDPOINT = "https://d.10jqka.com.cn/v6/line/hs_{code}/01/{period}.js"
 CN_TZ = timezone(timedelta(hours=8))
 REQUEST_FIELDS = (
+    "change_rate",
+    "latest",
+    "limit_up_suc_rate",
+    "turnover_rate",
+    "order_amount",
+    "order_volume",
+    "currency_value",
+    "market_value",
     "first_limit_up_time",
     "last_limit_up_time",
     "open_num",
@@ -73,6 +81,58 @@ def _as_int(value: Any) -> int | None:
         return int(float(value))
     except (TypeError, ValueError):
         return None
+
+
+def _as_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _market_facts(raw: dict[str, Any], code: str) -> dict[str, float | None]:
+    price = _as_float(raw.get("latest"))
+    change_rate = _as_float(raw.get("change_rate"))
+    circulating_market_cap = _as_float(raw.get("currency_value"))
+    total_market_cap = _as_float(raw.get("market_value"))
+    turnover_rate = _as_float(raw.get("turnover_rate"))
+    seal_order_amount = _as_float(raw.get("order_amount"))
+    seal_order_volume = _as_float(raw.get("order_volume"))
+    limit_up_success_rate = _as_float(raw.get("limit_up_suc_rate"))
+
+    if price is None or price <= 0:
+        raise RuntimeError(f"{code} 同花顺股价异常: {raw.get('latest')!r}")
+    if change_rate is None or change_rate <= 0:
+        raise RuntimeError(f"{code} 同花顺涨幅异常: {raw.get('change_rate')!r}")
+    if circulating_market_cap is None or circulating_market_cap <= 0:
+        raise RuntimeError(f"{code} 同花顺流通市值异常: {raw.get('currency_value')!r}")
+    if total_market_cap is not None and total_market_cap <= 0:
+        raise RuntimeError(f"{code} 同花顺总市值异常: {raw.get('market_value')!r}")
+    if turnover_rate is None or turnover_rate < 0:
+        raise RuntimeError(f"{code} 同花顺换手率异常: {raw.get('turnover_rate')!r}")
+    if seal_order_amount is None or seal_order_amount < 0:
+        raise RuntimeError(f"{code} 同花顺封单金额异常: {raw.get('order_amount')!r}")
+    if seal_order_volume is None or seal_order_volume < 0:
+        raise RuntimeError(f"{code} 同花顺封单数量异常: {raw.get('order_volume')!r}")
+    if limit_up_success_rate is not None and not 0 <= limit_up_success_rate <= 1:
+        raise RuntimeError(
+            f"{code} 同花顺封板成功率异常: {raw.get('limit_up_suc_rate')!r}"
+        )
+
+    return {
+        "price": price,
+        "change_rate": change_rate,
+        "circulating_market_cap": circulating_market_cap,
+        "total_market_cap": total_market_cap,
+        "turnover_rate": turnover_rate,
+        "seal_order_amount": seal_order_amount,
+        "seal_order_volume": seal_order_volume,
+        "seal_order_ratio": seal_order_amount / circulating_market_cap,
+        "limit_up_success_rate": limit_up_success_rate,
+    }
 
 
 def _code(value: Any) -> str:
@@ -331,23 +391,26 @@ def fetch_day(day: str) -> dict[str, Any]:
         if board_type == "一字板" and not one_price:
             raise RuntimeError(f"{code} 一字板与封板过程字段冲突")
 
-        stocks.append({
-            "code": code,
-            "name": name,
-            "boards": boards,
-            "boards_desc": boards_desc,
-            "limit_up_window_days": window_days,
-            "limit_up_total": limit_up_total,
-            "boards_source": boards_source,
-            "consecutive_limit_up_dates": trace,
-            "first_limit_ts": first_ts,
-            "final_limit_ts": final_ts,
-            "open_count": open_count,
-            "board_type": board_type,
-            "one_price": one_price,
-            "is_again_limit": raw.get("is_again_limit"),
-            "change_tag": raw.get("change_tag"),
-        })
+        stocks.append(
+            {
+                "code": code,
+                "name": name,
+                "boards": boards,
+                "boards_desc": boards_desc,
+                "limit_up_window_days": window_days,
+                "limit_up_total": limit_up_total,
+                "boards_source": boards_source,
+                "consecutive_limit_up_dates": trace,
+                "first_limit_ts": first_ts,
+                "final_limit_ts": final_ts,
+                "open_count": open_count,
+                "board_type": board_type,
+                "one_price": one_price,
+                "is_again_limit": raw.get("is_again_limit"),
+                "change_tag": raw.get("change_tag"),
+                **_market_facts(raw, code),
+            }
+        )
     stocks.sort(key=lambda row: row["code"])
     return {
         "date": day,
@@ -362,6 +425,8 @@ def fetch_day(day: str) -> dict[str, Any]:
             "stock_trade_days_endpoint": STOCK_LINE_ENDPOINT,
             "boards_contract": "首板与N天N板直接采用同花顺无歧义描述；N天M板(N>M)沿个股实际交易日倒推涨停池连续出现记录，M只作上限",
             "attribute_contract": "本接口只提供客观涨停事实；具体分类只认开盘啦",
+            "market_facts_schema": 1,
+            "market_facts_contract": "股价、涨幅、流通市值、总市值、换手率、封单金额与数量均来自同花顺；reason_type 禁止用于题材归因",
         },
         "count": len(stocks),
         "stocks": stocks,
@@ -386,6 +451,41 @@ def _read_json(path: Path) -> dict[str, Any]:
     return body
 
 
+def _validate_market_facts(row: dict[str, Any], path: Path, code: str) -> None:
+    required_positive = ("price", "change_rate", "circulating_market_cap")
+    required_nonnegative = (
+        "turnover_rate",
+        "seal_order_amount",
+        "seal_order_volume",
+        "seal_order_ratio",
+    )
+    for field in required_positive:
+        value = row.get(field)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            raise ValueError(f"同花顺市场事实字段异常: {path} {code} {field}")
+    for field in required_nonnegative:
+        value = row.get(field)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            raise ValueError(f"同花顺市场事实字段异常: {path} {code} {field}")
+    total_market_cap = row.get("total_market_cap")
+    if total_market_cap is not None and (
+        isinstance(total_market_cap, bool)
+        or not isinstance(total_market_cap, (int, float))
+        or total_market_cap <= 0
+    ):
+        raise ValueError(f"同花顺总市值字段异常: {path} {code}")
+    success_rate = row.get("limit_up_success_rate")
+    if success_rate is not None and (
+        isinstance(success_rate, bool)
+        or not isinstance(success_rate, (int, float))
+        or not 0 <= success_rate <= 1
+    ):
+        raise ValueError(f"同花顺封板成功率字段异常: {path} {code}")
+    expected_ratio = row["seal_order_amount"] / row["circulating_market_cap"]
+    if not math.isclose(row["seal_order_ratio"], expected_ratio, rel_tol=1e-12):
+        raise ValueError(f"同花顺封单市值比不闭合: {path} {code}")
+
+
 def validate_payload(payload: dict[str, Any], day: str, path: Path) -> None:
     stocks = payload.get("stocks")
     source = payload.get("source") or {}
@@ -396,6 +496,9 @@ def validate_payload(payload: dict[str, Any], day: str, path: Path) -> None:
         or payload.get("count") != len(stocks)
     ):
         raise ValueError(f"同花顺涨停池合同异常: {path}")
+    market_facts_schema = source.get("market_facts_schema")
+    if market_facts_schema not in (None, 1):
+        raise ValueError(f"同花顺市场事实版本异常: {path}")
     seen: set[str] = set()
     for row in stocks:
         if not isinstance(row, dict):
@@ -470,6 +573,82 @@ def validate_payload(payload: dict[str, Any], day: str, path: Path) -> None:
         )
         if row.get("one_price") != expected_one_price:
             raise ValueError(f"同花顺真一字字段不一致: {path} {code}")
+        if market_facts_schema == 1:
+            _validate_market_facts(row, path, code)
+
+
+def _assert_same_board_facts(
+    day: str,
+    stored: dict[str, Any],
+    raw: dict[str, Any],
+) -> None:
+    code = _code(stored.get("code"))
+    raw_open_count = raw.get("open_num")
+    live_open_count = 0 if raw_open_count in (None, "") else _as_int(raw_open_count)
+    expected = {
+        "name": str(raw.get("name") or "").strip(),
+        "boards_desc": str(raw.get("high_days") or "").strip(),
+        "first_limit_ts": _as_int(raw.get("first_limit_up_time")),
+        "final_limit_ts": _as_int(raw.get("last_limit_up_time")),
+        "open_count": live_open_count,
+        "board_type": str(raw.get("limit_up_type") or "").strip(),
+    }
+    actual = {field: stored.get(field) for field in expected}
+    if actual != expected:
+        raise RuntimeError(
+            f"{day} {code} 同花顺历史板上事实发生变化: "
+            f"stored={actual!r}, live={expected!r}"
+        )
+
+
+def enrich_market_facts(payload: dict[str, Any], day: str, path: Path) -> bool:
+    """用同花顺同日接口补齐行情与封单事实，不重算既有连板过程。"""
+    validate_payload(payload, day, path)
+    rows, total = _fetch_raw_day(day)
+    if total != payload.get("count"):
+        raise RuntimeError(
+            f"{day} 同花顺历史涨停数量发生变化: "
+            f"stored={payload.get('count')}, live={total}"
+        )
+    raw_by_code = {_code(row.get("code")): row for row in rows}
+    stored_by_code = {_code(row.get("code")): row for row in payload["stocks"]}
+    if set(raw_by_code) != set(stored_by_code):
+        raise RuntimeError(f"{day} 同花顺历史涨停股票集合发生变化")
+
+    changed = False
+    for code, stored in stored_by_code.items():
+        raw = raw_by_code[code]
+        _assert_same_board_facts(day, stored, raw)
+        for field, value in _market_facts(raw, code).items():
+            if stored.get(field) != value:
+                stored[field] = value
+                changed = True
+
+    source = payload["source"]
+    query_contract = source.setdefault("query_contract", {})
+    desired_source_fields = {
+        "fields": list(REQUEST_FIELDS),
+        "filter": "HS,GEM2STAR",
+    }
+    if query_contract != desired_source_fields:
+        source["query_contract"] = desired_source_fields
+        changed = True
+    market_contract = (
+        "股价、涨幅、流通市值、总市值、换手率、封单金额与数量均来自同花顺；"
+        "reason_type 禁止用于题材归因"
+    )
+    if source.get("market_facts_schema") != 1:
+        source["market_facts_schema"] = 1
+        changed = True
+    if source.get("market_facts_contract") != market_contract:
+        source["market_facts_contract"] = market_contract
+        changed = True
+    if changed:
+        source["market_facts_fetched_at"] = datetime.now(CN_TZ).isoformat(
+            timespec="seconds"
+        )
+    validate_payload(payload, day, path)
+    return changed
 
 
 def load_day(day: str, *, fetch_missing: bool = False, force: bool = False) -> dict[str, Any] | None:
@@ -514,6 +693,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--start")
     parser.add_argument("--end")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--market-facts-only",
+        action="store_true",
+        help="只为现有涨停池补齐同花顺股价、市值、换手率和封单事实",
+    )
     parser.add_argument("--interval", type=float, default=0.25)
     args = parser.parse_args(argv)
     if args.interval < 0:
@@ -521,11 +705,31 @@ def main(argv: list[str] | None = None) -> int:
 
     days = _selected_days(args)
     for index, day in enumerate(days):
-        existed = output_path(day).exists()
+        path = output_path(day)
+        existed = path.exists()
+        fetched = False
+        if args.market_facts_only:
+            if not existed:
+                raise FileNotFoundError(f"同花顺涨停池不存在，无法只补市场事实: {path}")
+            payload = _read_json(path)
+            validate_payload(payload, day, path)
+            if args.force or payload["source"].get("market_facts_schema") != 1:
+                changed = enrich_market_facts(payload, day, path)
+                fetched = True
+                if changed:
+                    _write_json_atomic(path, payload)
+            else:
+                changed = False
+            action = "ENRICHED" if changed else "CHECKED"
+            print(f"{action} {day} stocks={payload['count']} -> {path}")
+            if index + 1 < len(days) and fetched:
+                time.sleep(args.interval)
+            continue
+
         payload = load_day(day, fetch_missing=True, force=args.force)
         assert payload is not None
         action = "WROTE" if args.force or not existed else "CHECKED"
-        print(f"{action} {day} stocks={payload['count']} -> {output_path(day)}")
+        print(f"{action} {day} stocks={payload['count']} -> {path}")
         if index + 1 < len(days) and (args.force or not existed):
             time.sleep(args.interval)
     return 0

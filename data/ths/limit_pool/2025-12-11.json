@@ -6,6 +6,14 @@
     "fetched_at": "2026-08-07T02:26:25+08:00",
     "query_contract": {
       "fields": [
+        "change_rate",
+        "latest",
+        "limit_up_suc_rate",
+        "turnover_rate",
+        "order_amount",
+        "order_volume",
+        "currency_value",
+        "market_value",
         "first_limit_up_time",
         "last_limit_up_time",
         "open_num",
@@ -18,7 +26,10 @@
     },
     "stock_trade_days_endpoint": "https://d.10jqka.com.cn/v6/line/hs_{code}/01/{period}.js",
     "boards_contract": "首板与N天N板直接采用同花顺无歧义描述；N天M板(N>M)沿个股实际交易日倒推涨停池连续出现记录，M只作上限",
-    "attribute_contract": "本接口只提供客观涨停事实；具体分类只认开盘啦"
+    "attribute_contract": "本接口只提供客观涨停事实；具体分类只认开盘啦",
+    "market_facts_schema": 1,
+    "market_facts_contract": "股价、涨幅、流通市值、总市值、换手率、封单金额与数量均来自同花顺；reason_type 禁止用于题材归因",
+    "market_facts_fetched_at": "2026-08-07T15:35:27+08:00"
   },
   "count": 32,
   "stocks": [
@@ -39,7 +50,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 0,
-      "change_tag": "FIRST_LIMIT"
+      "change_tag": "FIRST_LIMIT",
+      "price": 6.11,
+      "change_rate": 10.0901,
+      "circulating_market_cap": 14132587000.0,
+      "turnover_rate": 2.514,
+      "seal_order_amount": 79574807.0,
+      "seal_order_volume": 13023700.0,
+      "seal_order_ratio": 0.005630590280463159,
+      "limit_up_success_rate": 0.5
     },
     {
       "code": "000859",
@@ -58,7 +77,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 1,
-      "change_tag": "LIMIT_BACK"
+      "change_tag": "LIMIT_BACK",
+      "price": 9.77,
+      "change_rate": 10.0225,
+      "circulating_market_cap": 8753189900.0,
+      "turnover_rate": 20.6234,
+      "seal_order_amount": 97591358.0,
+      "seal_order_volume": 9988880.0,
+      "seal_order_ratio": 0.011149233492580802,
+      "limit_up_success_rate": 0.9333333333333333
     },
     {
       "code": "000890",
@@ -77,7 +104,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 0,
-      "change_tag": "FIRST_LIMIT"
+      "change_tag": "FIRST_LIMIT",
+      "price": 5.34,
+      "change_rate": 10.1031,
+      "circulating_market_cap": 2240082200.0,
+      "turnover_rate": 13.5948,
+      "seal_order_amount": 166961450.0,
+      "seal_order_volume": 31266189.0,
+      "seal_order_ratio": 0.07453362648924222,
+      "limit_up_success_rate": 0.7
     },
     {
       "code": "000950",
@@ -94,7 +129,15 @@
       "board_type": "一字板",
       "one_price": true,
       "is_again_limit": 0,
-      "change_tag": "FIRST_LIMIT"
+      "change_tag": "FIRST_LIMIT",
+      "price": 6.45,
+      "change_rate": 10.0683,
+      "circulating_market_cap": 11146791300.0,
+      "turnover_rate": 1.8096,
+      "seal_order_amount": 324936520.0,
+      "seal_order_volume": 50377755.0,
+      "seal_order_ratio": 0.02915067764837402,
+      "limit_up_success_rate": 0.0
     },
     {
       "code": "001208",
@@ -113,7 +156,15 @@
       "board_type": "一字板",
       "one_price": true,
       "is_again_limit": 0,
-      "change_tag": "FIRST_LIMIT"
+      "change_tag": "FIRST_LIMIT",
+      "price": 14.85,
+      "change_rate": 10.0,
+      "circulating_market_cap": 3911456500.0,
+      "turnover_rate": 6.0756,
+      "seal_order_amount": 207908910.0,
+      "seal_order_volume": 14000600.0,
+      "seal_order_ratio": 0.05315383412802878,
+      "limit_up_success_rate": 0.75
     },
     {
       "code": "002123",
@@ -132,7 +183,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 0,
-      "change_tag": "FIRST_LIMIT"
+      "change_tag": "FIRST_LIMIT",
+      "price": 12.3,
+      "change_rate": 10.0179,
+      "circulating_market_cap": 8856858100.0,
+      "turnover_rate": 8.4599,
+      "seal_order_amount": 109468832.0,
+      "seal_order_volume": 8899905.0,
+      "seal_order_ratio": 0.012359781625043762,
+      "limit_up_success_rate": 0.8
     },
     {
       "code": "002157",
@@ -151,7 +210,14 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 1,
-      "change_tag": "LIMIT_BACK"
+      "change_tag": "LIMIT_BACK",
+      "price": 3.45,
+      "change_rate": 9.8726,
+      "circulating_market_cap": 24914581000.0,
+      "turnover_rate": 8.902,
+      "seal_order_amount": 23355120.0,
+      "seal_order_volume": 6769600.0,
+      "seal_order_ratio": 0.0009374076971232228
     },
     {
       "code": "002202",
@@ -170,7 +236,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 1,
-      "change_tag": "LIMIT_BACK"
+      "change_tag": "LIMIT_BACK",
+      "price": 16.98,
+      "change_rate": 9.9741,
+      "circulating_market_cap": 56925009000.0,
+      "turnover_rate": 7.2322,
+      "seal_order_amount": 96915031.0,
+      "seal_order_volume": 5707599.0,
+      "seal_order_ratio": 0.0017025035692133136,
+      "limit_up_success_rate": 0.6666666666666666
     },
     {
       "code": "002235",
@@ -192,7 +266,15 @@
       "board_type": "T字板",
       "one_price": false,
       "is_again_limit": 0,
-      "change_tag": "FIRST_LIMIT"
+      "change_tag": "FIRST_LIMIT",
+      "price": 13.6,
+      "change_rate": 10.0324,
+      "circulating_market_cap": 7528664900.0,
+      "turnover_rate": 20.3558,
+      "seal_order_amount": 203548490.0,
+      "seal_order_volume": 14966801.0,
+      "seal_order_ratio": 0.02703646565541787,
+      "limit_up_success_rate": 0.9
     },
     {
       "code": "002309",
@@ -211,7 +293,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 1,
-      "change_tag": "LIMIT_BACK"
+      "change_tag": "LIMIT_BACK",
+      "price": 3.64,
+      "change_rate": 9.9698,
+      "circulating_market_cap": 4424863600.0,
+      "turnover_rate": 5.8006,
+      "seal_order_amount": 69009380.0,
+      "seal_order_volume": 18958621.0,
+      "seal_order_ratio": 0.015595820851969313,
+      "limit_up_success_rate": 0.6428571428571429
     },
     {
       "code": "002471",
@@ -230,7 +320,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 0,
-      "change_tag": "FIRST_LIMIT"
+      "change_tag": "FIRST_LIMIT",
+      "price": 4.83,
+      "change_rate": 10.0228,
+      "circulating_market_cap": 6461947200.0,
+      "turnover_rate": 9.6592,
+      "seal_order_amount": 172063920.0,
+      "seal_order_volume": 35624000.0,
+      "seal_order_ratio": 0.026627255635886346,
+      "limit_up_success_rate": 0.9473684210526315
     },
     {
       "code": "002519",
@@ -249,7 +347,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 1,
-      "change_tag": "LIMIT_BACK"
+      "change_tag": "LIMIT_BACK",
+      "price": 6.88,
+      "change_rate": 10.08,
+      "circulating_market_cap": 7697244000.0,
+      "turnover_rate": 33.5816,
+      "seal_order_amount": 80579847.0,
+      "seal_order_volume": 11712187.0,
+      "seal_order_ratio": 0.01046866216011861,
+      "limit_up_success_rate": 0.75
     },
     {
       "code": "002544",
@@ -268,7 +374,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 1,
-      "change_tag": "LIMIT_BACK"
+      "change_tag": "LIMIT_BACK",
+      "price": 33.12,
+      "change_rate": 9.9967,
+      "circulating_market_cap": 22537135000.0,
+      "turnover_rate": 11.5972,
+      "seal_order_amount": 103139124.0,
+      "seal_order_volume": 3114104.0,
+      "seal_order_ratio": 0.004576407959574276,
+      "limit_up_success_rate": 0.5
     },
     {
       "code": "002639",
@@ -287,7 +401,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 0,
-      "change_tag": "FIRST_LIMIT"
+      "change_tag": "FIRST_LIMIT",
+      "price": 16.51,
+      "change_rate": 9.9933,
+      "circulating_market_cap": 10741724700.0,
+      "turnover_rate": 23.8083,
+      "seal_order_amount": 283363920.0,
+      "seal_order_volume": 17163169.0,
+      "seal_order_ratio": 0.026379741420853954,
+      "limit_up_success_rate": 0.8333333333333334
     },
     {
       "code": "002725",
@@ -304,7 +426,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 1,
-      "change_tag": "LIMIT_BACK"
+      "change_tag": "LIMIT_BACK",
+      "price": 21.2,
+      "change_rate": 10.0156,
+      "circulating_market_cap": 4494692800.0,
+      "turnover_rate": 21.0931,
+      "seal_order_amount": 146754540.0,
+      "seal_order_volume": 6922384.0,
+      "seal_order_ratio": 0.03265062742441486,
+      "limit_up_success_rate": 0.6666666666666666
     },
     {
       "code": "300265",
@@ -323,7 +453,14 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 1,
-      "change_tag": "LIMIT_BACK"
+      "change_tag": "LIMIT_BACK",
+      "price": 12.01,
+      "change_rate": 19.98,
+      "circulating_market_cap": 5612293500.0,
+      "turnover_rate": 14.7762,
+      "seal_order_amount": 95846105.0,
+      "seal_order_volume": 7980525.0,
+      "seal_order_ratio": 0.017077885360058238
     },
     {
       "code": "300266",
@@ -342,7 +479,14 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 1,
-      "change_tag": "LIMIT_BACK"
+      "change_tag": "LIMIT_BACK",
+      "price": 2.95,
+      "change_rate": 19.9187,
+      "circulating_market_cap": 4580986700.0,
+      "turnover_rate": 11.2395,
+      "seal_order_amount": 12265215.0,
+      "seal_order_volume": 4157700.0,
+      "seal_order_ratio": 0.0026774177274952577
     },
     {
       "code": "600105",
@@ -361,7 +505,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 1,
-      "change_tag": "LIMIT_BACK"
+      "change_tag": "LIMIT_BACK",
+      "price": 21.04,
+      "change_rate": 9.9843,
+      "circulating_market_cap": 30760371000.0,
+      "turnover_rate": 11.2699,
+      "seal_order_amount": 275992140.0,
+      "seal_order_volume": 13117497.0,
+      "seal_order_ratio": 0.008972328064573733,
+      "limit_up_success_rate": 0.7142857142857143
     },
     {
       "code": "600250",
@@ -380,7 +532,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 1,
-      "change_tag": "LIMIT_BACK"
+      "change_tag": "LIMIT_BACK",
+      "price": 13.06,
+      "change_rate": 10.0253,
+      "circulating_market_cap": 4056356100.0,
+      "turnover_rate": 23.5248,
+      "seal_order_amount": 56347357.0,
+      "seal_order_volume": 4314499.0,
+      "seal_order_ratio": 0.013891126816997156,
+      "limit_up_success_rate": 0.9230769230769231
     },
     {
       "code": "600343",
@@ -399,7 +559,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 1,
-      "change_tag": "LIMIT_BACK"
+      "change_tag": "LIMIT_BACK",
+      "price": 36.47,
+      "change_rate": 10.0151,
+      "circulating_market_cap": 23275386000.0,
+      "turnover_rate": 28.3211,
+      "seal_order_amount": 184595570.0,
+      "seal_order_volume": 5061573.0,
+      "seal_order_ratio": 0.007930934851091191,
+      "limit_up_success_rate": 0.6923076923076923
     },
     {
       "code": "600678",
@@ -416,7 +584,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 0,
-      "change_tag": "FIRST_LIMIT"
+      "change_tag": "FIRST_LIMIT",
+      "price": 14.73,
+      "change_rate": 10.0075,
+      "circulating_market_cap": 5140622700.0,
+      "turnover_rate": 12.1809,
+      "seal_order_amount": 142442770.0,
+      "seal_order_volume": 9670249.0,
+      "seal_order_ratio": 0.027709244251674023,
+      "limit_up_success_rate": 0.9090909090909091
     },
     {
       "code": "600693",
@@ -433,7 +609,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 1,
-      "change_tag": "LIMIT_BACK"
+      "change_tag": "LIMIT_BACK",
+      "price": 14.92,
+      "change_rate": 10.0295,
+      "circulating_market_cap": 12964775500.0,
+      "turnover_rate": 24.9836,
+      "seal_order_amount": 76285363.0,
+      "seal_order_volume": 5112960.0,
+      "seal_order_ratio": 0.00588404812717351,
+      "limit_up_success_rate": 0.8387096774193549
     },
     {
       "code": "600865",
@@ -452,7 +636,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 0,
-      "change_tag": "FIRST_LIMIT"
+      "change_tag": "FIRST_LIMIT",
+      "price": 10.8,
+      "change_rate": 9.9796,
+      "circulating_market_cap": 4063395400.0,
+      "turnover_rate": 12.9824,
+      "seal_order_amount": 33132208.0,
+      "seal_order_volume": 3067797.0,
+      "seal_order_ratio": 0.008153823277941398,
+      "limit_up_success_rate": 0.8
     },
     {
       "code": "600936",
@@ -471,7 +663,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 0,
-      "change_tag": "FIRST_LIMIT"
+      "change_tag": "FIRST_LIMIT",
+      "price": 3.74,
+      "change_rate": 10.0,
+      "circulating_market_cap": 6249638100.0,
+      "turnover_rate": 1.5278,
+      "seal_order_amount": 78369321.0,
+      "seal_order_volume": 20954364.0,
+      "seal_order_ratio": 0.012539817465590528,
+      "limit_up_success_rate": 0.5714285714285714
     },
     {
       "code": "603506",
@@ -488,7 +688,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 1,
-      "change_tag": "LIMIT_BACK"
+      "change_tag": "LIMIT_BACK",
+      "price": 14.86,
+      "change_rate": 9.9926,
+      "circulating_market_cap": 2790377800.0,
+      "turnover_rate": 9.6096,
+      "seal_order_amount": 406737520.0,
+      "seal_order_volume": 27371300.0,
+      "seal_order_ratio": 0.1457643190825271,
+      "limit_up_success_rate": 0.5
     },
     {
       "code": "603601",
@@ -505,7 +713,15 @@
       "board_type": "T字板",
       "one_price": false,
       "is_again_limit": 0,
-      "change_tag": "FIRST_LIMIT"
+      "change_tag": "FIRST_LIMIT",
+      "price": 7.66,
+      "change_rate": 10.0575,
+      "circulating_market_cap": 7891047500.0,
+      "turnover_rate": 8.5867,
+      "seal_order_amount": 197047240.0,
+      "seal_order_volume": 25724183.0,
+      "seal_order_ratio": 0.024970986424806087,
+      "limit_up_success_rate": 0.7777777777777778
     },
     {
       "code": "603709",
@@ -525,7 +741,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 0,
-      "change_tag": "FIRST_LIMIT"
+      "change_tag": "FIRST_LIMIT",
+      "price": 21.67,
+      "change_rate": 10.0,
+      "circulating_market_cap": 2711117900.0,
+      "turnover_rate": 9.7652,
+      "seal_order_amount": 189045440.0,
+      "seal_order_volume": 8723832.0,
+      "seal_order_ratio": 0.0697297007998066,
+      "limit_up_success_rate": 0.6666666666666666
     },
     {
       "code": "603929",
@@ -544,7 +768,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 0,
-      "change_tag": "FIRST_LIMIT"
+      "change_tag": "FIRST_LIMIT",
+      "price": 81.08,
+      "change_rate": 9.9986,
+      "circulating_market_cap": 17299229000.0,
+      "turnover_rate": 2.9206,
+      "seal_order_amount": 88412632.0,
+      "seal_order_volume": 1090437.0,
+      "seal_order_ratio": 0.005110784532651715,
+      "limit_up_success_rate": 0.8
     },
     {
       "code": "605055",
@@ -563,7 +795,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 0,
-      "change_tag": "FIRST_LIMIT"
+      "change_tag": "FIRST_LIMIT",
+      "price": 9.27,
+      "change_rate": 9.9644,
+      "circulating_market_cap": 4078800000.0,
+      "turnover_rate": 2.8189,
+      "seal_order_amount": 42626241.0,
+      "seal_order_volume": 4598300.0,
+      "seal_order_ratio": 0.010450681818181819,
+      "limit_up_success_rate": 0.7
     },
     {
       "code": "605358",
@@ -580,7 +820,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 1,
-      "change_tag": "LIMIT_BACK"
+      "change_tag": "LIMIT_BACK",
+      "price": 36.5,
+      "change_rate": 10.006,
+      "circulating_market_cap": 24505239000.0,
+      "turnover_rate": 11.7153,
+      "seal_order_amount": 78515734.0,
+      "seal_order_volume": 2151116.0,
+      "seal_order_ratio": 0.0032040386955622022,
+      "limit_up_success_rate": 0.5
     },
     {
       "code": "688119",
@@ -599,7 +847,14 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 1,
-      "change_tag": "LIMIT_BACK"
+      "change_tag": "LIMIT_BACK",
+      "price": 4.94,
+      "change_rate": 19.9029,
+      "circulating_market_cap": 5557500000.0,
+      "turnover_rate": 8.6517,
+      "seal_order_amount": 26179174.0,
+      "seal_order_volume": 5299428.0,
+      "seal_order_ratio": 0.0047106026090868195
     },
     {
       "code": "688662",
@@ -618,7 +873,15 @@
       "board_type": "换手板",
       "one_price": false,
       "is_again_limit": 1,
-      "change_tag": "LIMIT_BACK"
+      "change_tag": "LIMIT_BACK",
+      "price": 55.19,
+      "change_rate": 20.0043,
+      "circulating_market_cap": 4869965600.0,
+      "turnover_rate": 19.5996,
+      "seal_order_amount": 7708663.3,
+      "seal_order_volume": 139675.0,
+      "seal_order_ratio": 0.0015828989223250366,
+      "limit_up_success_rate": 1.0
     }
   ]
 }
