@@ -5,9 +5,22 @@ description: 使用《新龙头候选识别框架_方法论报告》全文进行
 
 # 执行约束
 
-唯一复盘数据来源：https://jiedian-board.coral-sage-9821.chatgpt.site/
+唯一复盘数据入口是项目本地 Agent API。必须在仓库根目录调用：
 
-只能使用该站点数据以及内部提到的地址。
+```powershell
+npm run api -- "/api/v1/health"
+npm run api -- "/api/v1/calendar"
+npm run api -- "/api/v1/day?date=<trade_date>"
+npm run api -- "/api/v1/stocks?date=<trade_date>&code=<stock_code_1>&code=<stock_code_2>"
+```
+
+需要题材索引、板块故事、接口元数据或完整端点清单时，分别调用本地
+`/api/v1/themes`、`/api/v1/stories`、`/api/v1/meta` 或 `/api/v1`。所有事实均从固定响应外壳的
+`response.body` 读取。
+
+禁止访问原公网复盘站点，禁止使用浏览器或网页抓取作为回退，禁止使用项目本地 API 之外的市场数据源。
+
+最终复盘必须以论文式文字报告形式给出，不得仅输出表格、清单、提纲或零散结论。
 
 以下为《新龙头候选识别框架_方法论报告》原文全文。不得精简、改写、概括、补充或删除原文。
 

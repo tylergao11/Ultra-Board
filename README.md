@@ -49,6 +49,17 @@ python tools/extract_attribution_evidence.py 2026-08-06 --decision-view
 
 ## 单交易日 Agent 事实接口
 
+站点不可访问时，直接通过本地统一入口调用全部 `/api/v1` 端点，不需要浏览器或公网：
+
+```powershell
+npm run api -- "/api/v1"
+npm run api -- "/api/v1/day?date=2026-07-20"
+npm run api -- "/api/v1/stocks?date=2026-07-20&code=001258"
+```
+
+该命令复用 `site/worker/agent-api.ts` 的正式路由与 `site/public/agent-data/v1` 数据，
+统一返回 `ultra_board_local_api` 固定外壳，不复制合同、不联网、不建立第二真相源。
+
 默认一次只读取一个交易日，展示当日题材故事，并返回全部首板和高板。每只股票的概览只保留代码、
 名称、板数、板型、主/候选题材和首封时间：
 
