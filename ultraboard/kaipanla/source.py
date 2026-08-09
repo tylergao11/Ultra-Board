@@ -64,6 +64,10 @@ def load_day(value: str) -> dict[str, Any]:
     """读取一天的开盘啦原始快照，不附加任何交易判断。"""
     day = _day(value)
     directory = RAW_DIR / day
+    if (directory / "_MISMATCH").exists():
+        raise ValueError(f"开盘啦日快照尚未闭合: {directory / '_MISMATCH'}")
+    if not (directory / "_DONE").exists():
+        raise FileNotFoundError(f"开盘啦日快照缺少完成标记: {directory / '_DONE'}")
     pool = _read(directory / "zt_pool.json")
     ladder = _read(directory / "sector_ladder.json")
     assert pool is not None and ladder is not None

@@ -28,7 +28,7 @@ API_VERSION = "v1"
 SOURCE_CONTRACT = {
     "stock_attributes": "kaipanla theme + themes only",
     "market_and_limit_facts": "tonghuashun limit_pool only",
-    "stories": "tonghuashun stories; stock detail required",
+    "stories": "tonghuashun story schema v1/v2; stock detail required",
     "judgement_boundary": "facts_only",
 }
 

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ultraboard.ths.stories import load_day  # noqa: E402
+from ultraboard.ths.stories import load_day, validate_payload  # noqa: E402
 
 STORY_DIR = ROOT / "data" / "ths" / "stories"
 LIMIT_DIR = ROOT / "data" / "ths" / "limit_pool"
@@ -146,11 +147,15 @@ def build_payload(day: str, stories_in: list[dict[str, Any]]) -> dict[str, Any]:
 def write_day(day: str, stories_in: list[dict[str, Any]]) -> Path:
     payload = build_payload(day, stories_in)
     path = STORY_DIR / f"{day}.json"
+    validate_payload(payload, day, path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
+    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
+    temporary.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
+        newline="\n",
     )
+    os.replace(temporary, path)
     load_day(day)
     return path
 

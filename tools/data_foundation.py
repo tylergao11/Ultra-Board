@@ -21,6 +21,7 @@ BLIND_DECISIONS_FILE = ROOT / "data" / "training" / "decisions.jsonl"
 AUCTION_FILE = ROOT / "data" / "research" / "auction" / "observations.jsonl"
 DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 KPL_REQUIRED = (
+    "_DONE",
     "zt_pool.json",
     "sector_ladder.json",
     "sentiment.json",
@@ -114,7 +115,8 @@ def build_audit(
         kpl_missing = [
             name for name in KPL_REQUIRED if not (KPL_DIR / day / name).exists()
         ]
-        kpl_ready = day in kpl_dates and not kpl_missing
+        kpl_mismatch = (KPL_DIR / day / "_MISMATCH").exists()
+        kpl_ready = day in kpl_dates and not kpl_missing and not kpl_mismatch
         limit_ready = day in limit_dates
         story_ready = day in story_dates
         rows.append(
@@ -122,6 +124,7 @@ def build_audit(
                 "date": day,
                 "kpl_ready": kpl_ready,
                 "kpl_missing_files": kpl_missing,
+                "kpl_mismatch": kpl_mismatch,
                 "ths_limit_pool_ready": limit_ready,
                 "ths_story_ready": story_ready,
                 "fact_view_ready": kpl_ready and limit_ready,
@@ -169,8 +172,8 @@ def build_audit(
         },
         "interpretation": {
             "fact_view_ready": "开盘啦分类合同与同花顺涨停池同时存在。",
-            "story_context_ready": "事实视图之外，同花顺标题后半句故事也已经人工录入。",
-            "missing_story": "缺失表示尚未录入，不代表当天没有市场故事。",
+            "story_context_ready": "事实视图之外，同花顺日级与逐股故事合同也已经落盘。",
+            "missing_story": "缺失表示尚未生成或录入，不代表当天没有市场故事。",
         },
         **({"days": rows} if details else {}),
     }

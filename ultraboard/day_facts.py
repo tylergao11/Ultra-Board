@@ -23,6 +23,7 @@ KPL_DIR = ROOT / "data" / "kaipanla" / "raw"
 THS_LIMIT_DIR = ROOT / "data" / "ths" / "limit_pool"
 THS_STORY_DIR = ROOT / "data" / "ths" / "stories"
 KPL_REQUIRED = (
+    "_DONE",
     "zt_pool.json",
     "sector_ladder.json",
     "sentiment.json",
@@ -93,13 +94,15 @@ def _neighbor_day(day_value: str, *, direction: int) -> str | None:
 def _coverage(day: str) -> dict[str, Any]:
     directory = KPL_DIR / day
     kpl_missing = [name for name in KPL_REQUIRED if not (directory / name).exists()]
-    kpl_ready = directory.is_dir() and not kpl_missing
+    kpl_mismatch = (directory / "_MISMATCH").exists()
+    kpl_ready = directory.is_dir() and not kpl_missing and not kpl_mismatch
     limit_ready = (THS_LIMIT_DIR / f"{day}.json").exists()
     story_ready = (THS_STORY_DIR / f"{day}.json").exists()
     return {
         "date": day,
         "kpl_ready": kpl_ready,
         "kpl_missing_files": kpl_missing,
+        **({"kpl_mismatch": True} if kpl_mismatch else {}),
         "ths_limit_pool_ready": limit_ready,
         "ths_story_ready": story_ready,
         "fact_ready": kpl_ready and limit_ready and story_ready,
@@ -434,6 +437,21 @@ def _stock_story_coverage(
 
     covered: set[str] = set()
     incomplete: set[str] = set()
+    for member in (story_payload or {}).get("stock_stories") or []:
+        if not isinstance(member, dict):
+            continue
+        raw_code = _code(member.get("code"))
+        name = str(member.get("name") or "").strip()
+        code = raw_code if raw_code in all_records else ""
+        if not code and name and len(by_name.get(name) or []) == 1:
+            code = by_name[name][0]
+        if not code:
+            continue
+        story = str(member.get("story") or "").strip()
+        if story:
+            covered.add(code)
+        else:
+            incomplete.add(code)
     for group in (story_payload or {}).get("stories") or []:
         if not isinstance(group, dict):
             continue
@@ -531,6 +549,22 @@ def _build_day(
         ]
 
     stories = [dict(item) for item in (story_payload or {}).get("stories") or []]
+    market_story = (story_payload or {}).get("market_story")
+    if isinstance(market_story, dict):
+        stories = [
+            {
+                "source_position": 1,
+                "context": "盘面主流看点",
+                "story": market_story.get("focus"),
+                "headline": market_story.get("headline"),
+                "market_narrative": market_story.get("narrative"),
+            }
+        ]
+    stock_story_records = [
+        dict(item)
+        for item in (story_payload or {}).get("stock_stories") or []
+        if isinstance(item, dict)
+    ]
     coverage = {
         **_coverage(day),
         **_stock_story_coverage(story_payload, all_records),
@@ -538,16 +572,32 @@ def _build_day(
     coverage["fact_ready"] = bool(
         coverage["fact_ready"] and coverage["stock_story_complete"]
     )
+    story_view = {
+        "source": (story_payload or {}).get("source"),
+        "source_image": (story_payload or {}).get("source_image"),
+        "records": stories,
+        "contract": "保留同花顺 story 原始记录，不用于覆盖开盘啦个股属性。",
+    }
+    if (story_payload or {}).get("schema_version") == 2:
+        story_view.update(
+            {
+                "source_schema_version": 2,
+                "source_url": (story_payload or {}).get("source_url"),
+                "source_fetched_at": (story_payload or {}).get("source_fetched_at"),
+                "source_components": (story_payload or {}).get("source_components"),
+                "stock_records": stock_story_records,
+                "contract": (
+                    "保留同花顺日级市场叙事和逐股故事原文；"
+                    "两者均不用于覆盖开盘啦个股属性。"
+                ),
+            }
+        )
+
     output = {
         "date": day,
         "coverage": coverage,
         "market": _market_summary(kaipanla, limit_pool),
-        "stories": {
-            "source": (story_payload or {}).get("source"),
-            "source_image": (story_payload or {}).get("source_image"),
-            "records": stories,
-            "contract": "保留同花顺 story 原始记录，不用于覆盖开盘啦个股属性。",
-        },
+        "stories": story_view,
         "source_sector_index": _sector_index(kaipanla),
         **(
             {"matching_source_sector_records": matching_sector_records}
