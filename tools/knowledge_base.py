@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -26,6 +27,8 @@ REQUIRED_FIELDS = {
     "supersedes",
     "tags",
     "source",
+    "recorded_at",
+    "temporal_scope",
 }
 STATUSES = {"accepted", "hypothesis", "superseded"}
 
@@ -39,7 +42,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _manifest() -> dict[str, Any]:
     payload = _read_json(MANIFEST_PATH)
-    if payload.get("schema_version") != 1:
+    if payload.get("schema_version") != 2:
         raise ValueError("知识库 manifest 版本不受支持")
     return payload
 
@@ -75,6 +78,26 @@ def _string_list(value: Any, field: str, knowledge_id: str) -> list[str]:
     return value
 
 
+def _timestamp(
+    value: Any,
+    field: str,
+    knowledge_id: str,
+    *,
+    allow_none: bool = False,
+) -> datetime | None:
+    if value is None and allow_none:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{knowledge_id} {field} 必须是 ISO 时间或 null")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{knowledge_id} {field} 不是 ISO 时间") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"{knowledge_id} {field} 必须包含时区")
+    return parsed
+
+
 def validate(records: list[dict[str, Any]]) -> dict[str, Any]:
     ids: set[str] = set()
     revisions: set[int] = set()
@@ -86,7 +109,7 @@ def validate(records: list[dict[str, Any]]) -> dict[str, Any]:
             raise ValueError(
                 f"第 {line_number} 行缺少字段: {', '.join(sorted(missing))}"
             )
-        if row["schema_version"] != 1:
+        if row["schema_version"] != 2:
             raise ValueError(f"第 {line_number} 行 schema_version 不受支持")
         knowledge_id = row["knowledge_id"]
         if (
@@ -120,6 +143,16 @@ def validate(records: list[dict[str, Any]]) -> dict[str, Any]:
             "tags",
         ):
             _string_list(row[field], field, knowledge_id)
+        temporal_scope = row["temporal_scope"]
+        if temporal_scope not in _manifest()["allowed_temporal_scopes"]:
+            raise ValueError(f"{knowledge_id} temporal_scope 非法")
+        recorded_at = _timestamp(
+            row["recorded_at"], "recorded_at", knowledge_id, allow_none=True
+        )
+        if temporal_scope == "contemporaneous_evidence" and recorded_at is None:
+            raise ValueError(
+                f"{knowledge_id} contemporaneous_evidence 必须记录 recorded_at"
+            )
     by_id = {row["knowledge_id"]: row for row in records}
     unresolved = sorted(
         {
@@ -185,6 +218,8 @@ def _chunk(row: dict[str, Any]) -> dict[str, Any]:
             "evidence_refs": row["evidence_refs"],
             "supersedes": row["supersedes"],
             "source": row["source"],
+            "recorded_at": row["recorded_at"],
+            "temporal_scope": row["temporal_scope"],
         },
     }
 
@@ -193,18 +228,27 @@ def _selected(
     records: list[dict[str, Any]],
     statuses: list[str],
     tags: list[str],
+    available_at: datetime | None,
 ) -> list[dict[str, Any]]:
     requested_statuses = set(statuses or _manifest()["default_retrieval_status"])
     requested_tags = {tag.strip() for tag in tags if tag.strip()}
-    return [
-        row
-        for row in records
-        if row["status"] in requested_statuses
-        and (
-            not requested_tags
-            or requested_tags.intersection(row["tags"])
-        )
-    ]
+    selected = []
+    for row in records:
+        if row["status"] not in requested_statuses:
+            continue
+        if requested_tags and not requested_tags.intersection(row["tags"]):
+            continue
+        if available_at is not None:
+            if row["temporal_scope"] != "contemporaneous_evidence":
+                continue
+            recorded_at = _timestamp(
+                row["recorded_at"], "recorded_at", row["knowledge_id"]
+            )
+            assert recorded_at is not None
+            if recorded_at > available_at:
+                continue
+        selected.append(row)
+    return selected
 
 
 def _write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> int:
@@ -226,6 +270,10 @@ def _parser() -> argparse.ArgumentParser:
         child = subparsers.add_parser(command)
         child.add_argument("--status", action="append", choices=sorted(STATUSES), default=[])
         child.add_argument("--tag", action="append", default=[])
+        child.add_argument(
+            "--available-at",
+            help="严格同时态检索；只返回该 ISO 时间以前已有形成证据的总结",
+        )
         if command == "export-chunks":
             child.add_argument("--output", required=True)
     return parser
@@ -238,7 +286,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate":
         print(json.dumps(validation, ensure_ascii=False, indent=2))
         return 0
-    selected = _selected(records, args.status, args.tag)
+    available_at = None
+    if args.available_at:
+        available_at = _timestamp(args.available_at, "available_at", "query")
+    selected = _selected(records, args.status, args.tag, available_at)
     chunks = [_chunk(row) for row in selected]
     if args.command == "list":
         print(
