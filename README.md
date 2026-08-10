@@ -2,7 +2,7 @@
 
 当前仓库由两层组成：数据层提供可追溯、可核验的盘面事实；研究层围绕资金流向、主线、总核心、日内演变和历史类比形成复盘判断。事实接口不自动生成核心、评分或买点，研究结论也不反向改写行情真相源。
 
-研究思维以 [`AGENTS.md`](AGENTS.md) 为主文档，单日冻结判断保存在 `data/answer/`，完成次日验证的逐案例真相进入 `data/cases/records/`；[`docs/学习训练.md`](docs/学习训练.md) 只保留供人阅读的学习经验汇总。
+单日研究报告保存在 `data/answer/`，完成次日验证的逐案例真相进入 `data/cases/records/`。
 
 ## 唯一真相合同
 
@@ -114,11 +114,9 @@ python tools/market_day.py 2026-07-24 --theme AI应用 --theme 机器人 --theme
 | `data/ths/stories/` | 同花顺日级市场叙事与逐股故事（v1/v2） |
 | `data/ths/limit_pool/` | 同花顺涨停池客观事实 |
 | `ultraboard/ths/` | 同花顺故事与涨停池读取/采集 |
-| `AGENTS.md` | 跨交易日复用的资金研究思维与角色定义 |
-| `data/answer/` | 按目标日信息截点冻结的单日研究报告 |
+| `data/answer/` | 按目标日信息截点形成的单日研究报告 |
 | `data/cases/records/` | 一案例一文件的结构化版本真相源 |
 | `data/cases/manifest.json` | 案例状态、时间、攻守、结果与检索边界 |
-| `docs/学习训练.md` | 从已确认案例提炼的人工阅读汇总 |
 | `docs/历史案例契约.md` | 案例时间边界、字段、修订与 RAG 切片合同 |
 | `data/knowledge/summaries.jsonl` | 从方法中提炼的原子摘要及修订历史 |
 | `.blind-test-quarantine/` | 后验研究隔离区；未经授权禁止读取 |
@@ -127,9 +125,8 @@ python tools/market_day.py 2026-07-24 --theme AI应用 --theme 机器人 --theme
 
 ## 外挂知识库
 
-知识按职责分层：完整通用思维写入 `AGENTS.md`，带日期、环境、时序和后续结果的版本化真相案例写入
-`data/cases/records/`，适合单点召回的方法摘要按“一条总结一个切片”保存在
-`data/knowledge/summaries.jsonl`。原始行情仍由数据源层负责；任何向量索引都只是
+知识按职责分层：带日期、环境、时序和后续结果的版本化案例写入
+`data/cases/records/`。`data/knowledge/summaries.jsonl` 当前为空，不参与每日判断。原始行情仍由数据源层负责；任何向量索引都只是
 可重建派生物，不是第二真相源。详细边界见 [外挂知识库说明](data/knowledge/README.md)。
 
 ```powershell
@@ -158,9 +155,6 @@ python tools/market_memory.py competition 2025-11-06
 
 # 人工指定节点的资金记忆池
 python tools/market_memory.py pool 2025-11-06 2025-11-28
-
-# 默认只验证揭晓前记录
-python tools/training_records.py validate
 ```
 
-结果揭晓与纠错记录与盲测日志物理隔离；竞价历史缺口也不会用收盘数据反推。研究思维见 [`AGENTS.md`](AGENTS.md)，案例落盘与调用边界见 [历史案例契约](docs/历史案例契约.md)。
+竞价历史缺口不会用收盘数据反推。案例落盘边界见 [历史案例契约](docs/历史案例契约.md)。

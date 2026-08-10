@@ -225,27 +225,11 @@ def _validate_record(row: dict[str, Any], manifest: dict[str, Any]) -> None:
     _nonempty_string(row["case_question"], "case_question", record_id)
 
     source = _object(row["source"], "source", record_id)
-    source_kind = _enum(
+    _enum(
         source.get("kind"), manifest["allowed_source_kinds"], "source.kind", record_id
     )
     _string_list(source.get("source_reports"), "source.source_reports", record_id)
-    source_issues = _string_list(
-        source.get("source_issues"), "source.source_issues", record_id
-    )
-    if source_kind == "legacy_markdown_migration":
-        for field in ("document", "heading", "section_sha256"):
-            _nonempty_string(source.get(field), f"source.{field}", record_id)
-        source_document = (ROOT / source["document"]).resolve()
-        try:
-            source_document.relative_to(ROOT.resolve())
-        except ValueError as exc:
-            raise ValueError(f"{record_id} source.document 不能指向项目外部") from exc
-        if not source_document.is_file():
-            raise ValueError(f"{record_id} source.document 不存在: {source['document']}")
-        if recorded_at is None and "decision_recorded_at_unverified" not in source_issues:
-            raise ValueError(
-                f"{record_id} 缺少 decision_recorded_at 时必须显式记录来源问题"
-            )
+    _string_list(source.get("source_issues"), "source.source_issues", record_id)
 
     retrieval_tags = _string_list(
         row["retrieval_tags"], "retrieval_tags", record_id
