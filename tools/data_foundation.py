@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from collections import Counter
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -16,8 +15,6 @@ ROOT = Path(__file__).resolve().parents[1]
 KPL_DIR = ROOT / "data" / "kaipanla" / "raw"
 THS_LIMIT_DIR = ROOT / "data" / "ths" / "limit_pool"
 THS_STORY_DIR = ROOT / "data" / "ths" / "stories"
-KNOWLEDGE_FILE = ROOT / "data" / "knowledge" / "summaries.jsonl"
-BLIND_DECISIONS_FILE = ROOT / "data" / "training" / "decisions.jsonl"
 AUCTION_FILE = ROOT / "data" / "research" / "auction" / "observations.jsonl"
 DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 KPL_REQUIRED = (
@@ -54,25 +51,6 @@ def _jsonl_count(path: Path) -> int:
         bool(line.strip())
         for line in path.read_text(encoding="utf-8-sig").splitlines()
     )
-
-
-def _knowledge_status_counts(path: Path) -> dict[str, int]:
-    if not path.exists():
-        return {}
-    counts: Counter[str] = Counter()
-    for line_number, line in enumerate(
-        path.read_text(encoding="utf-8-sig").splitlines(), start=1
-    ):
-        if not line.strip():
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"知识 JSONL 解析失败: {path}:{line_number}") from exc
-        if not isinstance(row, dict):
-            raise ValueError(f"知识 JSONL 行必须是对象: {path}:{line_number}")
-        counts[str(row.get("status") or "missing_status")] += 1
-    return dict(sorted(counts.items()))
 
 
 def _compact_days(days: list[str], sample_size: int) -> dict[str, Any]:
@@ -165,9 +143,7 @@ def build_audit(
             ),
         },
         "missing": missing_view,
-        "research_memory": {
-            "knowledge_status_counts": _knowledge_status_counts(KNOWLEDGE_FILE),
-            "blind_decision_count": _jsonl_count(BLIND_DECISIONS_FILE),
+        "recorded_observations": {
             "auction_snapshot_count": _jsonl_count(AUCTION_FILE),
         },
         "interpretation": {

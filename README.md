@@ -1,8 +1,6 @@
 # Ultra-Board
 
-当前仓库由两层组成：数据层提供可追溯、可核验的盘面事实；研究层围绕资金流向、主线、总核心、日内演变和历史类比形成复盘判断。事实接口不自动生成核心、评分或买点，研究结论也不反向改写行情真相源。
-
-单日研究报告保存在 `data/answer/`，完成次日验证的逐案例真相进入 `data/cases/records/`。
+当前仓库只把可追溯、可核验的盘面事实作为真相。数据接口不自动生成核心、评分、买点或交易模型。
 
 ## 唯一真相合同
 
@@ -12,7 +10,7 @@
 - 复盘页、标题背景和逐股 `reason_type` 都描述同花顺的市场传播，不覆盖开盘啦分类，也不直接升级为公司、政策或产业事实。
 - 股价、流通市值、总市值、换手率、封单、板数、首封、终封、炸板次数、板型与真一字只认 `data/ths/limit_pool/YYYY-MM-DD.json`。
 - 同花顺 `reason_type` 原样保存为个股故事，禁止拆分或参与题材归因。
-- 上述三层只提供事实；任何核心、节点、梯队角色和买点判断都必须在后续重新建立。
+- 上述三层只提供事实，不预设核心、节点、梯队角色或买点判断。
 
 ## 数据入口
 
@@ -29,7 +27,7 @@ npm run data:update -- --date 2026-08-07
 以下命令用于分层诊断或修复：
 
 ```powershell
-# 数据覆盖、故事缺口与研究记录状态
+# 数据覆盖、故事缺口与竞价快照状态
 python tools/data_foundation.py --start 2025-10-09 --end 2026-08-07
 
 # 开盘啦个股分类、题材梯队、情绪与表达原始快照
@@ -55,14 +53,6 @@ python tools/extract_attribution_evidence.py 2026-08-06 --min-members 2 --groups
 ```
 
 该入口保留开盘啦主 `theme` 与全部归属题材候选，叠加同花顺身位、股价、流通市值、封单、首封、终封、炸板、板型及上午/下午同属性封板序列。它不修改原始分类，也不自动输出主动性、抗压性或带动性结论。
-
-生成节点日轻量决策视图：
-
-```powershell
-python tools/extract_attribution_evidence.py 2026-08-06 --decision-view
-```
-
-该视图只读取日期 T 与上一交易日，标注 `information_cutoff=T`。默认保留全部涨停，板数只是事实；`--candidate-min-boards` 只能缩小展示范围，不能成为交易排除条件。视图展示上一梯队去向、T 日一字/换手状态、候选属性的首封与最终回封双时序；真一字只作为方向与身位指引，并映射同身位、共享属性的非一字票，不自动生成核心、评分或买点。
 
 ## 单交易日 Agent 事实接口
 
@@ -114,34 +104,12 @@ python tools/market_day.py 2026-07-24 --theme AI应用 --theme 机器人 --theme
 | `data/ths/stories/` | 同花顺日级市场叙事与逐股故事（v1/v2） |
 | `data/ths/limit_pool/` | 同花顺涨停池客观事实 |
 | `ultraboard/ths/` | 同花顺故事与涨停池读取/采集 |
-| `data/answer/` | 按目标日信息截点形成的单日研究报告 |
-| `data/cases/records/` | 一案例一文件的结构化版本真相源 |
-| `data/cases/manifest.json` | 案例状态、时间、攻守、结果与检索边界 |
-| `docs/历史案例契约.md` | 案例时间边界、字段、修订与 RAG 切片合同 |
-| `data/knowledge/summaries.jsonl` | 从方法中提炼的原子摘要及修订历史 |
-| `.blind-test-quarantine/` | 后验研究隔离区；未经授权禁止读取 |
+| `data/research/auction/` | 有明确时间与来源的竞价事实快照 |
+| `site/public/agent-data/v1/` | 由正式来源重建的 Agent API 发布数据 |
 
 完整合同见 [数据基建](docs/数据基建.md)。
 
-## 外挂知识库
-
-知识按职责分层：带日期、环境、时序和后续结果的版本化案例写入
-`data/cases/records/`。`data/knowledge/summaries.jsonl` 当前为空，不参与每日判断。原始行情仍由数据源层负责；任何向量索引都只是
-可重建派生物，不是第二真相源。详细边界见 [外挂知识库说明](data/knowledge/README.md)。
-
-```powershell
-python tools/knowledge_base.py validate
-python tools/knowledge_base.py list --tag 一字板 --tag 换手
-python tools/knowledge_base.py export-chunks --output artifacts/knowledge/summaries.jsonl
-
-python tools/case_library.py validate
-python tools/case_library.py list --model defense --research-cutoff 2026-08-10T15:00:00+08:00
-python tools/case_library.py export-chunks --research-cutoff 2026-08-10T15:00:00+08:00 --output artifacts/knowledge/cases.jsonl
-```
-
-默认检索只返回 `accepted`；待验证假设与已被替代的旧版本不会混入当前判断。案例导出的 `retrieval_text` 只包含 T 日条件和冻结路径，验证日结果只进入返回正文与结果元数据，不参与相似度输入。
-
-## 跨日研究与蒸馏
+## 跨日事实查询
 
 ```powershell
 # 单日紧凑视图
@@ -150,11 +118,6 @@ python tools/market_memory.py brief 2025-11-06
 # 个股连续涨停路径
 python tools/market_memory.py path 000993 2025-11-06 --start 2025-11-04
 
-# 一字核心开门、失败及同身位竞争证据
-python tools/market_memory.py competition 2025-11-06
-
-# 人工指定节点的资金记忆池
-python tools/market_memory.py pool 2025-11-06 2025-11-28
 ```
 
-竞价历史缺口不会用收盘数据反推。案例落盘边界见 [历史案例契约](docs/历史案例契约.md)。
+竞价历史缺口不会用收盘数据反推；可靠快照的字段边界见 [竞价快照合同](data/research/auction/README.md)。
