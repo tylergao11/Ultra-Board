@@ -5,6 +5,8 @@
 
 - ``sentiment.json``：当前情绪统计；
 - ``plate_info.json``：日期校验后的开盘啦市场方向原始响应；
+- ``market_highlights.json``：日期校验后的盘面亮点事件时间轴；
+- ``market_drawdowns.json``：日期校验后的大幅回撤股票列表；
 - ``zt_pool.json``：非 ST 涨停池，theme 只取市场方向分组；
 - ``sector_ladder.json``：市场方向及其日内梯队；
 - ``expression.json``：保留当前接口响应；若为反爬占位符则显式标不可用；
@@ -26,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from .backfill import DATA_DIR, RAW_DIR, is_bse
-from .client import CURRENT_URL, SECTOR_URL, KaipanlaClient, ok
+from .client import CN_TZ, CURRENT_URL, SECTOR_URL, KaipanlaClient, ok
 from ultraboard.ths.limit_pool import _fetch_raw_day as fetch_ths_raw_day
 
 ST_SECTOR_CODE = "801314"
@@ -210,6 +212,50 @@ def collect(
     plate = client.plate_info(day)
     if not ok(plate) or plate.get("snapshot_day") != day:
         raise RuntimeError(f"开盘啦市场方向快照不可用: {plate.get('errmsg') or plate.get('errcode')}")
+    market_highlights_raw = client.current_market_highlights()
+    highlights = market_highlights_raw.get("List")
+    if (
+        not ok(market_highlights_raw)
+        or str(market_highlights_raw.get("date") or "") != day
+        or not isinstance(highlights, list)
+        or not highlights
+    ):
+        raise RuntimeError(
+            "开盘啦盘面亮点不可用或日期不匹配: "
+            f"errcode={market_highlights_raw.get('errcode')} "
+            f"date={market_highlights_raw.get('date')} expected={day}"
+        )
+    for event in highlights:
+        if not isinstance(event, dict):
+            raise RuntimeError("开盘啦盘面亮点出现非对象记录")
+        stamp = event.get("TimeMin")
+        if not isinstance(stamp, (int, float)) or stamp <= 0:
+            raise RuntimeError(f"开盘啦盘面亮点时间戳异常: {stamp!r}")
+        event_day = datetime.fromtimestamp(stamp, CN_TZ).date().isoformat()
+        if event_day != day:
+            raise RuntimeError(
+                f"开盘啦盘面亮点事件日期不匹配: {event_day} expected={day}"
+            )
+    market_drawdowns_raw = client.current_market_drawdowns()
+    drawdowns = market_drawdowns_raw.get("List")
+    if (
+        not ok(market_drawdowns_raw)
+        or str(market_drawdowns_raw.get("date") or "") != day
+        or not isinstance(drawdowns, list)
+    ):
+        raise RuntimeError(
+            "开盘啦大幅回撤不可用或日期不匹配: "
+            f"errcode={market_drawdowns_raw.get('errcode')} "
+            f"date={market_drawdowns_raw.get('date')} expected={day}"
+        )
+    for row in drawdowns:
+        if (
+            not isinstance(row, list)
+            or len(row) < 4
+            or not re.fullmatch(r"\d{6}", str(row[0] or ""))
+            or not str(row[1] or "").strip()
+        ):
+            raise RuntimeError(f"开盘啦大幅回撤股票行异常: {row!r}")
     expression_raw = client.current_zhangting_expression()
 
     info = sentiment.get("info") or {}
@@ -352,6 +398,34 @@ def collect(
             "mode": "current_close_snapshot",
         },
     }
+    market_highlights_doc = {
+        **market_highlights_raw,
+        "source": {
+            "provider": "开盘啦",
+            "endpoint": CURRENT_URL,
+            "action": "GetPMSL_PMLD",
+            "mode": "current_close_snapshot",
+            "fetched_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        },
+        "contract": (
+            "盘面亮点为平台整理的日内事件标签，只用于补充时序与负反馈；"
+            "不得单独作为题材归属或资金因果证明"
+        ),
+    }
+    market_drawdowns_doc = {
+        **market_drawdowns_raw,
+        "source": {
+            "provider": "开盘啦",
+            "endpoint": CURRENT_URL,
+            "action": "GetPMSL_KQXY",
+            "mode": "current_close_snapshot",
+            "fetched_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        },
+        "contract": (
+            "大幅回撤为平台整理的亏钱效应列表；保留原始数组，"
+            "在字段合同确认前不猜测未命名列含义"
+        ),
+    }
     expression_doc = {
         "date": day,
         "info": [],
@@ -431,6 +505,8 @@ def collect(
     _write_json(day_dir / "manual_evidence.json", evidence)
     _write_json(day_dir / "plate_info.json", plate_doc)
     _write_json(day_dir / "sentiment.json", sentiment_doc)
+    _write_json(day_dir / "market_highlights.json", market_highlights_doc)
+    _write_json(day_dir / "market_drawdowns.json", market_drawdowns_doc)
     _write_json(day_dir / "expression.json", expression_doc)
     _write_json(day_dir / "sector_ladder.json", sector_ladder)
     _write_json(day_dir / "zt_pool.json", zt_pool)
@@ -447,6 +523,8 @@ def collect(
         "board_counts": dict(board_counts),
         "fanbao_count": len(fanbao_all),
         "themes": len(sector_docs),
+        "market_highlights_count": len(highlights),
+        "market_drawdowns_count": len(drawdowns),
         "expression_available": False,
         "directory": str(day_dir),
     }

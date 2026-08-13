@@ -114,6 +114,20 @@ class KaipanlaClient:
             {"a": "ZhangTingExpression", "c": "HomeDingPan"},
         )
 
+    def current_market_highlights(self) -> dict[str, Any]:
+        """读取“复盘啦 / 盘面梳理 / 盘面亮点”的最新事件时间轴。"""
+        return self.post(
+            CURRENT_URL,
+            {"a": "GetPMSL_PMLD", "c": "FuPanLa"},
+        )
+
+    def current_market_drawdowns(self) -> dict[str, Any]:
+        """读取“复盘啦 / 盘面梳理 / 大幅回撤”的最新股票列表。"""
+        return self.post(
+            CURRENT_URL,
+            {"a": "GetPMSL_KQXY", "c": "FuPanLa"},
+        )
+
     def latest_plate_info(self, index: int = 0) -> dict[str, Any]:
         """最新交易日涨停原因板块。
 
