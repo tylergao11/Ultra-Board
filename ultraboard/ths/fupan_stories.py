@@ -13,6 +13,7 @@ import json
 import math
 import os
 import re
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -151,6 +152,11 @@ def _code(value: Any) -> str:
     return text.zfill(6) if text.isdigit() and len(text) <= 6 else ""
 
 
+def _normalized_name(value: Any) -> str:
+    """Normalize presentation-width variants before cross-source name checks."""
+    return unicodedata.normalize("NFKC", str(value or "")).strip()
+
+
 def _fetch_reason_rows(day: str) -> tuple[list[dict[str, Any]], str, str]:
     fetched_at = datetime.now(CN_TZ).isoformat(timespec="seconds")
     session = _session()
@@ -244,7 +250,12 @@ def fetch_day(day_value: str) -> dict[str, Any]:
         story = str(raw.get("reason_type") or "").strip()
         expected_name = str(limit_by_code[code].get("name") or "").strip()
         kpl_name = str(kpl_by_code[code].get("name") or "").strip()
-        if not name or name != expected_name or name != kpl_name:
+        normalized_name = _normalized_name(name)
+        if (
+            not normalized_name
+            or normalized_name != _normalized_name(expected_name)
+            or normalized_name != _normalized_name(kpl_name)
+        ):
             raise RuntimeError(
                 f"{day} {code} 故事名码不一致: "
                 f"reason={name!r}, limit={expected_name!r}, kpl={kpl_name!r}"
