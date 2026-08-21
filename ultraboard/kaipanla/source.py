@@ -66,8 +66,10 @@ def load_day(value: str) -> dict[str, Any]:
     directory = RAW_DIR / day
     if (directory / "_MISMATCH").exists():
         raise ValueError(f"开盘啦日快照尚未闭合: {directory / '_MISMATCH'}")
-    if not (directory / "_DONE").exists():
-        raise FileNotFoundError(f"开盘啦日快照缺少完成标记: {directory / '_DONE'}")
+    historical_complete = (directory / "_DONE").exists()
+    current_snapshot = (directory / "_CURRENT_SNAPSHOT").exists()
+    if not historical_complete and not current_snapshot:
+        raise FileNotFoundError(f"开盘啦日快照缺少完成标记: {directory}")
     pool = _read(directory / "zt_pool.json")
     ladder = _read(directory / "sector_ladder.json")
     assert pool is not None and ladder is not None
@@ -91,6 +93,9 @@ def load_day(value: str) -> dict[str, Any]:
     return {
         "date": day,
         "provider": "kaipanla",
+        "snapshot_mode": (
+            "historical_complete" if historical_complete else "current_close_snapshot"
+        ),
         "stocks": normalized_stocks,
         "sectors": ladder["sectors"],
         "sentiment": _read(directory / "sentiment.json"),

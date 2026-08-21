@@ -22,8 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 KPL_DIR = ROOT / "data" / "kaipanla" / "raw"
 THS_LIMIT_DIR = ROOT / "data" / "ths" / "limit_pool"
 THS_STORY_DIR = ROOT / "data" / "ths" / "stories"
-KPL_REQUIRED = (
-    "_DONE",
+KPL_REQUIRED_FILES = (
     "zt_pool.json",
     "sector_ladder.json",
     "sentiment.json",
@@ -93,14 +92,28 @@ def _neighbor_day(day_value: str, *, direction: int) -> str | None:
 
 def _coverage(day: str) -> dict[str, Any]:
     directory = KPL_DIR / day
-    kpl_missing = [name for name in KPL_REQUIRED if not (directory / name).exists()]
+    kpl_missing = [name for name in KPL_REQUIRED_FILES if not (directory / name).exists()]
     kpl_mismatch = (directory / "_MISMATCH").exists()
-    kpl_ready = directory.is_dir() and not kpl_missing and not kpl_mismatch
+    historical_complete = (directory / "_DONE").exists()
+    current_snapshot = (directory / "_CURRENT_SNAPSHOT").exists()
+    kpl_ready = bool(
+        directory.is_dir()
+        and not kpl_missing
+        and not kpl_mismatch
+        and (historical_complete or current_snapshot)
+    )
     limit_ready = (THS_LIMIT_DIR / f"{day}.json").exists()
     story_ready = (THS_STORY_DIR / f"{day}.json").exists()
     return {
         "date": day,
         "kpl_ready": kpl_ready,
+        "kpl_snapshot_mode": (
+            "historical_complete"
+            if historical_complete
+            else "current_close_snapshot"
+            if current_snapshot
+            else None
+        ),
         "kpl_missing_files": kpl_missing,
         **({"kpl_mismatch": True} if kpl_mismatch else {}),
         "ths_limit_pool_ready": limit_ready,
@@ -694,7 +707,7 @@ def _public_theme_stories(value: Any) -> dict[str, Any]:
             for record in records
             if isinstance(record, dict)
         ],
-        "contract": "默认展示题材故事；个股故事必须通过 /stocks 按需获取。",
+        "contract": "默认展示题材故事；逐股故事按需直接读取当日 canonical 故事记录。",
     }
 
 
@@ -729,7 +742,7 @@ def _public_day(output: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_day_component(day_value: str) -> dict[str, Any]:
-    """构建供站点导出的完整单日组件，包含详情接口所需原始故事记录。"""
+    """从 canonical 来源构建完整单日组件，包含原始逐股故事记录。"""
     day = _day(day_value)
     output, _, _ = _build_day(day, ())
     return output
@@ -748,7 +761,7 @@ def build_day_facts(
 
     - 未传筛选：展开当日全市场全部来源股票，包括首板。
     - theme 精确匹配开盘啦主/候选属性；board 精确匹配同花顺板数。
-    - 日接口不返回个股故事，个股故事由详情接口按需获取。
+    - 默认视图不展开个股故事，需要时直接读取当日 canonical 故事记录。
     """
     day = _day(day_value)
     requested_themes = _clean_themes(themes)
@@ -795,7 +808,7 @@ def build_day_facts(
         "source_contract": {
             "stock_attributes": "kaipanla theme + themes only",
             "market_and_limit_facts": "tonghuashun limit_pool only",
-            "stories": "tonghuashun stories; stock detail is required and separately queried",
+            "stories": "tonghuashun stories; stock stories remain in the canonical day record",
             "judgement_boundary": "facts_only_no_core_score_or_buy_point",
         },
         "coverage": output["coverage"],

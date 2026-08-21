@@ -277,7 +277,8 @@ def _recent_stock_days(code: str, day: str, required: int | None) -> tuple[list[
         all_days, complete = _stock_all_days(code)
         eligible = [item for item in all_days if item <= day]
         if not eligible or eligible[-1] != day:
-            raise RuntimeError(f"同花顺个股交易日不包含涨停日期: {day} {code}")
+            eligible.append(day)
+            complete = False
         return list(reversed(eligible)), complete
 
     current_year = int(day[:4])
@@ -287,7 +288,7 @@ def _recent_stock_days(code: str, day: str, required: int | None) -> tuple[list[
         if year == current_year:
             year_days = tuple(item for item in year_days if item <= day)
             if not year_days or year_days[-1] != day:
-                raise RuntimeError(f"同花顺个股交易日不包含涨停日期: {day} {code}")
+                year_days = (*year_days, day)
         descending.extend(reversed(year_days))
         if len(descending) >= required:
             return descending[:required], True

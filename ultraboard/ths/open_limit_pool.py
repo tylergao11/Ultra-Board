@@ -8,7 +8,7 @@
 用法：
 
   python -m ultraboard.ths.open_limit_pool 2026-08-11
-  python -m ultraboard.ths.open_limit_pool --manifest site/public/agent-data/v1/manifest.json
+  python -m ultraboard.ths.open_limit_pool --start 2026-08-01 --end 2026-08-11
 """
 
 from __future__ import annotations
@@ -339,23 +339,8 @@ def load_day(
     return payload
 
 
-def _manifest_days(path: Path) -> list[str]:
-    payload = _read_json(path)
-    if payload.get("publication_ready") is not True:
-        raise ValueError(f"正式 manifest 尚未 ready: {path}")
-    raw_days = payload.get("available_dates")
-    if not isinstance(raw_days, list) or not raw_days:
-        raise ValueError(f"正式 manifest 缺少 available_dates: {path}")
-    days = [date.fromisoformat(str(day)).isoformat() for day in raw_days]
-    if days != sorted(set(days)):
-        raise ValueError(f"正式 manifest 日期乱序或重复: {path}")
-    return days
-
-
 def _selected_days(args: argparse.Namespace) -> list[str]:
     selected = {date.fromisoformat(day).isoformat() for day in args.dates}
-    if args.manifest is not None:
-        selected.update(_manifest_days(args.manifest))
     if args.start or args.end:
         if not args.start or not args.end:
             raise ValueError("--start 与 --end 必须同时提供")
@@ -368,14 +353,13 @@ def _selected_days(args: argparse.Namespace) -> list[str]:
             if path.is_dir() and DAY_RE.fullmatch(path.name) and start <= path.name <= end:
                 selected.add(path.name)
     if not selected:
-        raise ValueError("请提供交易日、--manifest，或同时提供 --start/--end")
+        raise ValueError("请提供交易日，或同时提供 --start/--end")
     return sorted(selected)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dates", nargs="*", help="交易日 YYYY-MM-DD")
-    parser.add_argument("--manifest", type=Path)
     parser.add_argument("--start")
     parser.add_argument("--end")
     parser.add_argument("--force", action="store_true")

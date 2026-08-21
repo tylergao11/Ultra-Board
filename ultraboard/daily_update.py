@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""更新一个完整交易日并原子发布到本地 Agent API。
+"""更新并校验一个完整交易日的原始事实数据。
 
 默认目标是同花顺官方复盘页已经公开的最新交易日；显式 ``--date``
-严格执行指定日期，不自动回退。来源层允许留下可诊断的未完成产物，公开 release
-只有在全部合同通过后才会原子切换。
+严格执行指定日期，不自动回退。数据只写入各来源的 canonical 日目录，
+不再生成另一套发布快照。
 """
 
 from __future__ import annotations
@@ -11,10 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
-import subprocess
 import sys
-import tempfile
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -64,15 +61,31 @@ def _ensure_kaipanla(day: str) -> dict[str, Any]:
     directory = KPL_RAW_DIR / day
     if (directory / "_MISMATCH").exists():
         raise RuntimeError(f"{day} 开盘啦来源仍有 _MISMATCH，停止发布")
-    existed = (directory / "_DONE").exists()
+    historical_complete = (directory / "_DONE").exists()
+    current_snapshot = (directory / "_CURRENT_SNAPSHOT").exists()
+    existed = historical_complete or current_snapshot
     if not existed:
         result = kaipanla_backfill_main(["--start", day, "--end", day])
         if result != 0:
             raise RuntimeError(f"{day} 开盘啦采集失败: exit={result}")
+        historical_complete = (directory / "_DONE").exists()
+        if not historical_complete:
+            from ultraboard.kaipanla.current_close import collect as collect_current_close
+
+            collect_current_close(
+                day,
+                screenshots=[],
+                expected_limit_up=None,
+                expected_limit_down=None,
+                expected_themes={},
+                height_marks={},
+            )
+            current_snapshot = True
     payload = load_kaipanla_day(day)
     print(
         f"{'CHECKED' if existed else 'FETCHED'} {day} "
-        f"kaipanla_stocks={len(payload['stocks'])}"
+        f"kaipanla_stocks={len(payload['stocks'])} "
+        f"snapshot_mode={payload['snapshot_mode']}"
     )
     return payload
 
@@ -113,172 +126,6 @@ def _require_complete_day(day: str) -> dict[str, Any]:
     return component
 
 
-def _extract_api_envelope(stdout: str) -> dict[str, Any]:
-    marker = '{\n  "schema_version"'
-    offset = stdout.find(marker)
-    if offset < 0:
-        marker = '{"schema_version"'
-        offset = stdout.find(marker)
-    if offset < 0:
-        raise RuntimeError(f"Agent API 输出中没有 JSON 外壳: {stdout[-500:]}")
-    payload = json.loads(stdout[offset:])
-    if not isinstance(payload, dict):
-        raise RuntimeError("Agent API 输出顶层不是对象")
-    return payload
-
-
-def _call_api(endpoint: str, *, public_root: Path | None = None) -> dict[str, Any]:
-    npm = shutil.which("npm.cmd") or shutil.which("npm")
-    if npm is None:
-        raise RuntimeError("找不到 npm，无法完成 Agent API 验证")
-    environment = os.environ.copy()
-    if public_root is not None:
-        environment["ULTRA_BOARD_PUBLIC_ROOT"] = str(public_root.resolve())
-    completed = subprocess.run(
-        [npm, "run", "api", "--", endpoint],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=environment,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(
-            f"Agent API 调用失败: {endpoint}\n"
-            f"{completed.stdout[-1000:]}\n{completed.stderr[-1000:]}"
-        )
-    envelope = _extract_api_envelope(completed.stdout)
-    response = envelope.get("response") or {}
-    if response.get("status") != 200 or response.get("ok") is not True:
-        raise RuntimeError(
-            f"Agent API 验证未通过: {endpoint} "
-            f"{json.dumps(response, ensure_ascii=False)}"
-        )
-    body = response.get("body")
-    if not isinstance(body, dict):
-        raise RuntimeError(f"Agent API 响应正文异常: {endpoint}")
-    return body
-
-
-def _verify_api_release(
-    day: str,
-    manifest: dict[str, Any],
-    *,
-    public_root: Path | None = None,
-) -> None:
-    health = _call_api("/api/v1/health", public_root=public_root)
-    calendar = _call_api("/api/v1/calendar", public_root=public_root)
-    api_day = _call_api(f"/api/v1/day?date={day}", public_root=public_root)
-    revision = manifest["data_revision"]
-    expected_end = manifest["range"]["end"]
-    available_dates = calendar.get("available_dates") or []
-    health_data = health.get("data") or {}
-    if (
-        health_data.get("revision") != revision
-        or health_data.get("publication_ready") is not True
-        or (health_data.get("range") or {}).get("end") != expected_end
-    ):
-        raise RuntimeError("Agent API health 与待发布 manifest 不一致")
-    if (
-        calendar.get("data_revision") != revision
-        or calendar.get("publication_ready") is not True
-        or calendar.get("range") != manifest["range"]
-        or available_dates != manifest["available_dates"]
-        or calendar.get("count") != len(available_dates)
-        or day not in available_dates
-    ):
-        raise RuntimeError("Agent API calendar 与待发布 manifest 不一致")
-    if (
-        api_day.get("data_revision") != revision
-        or api_day.get("trade_date") != day
-        or api_day.get("information_cutoff") != day
-        or not (api_day.get("coverage") or {}).get("fact_ready")
-        or not (api_day.get("coverage") or {}).get("stock_story_complete")
-    ):
-        raise RuntimeError(f"Agent API 未完整返回目标交易日: {day}")
-
-
-def _safe_rmtree(path: Path, parent: Path) -> None:
-    resolved = path.resolve()
-    expected_parent = parent.resolve()
-    if resolved.parent != expected_parent:
-        raise RuntimeError(f"拒绝清理非预期临时目录: {resolved}")
-    if resolved.exists():
-        shutil.rmtree(resolved)
-
-
-def _publish(day: str) -> dict[str, Any]:
-    from tools.export_agent_site_data import DEFAULT_OUTPUT, export_components
-
-    output_dir = DEFAULT_OUTPUT.resolve()
-    current_manifest_path = output_dir / "manifest.json"
-    if current_manifest_path.exists():
-        current_manifest = json.loads(
-            current_manifest_path.read_text(encoding="utf-8-sig")
-        )
-        release_start = str(current_manifest["range"]["start"])
-        current_end = str(current_manifest["range"]["end"])
-        release_end = max(day, current_end)
-    else:
-        from ultraboard.day_facts import available_days
-
-        days = [candidate for candidate in available_days() if candidate <= day]
-        if not days:
-            raise RuntimeError(f"{day} 之前没有可构建的正式来源日")
-        release_start = days[0]
-        release_end = day
-
-    site_root = (ROOT / "site").resolve()
-    temporary_root = Path(
-        tempfile.mkdtemp(prefix=".daily-release-", dir=site_root)
-    ).resolve()
-    staged_output = temporary_root / "agent-data" / "v1"
-    backup = output_dir.with_name(f".{output_dir.name}.{os.getpid()}.daily-backup")
-    if backup.exists():
-        raise RuntimeError(f"发现未处理的 release 备份，停止更新: {backup}")
-    activated = False
-    try:
-        manifest = export_components(
-            output_dir=staged_output,
-            start=release_start,
-            end=release_end,
-            ready_only=False,
-        )
-        if (
-            day not in manifest["available_dates"]
-            or manifest["range"]["end"] != release_end
-        ):
-            raise RuntimeError(f"{day} 未进入待发布 release manifest")
-
-        _verify_api_release(day, manifest, public_root=temporary_root)
-
-        output_dir.parent.mkdir(parents=True, exist_ok=True)
-        if output_dir.exists():
-            os.replace(output_dir, backup)
-        try:
-            os.replace(staged_output, output_dir)
-            activated = True
-            _verify_api_release(day, manifest)
-        except Exception:
-            failed_output = temporary_root / "failed-active-release"
-            if output_dir.exists():
-                os.replace(output_dir, failed_output)
-            if backup.exists():
-                os.replace(backup, output_dir)
-            activated = False
-            raise
-
-        if backup.exists():
-            _safe_rmtree(backup, output_dir.parent)
-        return manifest
-    finally:
-        if not activated and backup.exists() and not output_dir.exists():
-            os.replace(backup, output_dir)
-        _safe_rmtree(temporary_root, site_root)
-
-
 def update_day(day_value: str) -> dict[str, Any]:
     day = date.fromisoformat(day_value).isoformat()
     _ensure_kaipanla(day)
@@ -296,7 +143,6 @@ def update_day(day_value: str) -> dict[str, Any]:
         f"stock_stories={story_stock_count}"
     )
     component = _require_complete_day(day)
-    manifest = _publish(day)
     market = component["market"]
     market_summary_keys = (
         "kaipanla_stock_count",
@@ -317,12 +163,7 @@ def update_day(day_value: str) -> dict[str, Any]:
         "market": {key: market.get(key) for key in market_summary_keys},
         "coverage": component["coverage"],
         "story_source": story_payload["source"],
-        "release": {
-            "range": manifest["range"],
-            "available_dates": manifest["counts"]["available_dates"],
-            "revision": manifest["data_revision"],
-        },
-        "api_verified": True,
+        "facts_verified": True,
     }
 
 

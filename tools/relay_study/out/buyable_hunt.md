@@ -7,7 +7,7 @@ Win-rate bar remains 90% on BUYABLE fills. 一字 continuation is discarded, not
 
 Hunted: `data/kaipanla/raw/*/zt_pool.json`, `data/ths/limit_pool`, `data/ths/open_limit_pool`,
 `data/ths/stories` (narrative only), `data/research/auction/observations.jsonl` (empty),
-`data/research/node_pools` (README only), `site/public/agent-data/v1/days` (pool facts, no OHLC),
+`data/research/node_pools` (README only),
 parquet/csv/jsonl caches (none outside relay_study/out), kaipanla sentiment/expression/sector_ladder
 (market / theme structure, no individual fail-day OHLC).
 
@@ -18,7 +18,6 @@ parquet/csv/jsonl caches (none outside relay_study/out), kaipanla sentiment/expr
 | THS limit_pool price/change_rate/one_price | 211 days | seal-day only |
 | THS open_limit_pool (炸板) price+change_rate | 208 days | YES as t+1 fail print if they touched limit |
 | auction observations | 1 bytes | no |
-| agent-data days | 207 | no OHLC |
 | THS v6 line last3600 (this hunt) | 1108/1109 candidate codes cached |
 
 Candidate rows (boards>=2, 2025-10-09..2026-08-12): **n=2736**.

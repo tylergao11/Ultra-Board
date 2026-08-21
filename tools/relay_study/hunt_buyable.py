@@ -22,7 +22,6 @@ RAW = ROOT / "data" / "kaipanla" / "raw"
 THS_ZT = ROOT / "data" / "ths" / "limit_pool"
 THS_ZHA = ROOT / "data" / "ths" / "open_limit_pool"
 BAR_DIR = OUT / "daily_bars"
-AGENT = ROOT / "site" / "public" / "agent-data" / "v1" / "days"
 AUCTION = ROOT / "data" / "research" / "auction" / "observations.jsonl"
 
 MIN_CLAIM = 30
@@ -135,7 +134,6 @@ def hunt_coverage(cands, bars):
             days_any_open += 1
     ths_days = sorted(p.stem for p in THS_ZT.glob("*.json"))
     zha_days = sorted(p.stem for p in THS_ZHA.glob("*.json"))
-    agent_days = sorted(p.stem for p in AGENT.glob("*.json")) if AGENT.exists() else []
     auction_size = AUCTION.stat().st_size if AUCTION.exists() else 0
     n_bar_codes = len(bars)
     n_bar_need = len({r["code"] for r in cands})
@@ -175,7 +173,6 @@ def hunt_coverage(cands, bars):
         "days_any_open": days_any_open,
         "ths_zt_days": len(ths_days),
         "ths_zha_days": len(zha_days),
-        "agent_days": len(agent_days),
         "auction_bytes": auction_size,
         "cand_n": n,
         "cand_zt_next": n_zt,
@@ -681,7 +678,7 @@ def main():
     md.append("")
     md.append("Hunted: `data/kaipanla/raw/*/zt_pool.json`, `data/ths/limit_pool`, `data/ths/open_limit_pool`,")
     md.append("`data/ths/stories` (narrative only), `data/research/auction/observations.jsonl` (empty),")
-    md.append("`data/research/node_pools` (README only), `site/public/agent-data/v1/days` (pool facts, no OHLC),")
+    md.append("`data/research/node_pools` (README only),")
     md.append("parquet/csv/jsonl caches (none outside relay_study/out), kaipanla sentiment/expression/sector_ladder")
     md.append("(market / theme structure, no individual fail-day OHLC).")
     md.append("")
@@ -692,7 +689,6 @@ def main():
     md.append("| THS limit_pool price/change_rate/one_price | %d days | seal-day only |" % cov["ths_zt_days"])
     md.append("| THS open_limit_pool (炸板) price+change_rate | %d days | YES as t+1 fail print if they touched limit |" % cov["ths_zha_days"])
     md.append("| auction observations | %d bytes | no |" % cov["auction_bytes"])
-    md.append("| agent-data days | %d | no OHLC |" % cov["agent_days"])
     md.append("| THS v6 line last3600 (this hunt) | %d/%d candidate codes cached |" % (cov["bar_codes"], cov["bar_need"]))
     md.append("")
     md.append("Candidate rows (boards>=2, %s..%s): **n=%d**." % (WINDOW_START, WINDOW_END, cov["cand_n"]))
