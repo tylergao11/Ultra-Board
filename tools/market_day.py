@@ -31,7 +31,7 @@ def _parser() -> argparse.ArgumentParser:
         "--theme",
         action="append",
         default=[],
-        help="精确开盘啦主/候选属性；可重复",
+        help="精确匹配开盘啦当日主分类；可重复",
     )
     parser.add_argument(
         "--theme-match",
@@ -44,7 +44,7 @@ def _parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         type=int,
-        help="精确同花顺板数；可重复，不得与板数范围同时使用",
+        help="精确开盘啦板数；可重复，不得与板数范围同时使用",
     )
     parser.add_argument("--min-board", type=int)
     parser.add_argument("--max-board", type=int)

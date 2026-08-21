@@ -13,8 +13,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 KPL_DIR = ROOT / "data" / "kaipanla" / "raw"
-THS_LIMIT_DIR = ROOT / "data" / "ths" / "limit_pool"
-THS_STORY_DIR = ROOT / "data" / "ths" / "stories"
+KPL_NON_TRADING_PATH = ROOT / "data" / "kaipanla" / "non_trading_days.json"
 AUCTION_FILE = ROOT / "data" / "research" / "auction" / "observations.jsonl"
 DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 KPL_REQUIRED = (
@@ -53,6 +52,17 @@ def _jsonl_count(path: Path) -> int:
     )
 
 
+def _weekdays(start: str, end: str) -> list[str]:
+    current = date.fromisoformat(start)
+    final = date.fromisoformat(end)
+    result = []
+    while current <= final:
+        if current.weekday() < 5:
+            result.append(current.isoformat())
+        current = date.fromordinal(current.toordinal() + 1)
+    return result
+
+
 def _compact_days(days: list[str], sample_size: int) -> dict[str, Any]:
     if len(days) <= sample_size * 2:
         sample = days
@@ -79,14 +89,21 @@ def build_audit(
         raise ValueError("--start 不能晚于 --end")
 
     kpl_dates = _date_names(KPL_DIR, directories=True)
-    limit_dates = _date_names(THS_LIMIT_DIR, directories=False)
-    story_dates = _date_names(THS_STORY_DIR, directories=False)
-    all_dates = sorted(kpl_dates | limit_dates | story_dates)
-    selected = [
-        day
-        for day in all_dates
-        if (start is None or day >= start) and (end is None or day <= end)
-    ]
+    all_dates = sorted(kpl_dates)
+    if start and end:
+        selected = _weekdays(start, end)
+    else:
+        selected = [
+            day
+            for day in all_dates
+            if (start is None or day >= start) and (end is None or day <= end)
+        ]
+    non_trading = set()
+    if KPL_NON_TRADING_PATH.exists():
+        payload = json.loads(KPL_NON_TRADING_PATH.read_text(encoding="utf-8-sig"))
+        if not isinstance(payload, list):
+            raise ValueError("non_trading_days.json 顶层必须是数组")
+        non_trading = {str(item) for item in payload}
 
     rows = []
     for day in selected:
@@ -95,27 +112,24 @@ def build_audit(
         ]
         kpl_mismatch = (KPL_DIR / day / "_MISMATCH").exists()
         kpl_ready = day in kpl_dates and not kpl_missing and not kpl_mismatch
-        limit_ready = day in limit_dates
-        story_ready = day in story_dates
+        known_non_trading = day in non_trading
         rows.append(
             {
                 "date": day,
+                "known_non_trading": known_non_trading,
                 "kpl_ready": kpl_ready,
                 "kpl_missing_files": kpl_missing,
                 "kpl_mismatch": kpl_mismatch,
-                "ths_limit_pool_ready": limit_ready,
-                "ths_story_ready": story_ready,
-                "fact_view_ready": kpl_ready and limit_ready,
-                "story_context_ready": kpl_ready and limit_ready and story_ready,
+                "fact_view_ready": kpl_ready,
             }
         )
 
     missing = {
-        "kpl": [row["date"] for row in rows if not row["kpl_ready"]],
-        "ths_limit_pool": [
-            row["date"] for row in rows if not row["ths_limit_pool_ready"]
+        "kpl": [
+            row["date"]
+            for row in rows
+            if not row["kpl_ready"] and not row["known_non_trading"]
         ],
-        "ths_story": [row["date"] for row in rows if not row["ths_story_ready"]],
     }
     missing_view = {
         name: days if details else _compact_days(days, sample_size)
@@ -129,27 +143,27 @@ def build_audit(
             "end": end,
             "available_first": selected[0] if selected else None,
             "available_last": selected[-1] if selected else None,
-            "trading_day_count": len(selected),
+            "weekday_count": len(selected),
+            "known_non_trading_count": sum(
+                row["known_non_trading"] for row in rows
+            ),
+            "expected_trading_day_count": sum(
+                not row["known_non_trading"] for row in rows
+            ),
         },
         "coverage": {
             "kpl_ready": sum(row["kpl_ready"] for row in rows),
-            "ths_limit_pool_ready": sum(
-                row["ths_limit_pool_ready"] for row in rows
-            ),
-            "ths_story_ready": sum(row["ths_story_ready"] for row in rows),
             "fact_view_ready": sum(row["fact_view_ready"] for row in rows),
-            "story_context_ready": sum(
-                row["story_context_ready"] for row in rows
-            ),
+            "unresolved_weekdays": len(missing["kpl"]),
         },
         "missing": missing_view,
         "recorded_observations": {
             "auction_snapshot_count": _jsonl_count(AUCTION_FILE),
         },
         "interpretation": {
-            "fact_view_ready": "开盘啦分类合同与同花顺涨停池同时存在。",
-            "story_context_ready": "事实视图之外，同花顺日级与逐股故事合同也已经落盘。",
-            "missing_story": "缺失表示尚未生成或录入，不代表当天没有市场故事。",
+            "fact_view_ready": "开盘啦当日目录通过完整性合同，可直接生成日事实视图。",
+            "known_non_trading": "开盘啦明确返回未入库的工作日，不计作缺失交易日。",
+            "source_contract": "正式数据链只读取开盘啦；同花顺旧文件不参与覆盖率。",
         },
         **({"days": rows} if details else {}),
     }

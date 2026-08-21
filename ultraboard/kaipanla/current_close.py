@@ -28,20 +28,18 @@ from pathlib import Path
 from typing import Any
 
 from .backfill import DATA_DIR, RAW_DIR, is_bse
-from .client import CN_TZ, CURRENT_URL, SECTOR_URL, KaipanlaClient, ok
-from ultraboard.ths.limit_pool import _fetch_raw_day as fetch_ths_raw_day
+from .client import (
+    CN_TZ,
+    CURRENT_URL,
+    SECTOR_URL,
+    KaipanlaClient,
+    dump_json as _write_json,
+    ok,
+)
 
 ST_SECTOR_CODE = "801314"
 ST_SECTOR_NAME = "ST板块"
 PLACEHOLDER = "kaipanla.com"
-
-
-def _write_json(path: Path, obj: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(obj, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
 
 
 def _as_int(value: Any, label: str) -> int:
@@ -136,25 +134,6 @@ def _stock_from_row(
         "raw_source": "GetPlateInfo_w38.StockList",
         "raw": row,
     }
-
-
-def _load_ths_codes(day_dir: Path, day: str) -> set[str]:
-    path = day_dir / "ths_limit_pool.json"
-    if path.exists():
-        body = json.loads(path.read_text(encoding="utf-8-sig"))
-        stocks = body.get("stocks")
-        if str(body.get("date") or "") != day or not isinstance(stocks, list):
-            raise RuntimeError("同花顺涨停池日期或股票表格式错误")
-        codes = {str(stock.get("code") or "") for stock in stocks}
-        if len(codes) != len(stocks) or _as_int(body.get("count"), "同花顺 count") != len(codes):
-            raise RuntimeError("同花顺涨停池代码重复或 count 未对账")
-        return codes
-
-    rows, total = fetch_ths_raw_day(day)
-    codes = {str(stock.get("code") or "").strip() for stock in rows}
-    if len(codes) != len(rows) or total != len(rows):
-        raise RuntimeError("同花顺当日涨停池代码重复或总数未对账")
-    return codes
 
 
 def _evidence_doc(
@@ -338,13 +317,6 @@ def collect(
     source_row_count = len(stocks) + len(excluded_bse)
     if source_row_count == 0:
         raise RuntimeError("开盘啦市场方向没有返回涨停股票")
-    ths_codes = _load_ths_codes(day_dir, day)
-    if seen != ths_codes:
-        missing_ths = sorted(seen - ths_codes)
-        missing_kpl = sorted(ths_codes - seen)
-        raise RuntimeError(
-            f"开盘啦/同花顺股票集合不一致: 同花顺缺 {missing_ths}，开盘啦缺 {missing_kpl}"
-        )
 
     actual_themes = {doc["name"]: int(doc["count"]) for doc in sector_docs}
     for theme, expected in expected_themes.items():
@@ -451,12 +423,10 @@ def collect(
         expected_themes=expected_themes,
     )
     evidence["verification"] = {
-        "status": "matched",
+        "status": "kaipanla_snapshot_closed",
         "kaipanla_sjzt": sjzt,
         "kaipanla_market_direction_count": source_row_count,
         "target_scope_delta_vs_sentiment": sjzt - source_row_count,
-        "tonghuashun_count": len(ths_codes),
-        "stock_code_sets_equal": True,
         "snapshot_day": plate.get("snapshot_day"),
     }
     zt_pool = {
@@ -484,7 +454,7 @@ def collect(
             "action": "GetPlateInfo_w38",
             "contract": (
                 "当前日市场方向 StockList 逐条记账；ST板块和北交所单列排除；"
-                "与同花顺代码集合完全对账；SJZT 仅作不同范围参考"
+                "板数与题材仅取开盘啦同源字段；SJZT 仅作不同范围参考"
             ),
         },
         "stocks": stocks,

@@ -4,15 +4,16 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
+from datetime import date
 from pathlib import Path
 from typing import Any, Callable
 
 
 ROOT = Path(__file__).resolve().parents[1]
 KAIPANLA_RAW_DIR = ROOT / "data" / "kaipanla" / "raw"
-THS_LIMIT_POOL_DIR = ROOT / "data" / "ths" / "limit_pool"
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -48,12 +49,15 @@ def normalize_kaipanla(path: Path, payload: dict[str, Any]) -> bool:
         primary = str(raw[5] or "").strip()
         tags_text = str(raw[12] or "").strip()
         sector_code = str(raw[19] or "").strip()
-        if not primary or not sector_code:
-            raise ValueError(f"开盘啦个股分类为空: {path}")
-        if str(stock.get("theme") or "").strip() != primary:
+        normalized_primary = primary or None
+        if stock.get("theme") != normalized_primary:
             raise ValueError(f"开盘啦主分类与原文不一致: {path} {stock.get('code')}")
         if stock.get("theme_tags_text") != tags_text:
             stock["theme_tags_text"] = tags_text
+            changed = True
+        normalized_sector_code = sector_code or None
+        if stock.get("sector_code") != normalized_sector_code:
+            stock["sector_code"] = normalized_sector_code
             changed = True
 
     source = {
@@ -61,24 +65,18 @@ def normalize_kaipanla(path: Path, payload: dict[str, Any]) -> bool:
         "action": "DailyLimitPerformance",
         "primary_field": "stocks[].raw[5]",
         "tags_field": "stocks[].raw[12]",
+        "tags_temporal_contract": "raw_only_not_point_in_time_safe",
         "sector_code_field": "stocks[].raw[19]",
+        "sector_code_required": False,
     }
     if payload.get("theme_source") != source:
         payload["theme_source"] = source
         changed = True
-    return changed
-
-
-def normalize_ths_limit_pool(path: Path, payload: dict[str, Any]) -> bool:
-    source = payload.get("source")
-    if payload.get("date") != path.stem or not isinstance(source, dict):
-        raise ValueError(f"同花顺涨停池合同异常: {path}")
-    if source.get("provider") != "tonghuashun_limit_up_pool":
-        raise ValueError(f"同花顺涨停池来源异常: {path}")
-    changed = source.pop("theme_contract", None) is not None
-    contract = "本接口只提供客观涨停事实；具体分类只认开盘啦"
-    if source.get("attribute_contract") != contract:
-        source["attribute_contract"] = contract
+    missing_main_theme_count = sum(
+        not str(stock.get("theme") or "").strip() for stock in stocks
+    )
+    if payload.get("missing_main_theme_count") != missing_main_theme_count:
+        payload["missing_main_theme_count"] = missing_main_theme_count
         changed = True
     return changed
 
@@ -95,17 +93,27 @@ def normalize(
     return changed
 
 
-def main() -> int:
-    kaipanla_paths = sorted(KAIPANLA_RAW_DIR.glob("*/zt_pool.json"))
-    ths_paths = sorted(THS_LIMIT_POOL_DIR.glob("*.json"))
-    if not kaipanla_paths or not ths_paths:
-        raise FileNotFoundError("开盘啦或同花顺涨停池历史数据为空")
-    kaipanla_changed = normalize(kaipanla_paths, normalize_kaipanla)
-    ths_changed = normalize(ths_paths, normalize_ths_limit_pool)
-    print(
-        f"kaipanla={len(kaipanla_paths)} changed={kaipanla_changed} "
-        f"ths_limit_pool={len(ths_paths)} changed={ths_changed}"
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--start")
+    parser.add_argument("--end")
+    args = parser.parse_args(argv)
+    start = date.fromisoformat(args.start).isoformat() if args.start else None
+    end = date.fromisoformat(args.end).isoformat() if args.end else None
+    if start and end and start > end:
+        raise ValueError("--start 不能晚于 --end")
+    kaipanla_paths = sorted(
+        path
+        for path in KAIPANLA_RAW_DIR.glob("*/zt_pool.json")
+        if (path.parent / "_DONE").exists()
+        and not (path.parent / "_MISMATCH").exists()
+        and (start is None or path.parent.name >= start)
+        and (end is None or path.parent.name <= end)
     )
+    if not kaipanla_paths:
+        raise FileNotFoundError("开盘啦涨停池历史数据为空")
+    kaipanla_changed = normalize(kaipanla_paths, normalize_kaipanla)
+    print(f"kaipanla={len(kaipanla_paths)} changed={kaipanla_changed}")
     return 0
 
 

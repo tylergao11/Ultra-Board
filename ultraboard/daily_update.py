@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""更新并校验一个完整交易日的原始事实数据。
+"""更新并校验开盘啦单源市场事实。
 
-默认目标是同花顺官方复盘页已经公开的最新交易日；显式 ``--date``
-严格执行指定日期，不自动回退。数据只写入各来源的 canonical 日目录，
-不再生成另一套发布快照。
+默认刷新最近一个月并选择开盘啦已经发布的最新完整交易日；显式
+``--date`` 严格更新单日；``--start``/``--end`` 批量回灌闭区间。
+所有模式都复用同一幂等回灌器，失败后重跑原命令即可续传。
 """
 
 from __future__ import annotations
@@ -20,15 +20,12 @@ from typing import Any, Iterator
 from ultraboard.day_facts import build_day_component
 from ultraboard.kaipanla import load_day as load_kaipanla_day
 from ultraboard.kaipanla.backfill import main as kaipanla_backfill_main
-from ultraboard.ths.fupan_stories import ensure_day as ensure_story_day
-from ultraboard.ths.fupan_stories import latest_available_day
-from ultraboard.ths.limit_pool import load_day as load_limit_day
 
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK_PATH = ROOT / "data" / ".daily_update.lock"
 KPL_RAW_DIR = ROOT / "data" / "kaipanla" / "raw"
-THS_LIMIT_DIR = ROOT / "data" / "ths" / "limit_pool"
+KPL_NON_TRADING_PATH = ROOT / "data" / "kaipanla" / "non_trading_days.json"
 CN_TZ = timezone(timedelta(hours=8))
 
 
@@ -57,47 +54,77 @@ def _update_lock() -> Iterator[None]:
             LOCK_PATH.unlink()
 
 
-def _ensure_kaipanla(day: str) -> dict[str, Any]:
+def _historical_complete(day: str) -> bool:
     directory = KPL_RAW_DIR / day
-    if (directory / "_MISMATCH").exists():
-        raise RuntimeError(f"{day} 开盘啦来源仍有 _MISMATCH，停止发布")
-    historical_complete = (directory / "_DONE").exists()
-    current_snapshot = (directory / "_CURRENT_SNAPSHOT").exists()
-    existed = historical_complete or current_snapshot
-    if not existed:
-        result = kaipanla_backfill_main(["--start", day, "--end", day])
-        if result != 0:
-            raise RuntimeError(f"{day} 开盘啦采集失败: exit={result}")
-        historical_complete = (directory / "_DONE").exists()
-        if not historical_complete:
-            from ultraboard.kaipanla.current_close import collect as collect_current_close
+    return (
+        directory.is_dir()
+        and (directory / "_DONE").exists()
+        and not (directory / "_MISMATCH").exists()
+    )
 
-            collect_current_close(
-                day,
-                screenshots=[],
-                expected_limit_up=None,
-                expected_limit_down=None,
-                expected_themes={},
-                height_marks={},
-            )
-            current_snapshot = True
+
+def _complete_days(start: str, end: str) -> list[str]:
+    if not KPL_RAW_DIR.exists():
+        return []
+    return sorted(
+        path.name
+        for path in KPL_RAW_DIR.iterdir()
+        if path.is_dir()
+        and start <= path.name <= end
+        and _historical_complete(path.name)
+    )
+
+
+def _weekdays(start: str, end: str) -> list[str]:
+    current = date.fromisoformat(start)
+    final = date.fromisoformat(end)
+    result = []
+    while current <= final:
+        if current.weekday() < 5:
+            result.append(current.isoformat())
+        current += timedelta(days=1)
+    return result
+
+
+def _require_closed_range(start: str, end: str, complete_days: list[str]) -> None:
+    non_trading = set()
+    if KPL_NON_TRADING_PATH.exists():
+        payload = json.loads(KPL_NON_TRADING_PATH.read_text(encoding="utf-8-sig"))
+        if not isinstance(payload, list):
+            raise RuntimeError("开盘啦 non_trading_days.json 格式错误")
+        non_trading = {str(item) for item in payload}
+    complete = set(complete_days)
+    unresolved = [
+        day
+        for day in _weekdays(start, end)
+        if day not in complete and day not in non_trading
+    ]
+    if unresolved:
+        preview = unresolved[:10]
+        suffix = "..." if len(unresolved) > len(preview) else ""
+        raise RuntimeError(
+            f"区间仍有 {len(unresolved)} 个工作日未闭合: {preview}{suffix}"
+        )
+
+
+def _run_backfill(start: str, end: str) -> None:
+    result = kaipanla_backfill_main(["--start", start, "--end", end])
+    if result != 0:
+        raise RuntimeError(
+            f"开盘啦区间回灌失败: start={start}, end={end}, exit={result}"
+        )
+
+
+def _ensure_kaipanla(day: str) -> dict[str, Any]:
+    existed = _historical_complete(day)
+    if not existed:
+        _run_backfill(day, day)
+    if not _historical_complete(day):
+        raise RuntimeError(f"{day} 不是开盘啦已发布的完整交易日")
     payload = load_kaipanla_day(day)
     print(
         f"{'CHECKED' if existed else 'FETCHED'} {day} "
-        f"kaipanla_stocks={len(payload['stocks'])} "
-        f"snapshot_mode={payload['snapshot_mode']}"
-    )
-    return payload
-
-
-def _ensure_limit_pool(day: str) -> dict[str, Any]:
-    existed = (THS_LIMIT_DIR / f"{day}.json").exists()
-    payload = load_limit_day(day, fetch_missing=True)
-    if payload is None:
-        raise RuntimeError(f"{day} 同花顺涨停池采集后仍不可用")
-    print(
-        f"{'CHECKED' if existed else 'FETCHED'} {day} "
-        f"ths_limit_stocks={payload['count']}"
+        f"kaipanla_stocks={len(payload['stocks'])}"
     )
     return payload
 
@@ -105,13 +132,7 @@ def _ensure_limit_pool(day: str) -> dict[str, Any]:
 def _require_complete_day(day: str) -> dict[str, Any]:
     component = build_day_component(day)
     coverage = component["coverage"]
-    required = (
-        "kpl_ready",
-        "ths_limit_pool_ready",
-        "ths_story_ready",
-        "stock_story_complete",
-        "fact_ready",
-    )
+    required = ("kpl_ready", "fact_ready")
     missing = [name for name in required if coverage.get(name) is not True]
     if missing:
         raise RuntimeError(
@@ -120,7 +141,7 @@ def _require_complete_day(day: str) -> dict[str, Any]:
         )
     if component.get("source_issues"):
         raise RuntimeError(
-            f"{day} 来源集合未闭合: "
+            f"{day} 开盘啦来源异常: "
             f"{json.dumps(component['source_issues'], ensure_ascii=False)}"
         )
     return component
@@ -129,24 +150,12 @@ def _require_complete_day(day: str) -> dict[str, Any]:
 def update_day(day_value: str) -> dict[str, Any]:
     day = date.fromisoformat(day_value).isoformat()
     _ensure_kaipanla(day)
-    _ensure_limit_pool(day)
-    story_payload, story_action = ensure_story_day(day)
-    story_stock_count = len(story_payload.get("stock_stories") or [])
-    if not story_stock_count:
-        story_stock_count = sum(
-            len(group.get("stocks") or [])
-            for group in story_payload.get("stories") or []
-            if isinstance(group, dict)
-        )
-    print(
-        f"{story_action.upper()} {day} stories_source={story_payload['source']} "
-        f"stock_stories={story_stock_count}"
-    )
     component = _require_complete_day(day)
     market = component["market"]
     market_summary_keys = (
         "kaipanla_stock_count",
-        "ths_limit_up_count",
+        "limit_up_count",
+        "missing_main_theme_count",
         "first_board_count",
         "higher_board_count",
         "max_boards",
@@ -162,20 +171,53 @@ def update_day(day_value: str) -> dict[str, Any]:
         "target_date": day,
         "market": {key: market.get(key) for key in market_summary_keys},
         "coverage": component["coverage"],
-        "story_source": story_payload["source"],
+        "source": "kaipanla_only",
         "facts_verified": True,
     }
 
 
+def update_range(start_value: str, end_value: str) -> dict[str, Any]:
+    start = date.fromisoformat(start_value).isoformat()
+    end = date.fromisoformat(end_value).isoformat()
+    if start > end:
+        raise ValueError("--start 不能晚于 --end")
+    if end > date.today().isoformat():
+        raise ValueError("--end 不能晚于今天")
+    _run_backfill(start, end)
+    days = _complete_days(start, end)
+    if not days:
+        raise RuntimeError(f"区间内没有开盘啦完整交易日: {start} ~ {end}")
+    _require_closed_range(start, end, days)
+    for index, day in enumerate(days, 1):
+        _require_complete_day(day)
+        print(f"VERIFIED [{index}/{len(days)}] {day}")
+    return {
+        "start": start,
+        "end": end,
+        "first_trade_date": days[0],
+        "last_trade_date": days[-1],
+        "trade_day_count": len(days),
+        "source": "kaipanla_only",
+        "facts_verified": True,
+    }
+
+
+def update_latest() -> dict[str, Any]:
+    today = date.today()
+    start = today - timedelta(days=31)
+    _run_backfill(start.isoformat(), today.isoformat())
+    days = _complete_days(start.isoformat(), today.isoformat())
+    if not days:
+        raise RuntimeError("最近31日没有开盘啦完整交易日")
+    return update_day(days[-1])
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--date",
-        help=(
-            "严格更新指定交易日 YYYY-MM-DD；省略时采用同花顺官方复盘页"
-            "已经公开的最新交易日"
-        ),
-    )
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument("--date", help="严格更新指定交易日 YYYY-MM-DD")
+    target.add_argument("--start", help="批量回灌起始日期 YYYY-MM-DD")
+    parser.add_argument("--end", help="批量回灌结束日期 YYYY-MM-DD")
     return parser
 
 
@@ -183,17 +225,18 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     args = _parser().parse_args(argv)
-    official_latest = latest_available_day()
-    target = date.fromisoformat(args.date).isoformat() if args.date else official_latest
-    if target > official_latest:
-        raise RuntimeError(
-            f"指定日期尚未进入同花顺官方收盘复盘: "
-            f"target={target}, latest={official_latest}"
-        )
-    mode = "explicit" if args.date else "latest_official_close_recap"
-    print(f"TARGET {target} mode={mode}")
+    if bool(args.start) != bool(args.end):
+        raise ValueError("--start 与 --end 必须同时提供")
+    if args.date and args.end:
+        raise ValueError("--date 不能与 --end 同时使用")
+
     with _update_lock():
-        result = update_day(target)
+        if args.start:
+            result = update_range(args.start, args.end)
+        elif args.date:
+            result = update_day(args.date)
+        else:
+            result = update_latest()
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

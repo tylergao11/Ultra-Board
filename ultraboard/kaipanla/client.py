@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import time
 import uuid
@@ -43,6 +44,7 @@ class KaipanlaClient:
         self.interval_min = interval_min
         self.interval_max = interval_max
         self._last_req = 0.0
+        self._session = requests.Session()
         self.device_id = self._load_or_create_device_id()
 
     def _load_or_create_device_id(self) -> str:
@@ -83,7 +85,7 @@ class KaipanlaClient:
             data["Day"] = day
         data.update(extra)
         try:
-            r = requests.post(
+            r = self._session.post(
                 url,
                 data=data,
                 headers=self._headers(host),
@@ -239,4 +241,9 @@ def ok(body: dict[str, Any]) -> bool:
 
 def dump_json(path: Path, obj: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(
+        json.dumps(obj, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)

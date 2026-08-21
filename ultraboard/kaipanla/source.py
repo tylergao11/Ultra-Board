@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -12,7 +11,6 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = ROOT / "data" / "kaipanla" / "raw"
-THEME_SEPARATOR_RE = re.compile(r"[、，,]+")
 
 
 def _day(value: str) -> str:
@@ -31,33 +29,14 @@ def _read(path: Path, *, required: bool = True) -> dict[str, Any] | None:
 
 
 def stock_themes(stock: dict[str, Any]) -> list[str]:
-    """返回开盘啦给出的全部具体分类，保持源顺序并去重。"""
-    candidates: list[str] = []
+    """返回可安全用于历史截面的开盘啦当日主分类。
+
+    ``raw[12]``/``theme_tags_text`` 是平台附加概念元数据。历史接口会把后来
+    出现的概念回填到旧日期，因此这里只保留 ``raw[5]`` 归一化出的 ``theme``。
+    原始附加标签仍保存在落盘记录中，供溯源使用，但不进入正式历史事实。
+    """
     primary = str(stock.get("theme") or "").strip()
-    if primary:
-        candidates.append(primary)
-
-    tags_text = str(stock.get("theme_tags_text") or "").strip()
-    raw = stock.get("raw")
-    if not tags_text and isinstance(raw, list) and len(raw) > 12:
-        tags_text = str(raw[12] or "").strip()
-    if tags_text:
-        candidates.extend(
-            part.strip()
-            for part in THEME_SEPARATOR_RE.split(tags_text)
-            if part.strip()
-        )
-
-    result: list[str] = []
-    seen: set[str] = set()
-    for item in candidates:
-        if item not in seen:
-            seen.add(item)
-            result.append(item)
-    if not result:
-        code = stock.get("code") or "?"
-        raise ValueError(f"开盘啦个股缺少具体分类: {code}")
-    return result
+    return [primary] if primary else []
 
 
 def load_day(value: str) -> dict[str, Any]:

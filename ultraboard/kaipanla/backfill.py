@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""开盘啦历史回灌：2025-10-01 ~ 今天。
+"""开盘啦历史闭区间回灌，支持断点续传。
 
 落盘到 data/kaipanla/raw/YYYY-MM-DD/：
   sentiment.json      情绪统计（含 SJZT，作为跨接口范围参考）
   expression.json     梯队情绪指标
-  zt_pool.json        完整涨停池，每只票带开盘啦主分类与具体分类原文
+  zt_pool.json        完整涨停池，每只票带当日主分类与附加标签原文
   sector_ladder.json  开盘啦题材梯队原始快照
   _DONE               仅当校验全过才写
 
@@ -14,8 +14,8 @@
     PidType 5   = 「5 板及以上」，组内可能出现 6/7/8 板
     真实连板数 = 个股数组下标 15，绝不能用 PidType 顶替
     下标 18 = 描述文字，如 "7连板" / "3天2板"，仅作备注
-    下标 5/19 = 开盘啦主分类及其代码
-    下标 12   = 开盘啦全部具体分类原文
+    下标 5/19 = 开盘啦当日主分类及其可空代码
+    下标 12   = 平台附加概念原文；历史查询可能回填后来概念，只作溯源
   GetYTFP_BKHX
     历史参数是 Date（大写），不是 Day
     List 保留历史接口源字段；采集层不把源顺序解释为交易结论
@@ -38,7 +38,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .client import KaipanlaClient, dump_json, ok
+from .client import KaipanlaClient, dump_json as _write_json, ok
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT / "data" / "kaipanla"
@@ -52,6 +52,7 @@ END = date.today()
 
 # 接口只提供 1~5；5 表示「5 板及以上」
 MAX_PID = 5
+NON_TRADING_CONFIRM_LAG_DAYS = 7
 
 REQUIRED = (
     "sentiment.json",
@@ -111,11 +112,6 @@ def _read_json(path: Path, default):
     return default
 
 
-def _write_json(path: Path, obj) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
 # --------------------------------------------------------------------------- parse
 
 def _rows(body: dict) -> list:
@@ -141,10 +137,8 @@ def parse_stock(row: list, pid: int) -> tuple[dict[str, Any] | None, str | None]
     theme = str(row[5] or "").strip()
     theme_tags_text = str(row[12] or "").strip()
     sector_code = str(row[19] or "").strip()
-    if not theme:
-        return None, f"{code} {name} 梯队列表 theme(raw[5]) 为空"
-    if not sector_code:
-        return None, f"{code} {name} 梯队列表 theme 代码(raw[19]) 为空"
+    # 分类是来源可空事实。空值保留 None，绝不能用会回填未来概念的附加
+    # 标签兜底；股票、板数与源行审计仍可独立闭合。
     boards = row[15]
     if not isinstance(boards, int) or boards < 1:
         return None, f"{code} {name} 连板数非法: {boards!r}"
@@ -160,10 +154,12 @@ def parse_stock(row: list, pid: int) -> tuple[dict[str, Any] | None, str | None]
         "name": name,
         "boards": boards,               # 真实连板数，唯一权威
         "boards_desc": row[18] or "",   # "7连板" / "3天2板"，仅备注
-        # 具体分类只认开盘啦；采集层不做二次映射。
-        "theme": theme,
+        # 主分类按开盘啦原值保存；采集层不做二次映射。
+        "theme": theme or None,
         "theme_tags_text": theme_tags_text,
-        "sector_code": sector_code,
+        # 少数来源行会给出主分类（含明确的“无”）但不给分类代码；代码不是
+        # 股票、板数或历史主分类合同的必要字段，保留 None 而不是伪造映射。
+        "sector_code": sector_code or None,
         "first_limit_ts": row[4],
         "turnover_rate": row[14],
         "amount": row[11],
@@ -296,7 +292,9 @@ def pull_one_day(
             # 假期或当日未入库。不同采集源彼此独立，绝不删除同日已有原始证据。
             if dd.exists() and not any(dd.iterdir()):
                 dd.rmdir()
-            if d < date.today():
+            # 最近日期可能只是开盘啦历史库尚未发布，不能永久误记为休市。
+            # 仅把已过去一周的 1020 记入可续传的未入库日清单。
+            if d <= date.today() - timedelta(days=NON_TRADING_CONFIRM_LAG_DAYS):
                 non_trading.add(day)
                 _write_json(NON_TRADING_PATH, sorted(non_trading))
             return "skip", None
@@ -340,12 +338,15 @@ def pull_one_day(
         "max_board": max_board,
         "board_counts": counts,
         "fanbao_count": n_fanbao,
+        "missing_main_theme_count": sum(not s.get("theme") for s in pool),
         "theme_source": {
             "provider": "kaipanla",
             "action": "DailyLimitPerformance",
             "primary_field": "stocks[].raw[5]",
             "tags_field": "stocks[].raw[12]",
+            "tags_temporal_contract": "raw_only_not_point_in_time_safe",
             "sector_code_field": "stocks[].raw[19]",
+            "sector_code_required": False,
         },
         "source_reconciliation": {
             **source_audit,
@@ -460,10 +461,17 @@ def main(argv: list[str] | None = None) -> int:
         _write_json(STATE_PATH, state)
 
     print("-" * 64)
-    if mismatches:
-        print(f"完成，但有 {len(mismatches)} 天源数据未通过同口径校验：")
-        for m in mismatches:
+    requested_days = {day.isoformat() for day in days}
+    requested_mismatches = [
+        item for item in mismatches if str(item)[:10] in requested_days
+    ]
+    if requested_mismatches:
+        print(
+            f"区间未闭合，有 {len(requested_mismatches)} 天源数据未通过同口径校验："
+        )
+        for m in requested_mismatches:
             print(f"  - {m}")
+        return 2
     else:
         print("回灌完成，DailyLimitPerformance 源记录已全部对账。")
     return 0

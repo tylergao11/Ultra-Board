@@ -14,14 +14,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from ultraboard.kaipanla import load_day as load_kaipanla_day
-from ultraboard.ths.limit_pool import load_day as load_limit_day
-from ultraboard.ths.stories import load_day as load_story_day
 
 
 ROOT = Path(__file__).resolve().parents[1]
 KPL_DIR = ROOT / "data" / "kaipanla" / "raw"
-THS_LIMIT_DIR = ROOT / "data" / "ths" / "limit_pool"
-THS_STORY_DIR = ROOT / "data" / "ths" / "stories"
 KPL_REQUIRED_FILES = (
     "zt_pool.json",
     "sector_ladder.json",
@@ -73,11 +69,11 @@ def _date_names(directory: Path, *, directories: bool) -> set[str]:
 
 
 def available_days() -> list[str]:
-    """返回任一正式来源存在的日期，避免用交集静默跳过缺失日。"""
+    """返回开盘啦正式日快照日期。"""
     return sorted(
-        _date_names(KPL_DIR, directories=True)
-        | _date_names(THS_LIMIT_DIR, directories=False)
-        | _date_names(THS_STORY_DIR, directories=False)
+        day
+        for day in _date_names(KPL_DIR, directories=True)
+        if _coverage(day)["fact_ready"]
     )
 
 
@@ -102,8 +98,6 @@ def _coverage(day: str) -> dict[str, Any]:
         and not kpl_mismatch
         and (historical_complete or current_snapshot)
     )
-    limit_ready = (THS_LIMIT_DIR / f"{day}.json").exists()
-    story_ready = (THS_STORY_DIR / f"{day}.json").exists()
     return {
         "date": day,
         "kpl_ready": kpl_ready,
@@ -116,15 +110,14 @@ def _coverage(day: str) -> dict[str, Any]:
         ),
         "kpl_missing_files": kpl_missing,
         **({"kpl_mismatch": True} if kpl_mismatch else {}),
-        "ths_limit_pool_ready": limit_ready,
-        "ths_story_ready": story_ready,
-        "fact_ready": kpl_ready and limit_ready and story_ready,
+        "fact_ready": kpl_ready,
+        "source_contract": "kaipanla_only",
     }
 
 
 def _load_sources(
     day: str,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None, list[dict[str, Any]]]:
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     issues: list[dict[str, Any]] = []
     try:
         kaipanla = load_kaipanla_day(day)
@@ -134,34 +127,13 @@ def _load_sources(
             {"kind": "kaipanla_unavailable", "date": day, "detail": str(exc)}
         )
 
-    try:
-        limit_pool = load_limit_day(day)
-    except (FileNotFoundError, ValueError) as exc:
-        limit_pool = None
-        issues.append(
-            {"kind": "ths_limit_pool_unavailable", "date": day, "detail": str(exc)}
-        )
-
-    try:
-        stories = load_story_day(day)
-    except (FileNotFoundError, ValueError) as exc:
-        stories = None
-        issues.append(
-            {
-                "kind": "ths_story_unavailable",
-                "date": day,
-                "required_for_fact_view": True,
-                "detail": str(exc),
-            }
-        )
-    return kaipanla, limit_pool, stories, issues
+    return kaipanla, issues
 
 
 def _stock_record(
     day: str,
     code: str,
-    kaipanla_stock: dict[str, Any] | None,
-    limit_stock: dict[str, Any] | None,
+    kaipanla_stock: dict[str, Any],
     requested_themes: tuple[str, ...],
 ) -> dict[str, Any]:
     main_theme = (
@@ -169,34 +141,18 @@ def _stock_record(
         if kaipanla_stock is not None
         else ""
     )
-    candidate_themes = (
-        [
-            str(item).strip()
-            for item in kaipanla_stock.get("themes") or []
-            if str(item).strip()
-        ]
-        if kaipanla_stock is not None
-        else []
-    )
-    attribute_set = set(candidate_themes)
-    if main_theme:
-        attribute_set.add(main_theme)
     matched_attributes = [
         {
             "theme": theme,
-            "membership_source": "main" if theme == main_theme else "candidate",
+            "membership_source": "historical_main",
         }
         for theme in requested_themes
-        if theme in attribute_set
+        if theme == main_theme
     ]
 
-    first_ts = int(limit_stock["first_limit_ts"]) if limit_stock else None
-    final_ts = int(limit_stock["final_limit_ts"]) if limit_stock else None
-    name = str(
-        (limit_stock or {}).get("name")
-        or (kaipanla_stock or {}).get("name")
-        or ""
-    ).strip()
+    first_value = kaipanla_stock.get("first_limit_ts")
+    first_ts = int(first_value) if first_value not in (None, "") else None
+    name = str(kaipanla_stock.get("name") or "").strip()
     return {
         "date": day,
         "code": code,
@@ -204,7 +160,6 @@ def _stock_record(
         "attributes": (
             {
                 "source_main_theme": main_theme or None,
-                "source_candidate_themes": candidate_themes,
                 "source_sector_code": kaipanla_stock.get("sector_code"),
                 "source_is_fanbao": bool(kaipanla_stock.get("is_fanbao")),
                 **(
@@ -216,47 +171,18 @@ def _stock_record(
             if kaipanla_stock is not None
             else None
         ),
-        "limit_facts": (
-            {
-                "boards": limit_stock.get("boards"),
-                "boards_desc": limit_stock.get("boards_desc"),
-                "limit_up_window_days": limit_stock.get("limit_up_window_days"),
-                "limit_up_total": limit_stock.get("limit_up_total"),
-                "boards_source": limit_stock.get("boards_source"),
-                "consecutive_limit_up_dates": limit_stock.get(
-                    "consecutive_limit_up_dates"
-                ),
-                "first_limit_ts": first_ts,
-                "first_limit_time": _time_text(first_ts),
-                "final_limit_ts": final_ts,
-                "final_limit_time": _time_text(final_ts),
-                "seal_span_seconds": (
-                    final_ts - first_ts
-                    if first_ts is not None and final_ts is not None
-                    else None
-                ),
-                "open_count": limit_stock.get("open_count"),
-                "board_type": limit_stock.get("board_type"),
-                "one_price": limit_stock.get("one_price"),
-                "is_again_limit": limit_stock.get("is_again_limit"),
-                "change_tag": limit_stock.get("change_tag"),
-                "price": limit_stock.get("price"),
-                "change_rate": limit_stock.get("change_rate"),
-                "circulating_market_cap": limit_stock.get(
-                    "circulating_market_cap"
-                ),
-                "total_market_cap": limit_stock.get("total_market_cap"),
-                "turnover_rate": limit_stock.get("turnover_rate"),
-                "seal_order_amount": limit_stock.get("seal_order_amount"),
-                "seal_order_volume": limit_stock.get("seal_order_volume"),
-                "seal_order_ratio": limit_stock.get("seal_order_ratio"),
-                "limit_up_success_rate": limit_stock.get(
-                    "limit_up_success_rate"
-                ),
-            }
-            if limit_stock is not None
-            else None
-        ),
+        "limit_facts": {
+            "boards": kaipanla_stock.get("boards"),
+            "boards_desc": kaipanla_stock.get("boards_desc"),
+            "boards_source": "kaipanla_DailyLimitPerformance.raw[15]",
+            "first_limit_ts": first_ts,
+            "first_limit_time": _time_text(first_ts),
+            "price": kaipanla_stock.get("price"),
+            "turnover_rate": kaipanla_stock.get("turnover_rate"),
+            "amount": kaipanla_stock.get("amount"),
+            "limit_pct": kaipanla_stock.get("limit_pct"),
+            "is_fanbao": bool(kaipanla_stock.get("is_fanbao")),
+        },
     }
 
 
@@ -268,13 +194,10 @@ def _record_matches(
     attributes = record.get("attributes")
     if not isinstance(attributes, dict):
         return False
-    candidates = set(attributes.get("source_candidate_themes") or [])
     main_theme = attributes.get("source_main_theme")
-    if main_theme:
-        candidates.add(main_theme)
     if theme_match == "all":
-        return all(theme in candidates for theme in themes)
-    return bool(candidates.intersection(themes))
+        return all(theme == main_theme for theme in themes)
+    return main_theme in themes
 
 
 def _limit_boards(record: dict[str, Any] | None) -> int | None:
@@ -291,17 +214,8 @@ def _theme_index(records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         attributes = record.get("attributes")
         if not isinstance(attributes, dict):
             continue
-        themes = dict.fromkeys(
-            [
-                theme
-                for theme in [
-                    attributes.get("source_main_theme"),
-                    *(attributes.get("source_candidate_themes") or []),
-                ]
-                if theme
-            ]
-        )
-        for theme in themes:
+        theme = attributes.get("source_main_theme")
+        if theme:
             groups[str(theme)].append(record)
 
     result = []
@@ -356,7 +270,6 @@ def _sector_index(kaipanla: dict[str, Any] | None) -> list[dict[str, Any]]:
 
 def _market_summary(
     kaipanla: dict[str, Any] | None,
-    limit_pool: dict[str, Any] | None,
 ) -> dict[str, Any]:
     sentiment = (kaipanla or {}).get("sentiment")
     sentiment_info = (
@@ -367,7 +280,7 @@ def _market_summary(
     expression_info = (
         expression.get("info") if isinstance(expression, dict) else None
     )
-    rows = list((limit_pool or {}).get("stocks") or [])
+    rows = list((kaipanla or {}).get("stocks") or [])
     board_values = [
         int(row["boards"])
         for row in rows
@@ -378,7 +291,10 @@ def _market_summary(
     maximum = max(board_values, default=None)
     return {
         "kaipanla_stock_count": len((kaipanla or {}).get("stocks") or []),
-        "ths_limit_up_count": len(rows),
+        "limit_up_count": len(rows),
+        "missing_main_theme_count": sum(
+            not str(row.get("theme") or "").strip() for row in rows
+        ),
         "first_board_count": counts.get(1, 0),
         "higher_board_count": sum(count for boards, count in counts.items() if boards >= 2),
         "max_boards": maximum,
@@ -438,64 +354,6 @@ def _record_sort_key(record: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
-def _stock_story_coverage(
-    story_payload: dict[str, Any] | None,
-    all_records: dict[str, dict[str, Any]],
-) -> dict[str, Any]:
-    by_name: dict[str, list[str]] = defaultdict(list)
-    for code, record in all_records.items():
-        name = str(record.get("name") or "").strip()
-        if name:
-            by_name[name].append(code)
-
-    covered: set[str] = set()
-    incomplete: set[str] = set()
-    for member in (story_payload or {}).get("stock_stories") or []:
-        if not isinstance(member, dict):
-            continue
-        raw_code = _code(member.get("code"))
-        name = str(member.get("name") or "").strip()
-        code = raw_code if raw_code in all_records else ""
-        if not code and name and len(by_name.get(name) or []) == 1:
-            code = by_name[name][0]
-        if not code:
-            continue
-        story = str(member.get("story") or "").strip()
-        if story:
-            covered.add(code)
-        else:
-            incomplete.add(code)
-    for group in (story_payload or {}).get("stories") or []:
-        if not isinstance(group, dict):
-            continue
-        for member in group.get("stocks") or []:
-            if not isinstance(member, dict):
-                continue
-            raw_code = _code(member.get("code"))
-            name = str(member.get("name") or "").strip()
-            code = raw_code if raw_code in all_records else ""
-            if not code and name and len(by_name.get(name) or []) == 1:
-                code = by_name[name][0]
-            if not code:
-                continue
-            story = str(member.get("story") or "").strip()
-            if story:
-                covered.add(code)
-            else:
-                incomplete.add(code)
-
-    required = set(all_records)
-    missing = sorted(required - covered)
-    incomplete_rows = sorted(incomplete)
-    return {
-        "stock_story_required_count": len(required),
-        "stock_story_complete_count": len(required - set(missing)),
-        "stock_story_missing_codes": missing,
-        "stock_story_empty_codes": incomplete_rows,
-        "stock_story_complete": not missing and not incomplete_rows,
-    }
-
-
 def _build_day(
     day: str,
     themes: tuple[str, ...],
@@ -505,30 +363,19 @@ def _build_day(
     min_board: int | None = None,
     max_board: int | None = None,
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    kaipanla, limit_pool, story_payload, issues = _load_sources(day)
+    kaipanla, issues = _load_sources(day)
     kpl_by_code = {
         _code(row.get("code")): row for row in (kaipanla or {}).get("stocks") or []
     }
-    limit_by_code = {
-        _code(row.get("code")): row
-        for row in (limit_pool or {}).get("stocks") or []
-    }
-    only_kpl = sorted(set(kpl_by_code) - set(limit_by_code))
-    only_ths = sorted(set(limit_by_code) - set(kpl_by_code))
-    if only_kpl:
-        issues.append({"kind": "stocks_only_in_kaipanla", "codes": only_kpl})
-    if only_ths:
-        issues.append({"kind": "stocks_only_in_ths_limit_pool", "codes": only_ths})
 
     all_records = {
         code: _stock_record(
             day,
             code,
-            kpl_by_code.get(code),
-            limit_by_code.get(code),
+            stock,
             themes,
         )
-        for code in sorted(set(kpl_by_code) | set(limit_by_code))
+        for code, stock in sorted(kpl_by_code.items())
     }
     expanded = _expanded_day_records(
         all_records,
@@ -561,56 +408,12 @@ def _build_day(
             if str(sector.get("name") or "").strip() in requested
         ]
 
-    stories = [dict(item) for item in (story_payload or {}).get("stories") or []]
-    market_story = (story_payload or {}).get("market_story")
-    if isinstance(market_story, dict):
-        stories = [
-            {
-                "source_position": 1,
-                "context": "盘面主流看点",
-                "story": market_story.get("focus"),
-                "headline": market_story.get("headline"),
-                "market_narrative": market_story.get("narrative"),
-            }
-        ]
-    stock_story_records = [
-        dict(item)
-        for item in (story_payload or {}).get("stock_stories") or []
-        if isinstance(item, dict)
-    ]
-    coverage = {
-        **_coverage(day),
-        **_stock_story_coverage(story_payload, all_records),
-    }
-    coverage["fact_ready"] = bool(
-        coverage["fact_ready"] and coverage["stock_story_complete"]
-    )
-    story_view = {
-        "source": (story_payload or {}).get("source"),
-        "source_image": (story_payload or {}).get("source_image"),
-        "records": stories,
-        "contract": "保留同花顺 story 原始记录，不用于覆盖开盘啦个股属性。",
-    }
-    if (story_payload or {}).get("schema_version") == 2:
-        story_view.update(
-            {
-                "source_schema_version": 2,
-                "source_url": (story_payload or {}).get("source_url"),
-                "source_fetched_at": (story_payload or {}).get("source_fetched_at"),
-                "source_components": (story_payload or {}).get("source_components"),
-                "stock_records": stock_story_records,
-                "contract": (
-                    "保留同花顺日级市场叙事和逐股故事原文；"
-                    "两者均不用于覆盖开盘啦个股属性。"
-                ),
-            }
-        )
+    coverage = _coverage(day)
 
     output = {
         "date": day,
         "coverage": coverage,
-        "market": _market_summary(kaipanla, limit_pool),
-        "stories": story_view,
+        "market": _market_summary(kaipanla),
         "source_sector_index": _sector_index(kaipanla),
         **(
             {"matching_source_sector_records": matching_sector_records}
@@ -674,40 +477,13 @@ def _summary_record(record: dict[str, Any]) -> dict[str, Any]:
     facts = record.get("limit_facts") or {}
     attributes = record.get("attributes") or {}
     main_theme = attributes.get("source_main_theme")
-    themes = list(
-        dict.fromkeys(
-            [
-                theme
-                for theme in [
-                    main_theme,
-                    *(attributes.get("source_candidate_themes") or []),
-                ]
-                if theme
-            ]
-        )
-    )
     return {
         "code": record["code"],
         "name": record["name"],
         "boards": facts.get("boards"),
-        "board_type": facts.get("board_type"),
         "main_theme": main_theme,
-        "themes": themes,
+        "themes": [main_theme] if main_theme else [],
         "first_limit_time": facts.get("first_limit_time"),
-    }
-
-
-def _public_theme_stories(value: Any) -> dict[str, Any]:
-    source = value if isinstance(value, dict) else {}
-    records = source.get("records") if isinstance(source.get("records"), list) else []
-    return {
-        **source,
-        "records": [
-            {key: field for key, field in record.items() if key != "stocks"}
-            for record in records
-            if isinstance(record, dict)
-        ],
-        "contract": "默认展示题材故事；逐股故事按需直接读取当日 canonical 故事记录。",
     }
 
 
@@ -715,7 +491,8 @@ def _public_day(output: dict[str, Any]) -> dict[str, Any]:
     market = output.get("market") or {}
     market_keys = (
         "kaipanla_stock_count",
-        "ths_limit_up_count",
+        "limit_up_count",
+        "missing_main_theme_count",
         "first_board_count",
         "higher_board_count",
         "max_boards",
@@ -734,7 +511,6 @@ def _public_day(output: dict[str, Any]) -> dict[str, Any]:
         "market": {key: market[key] for key in market_keys if key in market},
         "source_sector_index": output.get("source_sector_index") or [],
         "source_theme_index": output.get("source_theme_index") or [],
-        "theme_stories": _public_theme_stories(output.get("stories")),
         "expanded_stock_count": output.get("expanded_stock_count") or 0,
         "stocks": [_summary_record(record) for record in output.get("stocks") or []],
         "source_issues": output.get("source_issues") or [],
@@ -742,7 +518,7 @@ def _public_day(output: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_day_component(day_value: str) -> dict[str, Any]:
-    """从 canonical 来源构建完整单日组件，包含原始逐股故事记录。"""
+    """从开盘啦 canonical 日目录构建完整单日组件。"""
     day = _day(day_value)
     output, _, _ = _build_day(day, ())
     return output
@@ -760,8 +536,7 @@ def build_day_facts(
     """按日期构建一个交易日的公开事实。
 
     - 未传筛选：展开当日全市场全部来源股票，包括首板。
-    - theme 精确匹配开盘啦主/候选属性；board 精确匹配同花顺板数。
-    - 默认视图不展开个股故事，需要时直接读取当日 canonical 故事记录。
+    - theme 只精确匹配开盘啦当日主分类；board 精确匹配开盘啦板数。
     """
     day = _day(day_value)
     requested_themes = _clean_themes(themes)
@@ -806,9 +581,9 @@ def build_day_facts(
             "contract": "同维度多值按查询模式组合，不同维度取交集。",
         },
         "source_contract": {
-            "stock_attributes": "kaipanla theme + themes only",
-            "market_and_limit_facts": "tonghuashun limit_pool only",
-            "stories": "tonghuashun stories; stock stories remain in the canonical day record",
+            "provider": "kaipanla_only",
+            "stock_attributes": "kaipanla historical main theme only",
+            "market_and_limit_facts": "kaipanla historical close snapshot",
             "judgement_boundary": "facts_only_no_core_score_or_buy_point",
         },
         "coverage": output["coverage"],
