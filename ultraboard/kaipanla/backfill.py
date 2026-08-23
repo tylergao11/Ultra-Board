@@ -163,6 +163,8 @@ def parse_stock(row: list, pid: int) -> tuple[dict[str, Any] | None, str | None]
         "first_limit_ts": row[4],
         "turnover_rate": row[14],
         "amount": row[11],
+        "circulating_market_cap": row[13],
+        "circulating_market_cap_source": "DailyLimitPerformance.raw[13]",
         "price": row[21],
         "limit_pct": row[22],
         "is_fanbao": False,             # 由 sector_ladder 回填

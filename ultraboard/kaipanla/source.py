@@ -39,6 +39,17 @@ def stock_themes(stock: dict[str, Any]) -> list[str]:
     return [primary] if primary else []
 
 
+def historical_circulating_market_cap(stock: dict[str, Any]) -> int | float:
+    """读取 DailyLimitPerformance 原始行下标 13 的流通市值。"""
+    raw = stock.get("raw")
+    if not isinstance(raw, list) or len(raw) <= 13:
+        raise ValueError(f"开盘啦历史个股缺少流通市值原始字段: {stock.get('code')}")
+    value = raw[13]
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"开盘啦历史个股流通市值非法: {stock.get('code')} {value!r}")
+    return value
+
+
 def load_day(value: str) -> dict[str, Any]:
     """读取一天的开盘啦原始快照，不附加任何交易判断。"""
     day = _day(value)
@@ -67,6 +78,9 @@ def load_day(value: str) -> dict[str, Any]:
             raise ValueError(f"开盘啦个股记录不是对象: {day}")
         stock = dict(source_stock)
         stock["themes"] = stock_themes(stock)
+        if historical_complete:
+            stock["circulating_market_cap"] = historical_circulating_market_cap(stock)
+            stock["circulating_market_cap_source"] = "DailyLimitPerformance.raw[13]"
         normalized_stocks.append(stock)
 
     return {
