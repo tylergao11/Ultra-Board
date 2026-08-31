@@ -212,6 +212,21 @@ class KaipanlaClient:
             day,
         )
 
+    def current_daily_limit_performance(self, pid_type: int) -> dict[str, Any]:
+        """读取最新交易日涨停池分组；日期由个股首封时间与情绪日期闭合。"""
+        return self.post(
+            CURRENT_URL,
+            {
+                "Order": "0",
+                "a": "DailyLimitPerformance",
+                "st": "2000",
+                "c": "HomeDingPan",
+                "Index": "0",
+                "PidType": str(pid_type),
+                "Type": "4",
+            },
+        )
+
     def his_daban_list(self, day: str, type_: int = 4, index: int = 0) -> dict[str, Any]:
         return self.post(
             HIS_URL,

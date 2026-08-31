@@ -2,8 +2,8 @@
 """更新并校验一个完整交易日的原始事实数据。
 
 默认目标是同花顺官方复盘页已经公开的最新交易日；显式 ``--date``
-严格执行指定日期，不自动回退。数据只写入各来源的 canonical 日目录，
-不再生成另一套发布快照。
+严格执行指定日期，不自动回退。最新交易日直接采集当日收盘快照；只有过去
+日期才使用历史回灌。数据只写入各来源的 canonical 日目录。
 """
 
 from __future__ import annotations
@@ -57,7 +57,11 @@ def _update_lock() -> Iterator[None]:
             LOCK_PATH.unlink()
 
 
-def _ensure_kaipanla(day: str) -> dict[str, Any]:
+def _ensure_kaipanla(
+    day: str,
+    *,
+    prefer_current: bool = False,
+) -> dict[str, Any]:
     directory = KPL_RAW_DIR / day
     if (directory / "_MISMATCH").exists():
         raise RuntimeError(f"{day} 开盘啦来源仍有 _MISMATCH，停止发布")
@@ -65,11 +69,7 @@ def _ensure_kaipanla(day: str) -> dict[str, Any]:
     current_snapshot = (directory / "_CURRENT_SNAPSHOT").exists()
     existed = historical_complete or current_snapshot
     if not existed:
-        result = kaipanla_backfill_main(["--start", day, "--end", day])
-        if result != 0:
-            raise RuntimeError(f"{day} 开盘啦采集失败: exit={result}")
-        historical_complete = (directory / "_DONE").exists()
-        if not historical_complete:
+        if prefer_current:
             from ultraboard.kaipanla.current_close import collect as collect_current_close
 
             collect_current_close(
@@ -80,7 +80,14 @@ def _ensure_kaipanla(day: str) -> dict[str, Any]:
                 expected_themes={},
                 height_marks={},
             )
-            current_snapshot = True
+            current_snapshot = (directory / "_CURRENT_SNAPSHOT").exists()
+        else:
+            result = kaipanla_backfill_main(["--start", day, "--end", day])
+            if result != 0:
+                raise RuntimeError(f"{day} 开盘啦采集失败: exit={result}")
+            historical_complete = (directory / "_DONE").exists()
+        if not historical_complete and not current_snapshot:
+            raise RuntimeError(f"{day} 开盘啦日数据未闭合")
     payload = load_kaipanla_day(day)
     print(
         f"{'CHECKED' if existed else 'FETCHED'} {day} "
@@ -126,9 +133,13 @@ def _require_complete_day(day: str) -> dict[str, Any]:
     return component
 
 
-def update_day(day_value: str) -> dict[str, Any]:
+def update_day(
+    day_value: str,
+    *,
+    prefer_current: bool = False,
+) -> dict[str, Any]:
     day = date.fromisoformat(day_value).isoformat()
-    _ensure_kaipanla(day)
+    _ensure_kaipanla(day, prefer_current=prefer_current)
     _ensure_limit_pool(day)
     story_payload, story_action = ensure_story_day(day)
     story_stock_count = len(story_payload.get("stock_stories") or [])
@@ -193,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     mode = "explicit" if args.date else "latest_official_close_recap"
     print(f"TARGET {target} mode={mode}")
     with _update_lock():
-        result = update_day(target)
+        result = update_day(target, prefer_current=target == official_latest)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
