@@ -18,11 +18,17 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from ultraboard.day_facts import build_day_component
+from ultraboard.eastmoney.intraday_ticks import load_day as load_intraday_day
+from ultraboard.eastmoney.intraday_ticks import output_path as intraday_path
 from ultraboard.kaipanla import load_day as load_kaipanla_day
 from ultraboard.kaipanla.backfill import main as kaipanla_backfill_main
 from ultraboard.ths.fupan_stories import ensure_day as ensure_story_day
 from ultraboard.ths.fupan_stories import latest_available_day
 from ultraboard.ths.limit_pool import load_day as load_limit_day
+from ultraboard.ths.open_limit_pool import load_day as load_open_limit_day
+from ultraboard.ths.open_limit_pool import output_path as open_limit_path
+from ultraboard.ths.stock_profiles import load_day as load_profile_day
+from ultraboard.ths.stock_profiles import output_path as profile_path
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -109,6 +115,68 @@ def _ensure_limit_pool(day: str) -> dict[str, Any]:
     return payload
 
 
+def _stock_codes(payload: dict[str, Any]) -> set[str]:
+    return {str(row["code"]) for row in payload.get("stocks") or []}
+
+
+def _ensure_open_limit_pool(day: str) -> dict[str, Any]:
+    existed = open_limit_path(day).exists()
+    payload = load_open_limit_day(day, fetch_missing=True)
+    if payload is None:
+        raise RuntimeError(f"{day} 同花顺炸板池采集后仍不可用")
+    print(
+        f"{'CHECKED' if existed else 'FETCHED'} {day} "
+        f"ths_open_limit_stocks={payload['count']}"
+    )
+    return payload
+
+
+def _ensure_stock_profiles(day: str, expected_codes: set[str]) -> dict[str, Any]:
+    path = profile_path(day)
+    existed = path.exists()
+    payload = load_profile_day(day, fetch_missing=True)
+    if payload is None:
+        raise RuntimeError(f"{day} 同花顺完整概念与地域采集后仍不可用")
+    if _stock_codes(payload) != expected_codes:
+        payload = load_profile_day(day, force=True)
+        assert payload is not None
+    actual_codes = _stock_codes(payload)
+    if actual_codes != expected_codes:
+        raise RuntimeError(
+            f"{day} 同花顺完整资料股票集合不闭合: "
+            f"missing={sorted(expected_codes - actual_codes)} "
+            f"extra={sorted(actual_codes - expected_codes)}"
+        )
+    print(
+        f"{'CHECKED' if existed else 'FETCHED'} {day} "
+        f"ths_stock_profiles={payload['count']}"
+    )
+    return payload
+
+
+def _ensure_intraday_ticks(day: str, expected_codes: set[str]) -> dict[str, Any]:
+    path = intraday_path(day)
+    existed = path.exists()
+    payload = load_intraday_day(day, fetch_missing=True)
+    if payload is None:
+        raise RuntimeError(f"{day} 秒级分时采集后仍不可用")
+    if _stock_codes(payload) != expected_codes:
+        payload = load_intraday_day(day, force=True)
+        assert payload is not None
+    actual_codes = _stock_codes(payload)
+    if actual_codes != expected_codes:
+        raise RuntimeError(
+            f"{day} 秒级分时股票集合不闭合: "
+            f"missing={sorted(expected_codes - actual_codes)} "
+            f"extra={sorted(actual_codes - expected_codes)}"
+        )
+    print(
+        f"{'CHECKED' if existed else 'FETCHED'} {day} "
+        f"eastmoney_intraday_stocks={payload['count']}"
+    )
+    return payload
+
+
 def _require_complete_day(day: str) -> dict[str, Any]:
     component = build_day_component(day)
     coverage = component["coverage"]
@@ -137,10 +205,31 @@ def update_day(
     day_value: str,
     *,
     prefer_current: bool = False,
+    capture_layout_sources: bool = False,
 ) -> dict[str, Any]:
     day = date.fromisoformat(day_value).isoformat()
     _ensure_kaipanla(day, prefer_current=prefer_current)
-    _ensure_limit_pool(day)
+    limit_payload = _ensure_limit_pool(day)
+    layout_source_summary: dict[str, Any] = {
+        "captured": False,
+        "reason": "仅接口最新交易日提供当前完整概念与秒级分时",
+    }
+    if capture_layout_sources:
+        open_payload = _ensure_open_limit_pool(day)
+        expected_codes = _stock_codes(limit_payload) | _stock_codes(open_payload)
+        profile_payload = _ensure_stock_profiles(day, expected_codes)
+        intraday_payload = _ensure_intraday_ticks(day, expected_codes)
+        layout_source_summary = {
+            "captured": True,
+            "stock_universe": "涨停池与炸板池并集",
+            "stock_count": len(expected_codes),
+            "ths_profile_information_cutoff": profile_payload[
+                "information_cutoff"
+            ],
+            "eastmoney_intraday_information_cutoff": intraday_payload[
+                "information_cutoff"
+            ],
+        }
     story_payload, story_action = ensure_story_day(day)
     story_stock_count = len(story_payload.get("stock_stories") or [])
     if not story_stock_count:
@@ -173,6 +262,7 @@ def update_day(
         "target_date": day,
         "market": {key: market.get(key) for key in market_summary_keys},
         "coverage": component["coverage"],
+        "layout_sources": layout_source_summary,
         "story_source": story_payload["source"],
         "facts_verified": True,
     }
@@ -204,7 +294,11 @@ def main(argv: list[str] | None = None) -> int:
     mode = "explicit" if args.date else "latest_official_close_recap"
     print(f"TARGET {target} mode={mode}")
     with _update_lock():
-        result = update_day(target, prefer_current=target == official_latest)
+        result = update_day(
+            target,
+            prefer_current=target == official_latest,
+            capture_layout_sources=target == official_latest,
+        )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

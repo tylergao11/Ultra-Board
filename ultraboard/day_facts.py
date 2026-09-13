@@ -589,7 +589,7 @@ def _build_day(
         "source": (story_payload or {}).get("source"),
         "source_image": (story_payload or {}).get("source_image"),
         "records": stories,
-        "contract": "保留同花顺 story 原始记录，不用于覆盖开盘啦个股属性。",
+        "contract": "保留同花顺 story 原始记录，不用于覆盖任何来源属性。",
     }
     if (story_payload or {}).get("schema_version") == 2:
         story_view.update(
@@ -601,7 +601,7 @@ def _build_day(
                 "stock_records": stock_story_records,
                 "contract": (
                     "保留同花顺日级市场叙事和逐股故事原文；"
-                    "两者均不用于覆盖开盘啦个股属性。"
+                    "两者均不用于覆盖任何来源属性。"
                 ),
             }
         )
@@ -806,7 +806,10 @@ def build_day_facts(
             "contract": "同维度多值按查询模式组合，不同维度取交集。",
         },
         "source_contract": {
-            "stock_attributes": "kaipanla theme + themes only",
+            "stock_attributes": (
+                "kaipanla supplier theme + themes labels only; "
+                "not a complete concept profile"
+            ),
             "market_and_limit_facts": "tonghuashun limit_pool only",
             "stories": "tonghuashun stories; stock stories remain in the canonical day record",
             "judgement_boundary": "facts_only_no_core_score_or_buy_point",

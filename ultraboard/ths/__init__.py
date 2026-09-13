@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
-"""同花顺当日故事与涨停池客观事实。
-
-具体题材分类不属于本包；统一读取 ``ultraboard.kaipanla``。
-"""
+"""同花顺故事、涨停过程、完整概念与公司地域事实。"""
 
 from .stories import load_day as load_stories
 
