@@ -192,6 +192,24 @@ class KaipanlaClient:
         """
         return self.post(HIS_URL, {"a": "GetYTFP_BKHX", "c": "FuPanLa", "Date": day})
 
+    def limit_ladder(self, day: str) -> dict[str, Any]:
+        """涨停天梯；StockList[6] 保留供应商的一字标记。"""
+        return self.post(HIS_URL, {"a": "GetZhangTingTianTi", "c": "FuPanLa", "Date": day})
+
+    def plate_members_page(self, day: str, plate_id: str, index: int = 0) -> dict[str, Any]:
+        """指定日期的板块成分；每页50条，不能把空响应当作零成员。"""
+        return self.post(HIS_URL, {
+            "a": "ZhiShuStockList_W8", "c": "ZhiShuRanking",
+            "Date": day, "PlateID": plate_id, "Index": str(index),
+            "st": "50", "old": "1", "Order": "1", "Type": "6",
+        })
+
+    def stock_concepts(self, code: str) -> dict[str, Any]:
+        """个股当前开盘啦属性及板块编号；不接受历史日期。"""
+        return self.post("https://apparticle.longhuvip.com/w1/api/index.php", {
+            "a": "GetConceptJXBKw23", "c": "StockF10Basic", "StockID": code,
+        })
+
     def daily_limit_performance(self, day: str, pid_type: int) -> dict[str, Any]:
         """涨停池分组。
 
@@ -228,6 +246,7 @@ class KaipanlaClient:
         )
 
     def his_daban_list(self, day: str, type_: int = 4, index: int = 0) -> dict[str, Any]:
+        """PidType=2为炸板列表；不能当作全部涨停或一字名单。"""
         return self.post(
             HIS_URL,
             {

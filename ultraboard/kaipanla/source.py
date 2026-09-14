@@ -31,7 +31,7 @@ def _read(path: Path, *, required: bool = True) -> dict[str, Any] | None:
 
 
 def stock_themes(stock: dict[str, Any]) -> list[str]:
-    """返回开盘啦给出的全部具体分类，保持源顺序并去重。"""
+    """保留涨停池主分类和附带标签；不是股票完整属性或板块成员关系。"""
     candidates: list[str] = []
     primary = str(stock.get("theme") or "").strip()
     if primary:
