@@ -196,6 +196,22 @@ class KaipanlaClient:
         """涨停天梯；StockList[6] 保留供应商的一字标记。"""
         return self.post(HIS_URL, {"a": "GetZhangTingTianTi", "c": "FuPanLa", "Date": day})
 
+    def history_limit_resumption(self, day: str, index: int = 0) -> dict[str, Any]:
+        """历史复盘催化；HisLimitResumption 与最新原因接口是不同入口。"""
+        return self.post(HIS_URL, {
+            "a": "GetPlateInfo_w38", "c": "HisLimitResumption",
+            "Date": day, "st": "100", "Index": str(index),
+        })
+
+    def history_failed_limits(self, day: str, index: int = 0) -> dict[str, Any]:
+        """新版历史炸板池；raw[6]不可认作首次触板，不提供逐次流水。"""
+        return self.post("https://apphis.kaipanhong.com/w1/api/index.php", {
+            "a": "HisDaBanList", "c": "HisHomeDingPan", "Order": "1",
+            "st": "50", "Index": str(index), "Is_st": "1", "PidType": "2", "Type": "6",
+            "FilterMotherboard": "0", "Filter": "0", "FilterTIB": "0", "FilterGem": "0",
+            "VerSion": "6.0.6", "apiv": "w45", "Red": "1", "UserID": "0", "Token": "0",
+        }, day)
+
     def plate_members_page(self, day: str, plate_id: str, index: int = 0) -> dict[str, Any]:
         """指定日期的板块成分；每页50条，不能把空响应当作零成员。"""
         return self.post(HIS_URL, {

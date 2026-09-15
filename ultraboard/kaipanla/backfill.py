@@ -296,10 +296,9 @@ def pull_one_day(
             # 假期或当日未入库。不同采集源彼此独立，绝不删除同日已有原始证据。
             if dd.exists() and not any(dd.iterdir()):
                 dd.rmdir()
-            if d < date.today():
-                non_trading.add(day)
-                _write_json(NON_TRADING_PATH, sorted(non_trading))
-            return "skip", None
+            if day in non_trading:
+                return "skip", None
+            return "fail", f"{day} 来源尚未入库；不能把接口缺数据登记成休市"
         return "fail", f"{day} sentiment 失败: {sentiment.get('errmsg') or sentiment.get('errcode')}"
 
     expression = client.zhangting_expression(day)

@@ -11,6 +11,7 @@ from typing import Any
 
 from .client import CN_TZ, HIS_URL, KaipanlaClient, ok
 from .source import load_day
+from . import membership_store
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT / "data" / "kaipanla"
@@ -28,13 +29,25 @@ def _id(value: str) -> str:
 
 
 def _read(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    body = json.loads(path.read_text(encoding="utf-8-sig"))
+    if isinstance(body, dict) and '$price_store' in body:
+        from ultraboard.price_store import read
+        return read(body)
+    if isinstance(body, dict) and body.get("_market_storage") == 1:
+        from ultraboard.market_storage import expand
+        return expand(body)
+    return body
 
 
 def _write(path: Path, body: dict[str, Any]) -> None:
+    from ultraboard.price_store import write
+    body = write(path, body)
+    if path.parent.resolve() == (ROOT / "data" / "replay" / "market").resolve():
+        from ultraboard.market_storage import compact
+        body = compact(body)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(body, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.write_text(json.dumps(body, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     os.replace(temporary, path)
 
 
@@ -84,6 +97,9 @@ def _member_snapshot(day: str, plate_id: str, pages: list[dict[str, Any]]) -> di
 
 def plate_members(day: str, plate_id: str) -> dict[str, Any]:
     day, plate_id = _day(day), _id(plate_id)
+    compact = membership_store.snapshot(day, plate_id)
+    if compact is not None:
+        return compact
     path = DATA_DIR / "plate_members" / day / f"{plate_id}.json"
     if path.exists():
         body = _read(path)
@@ -110,7 +126,7 @@ def plate_members(day: str, plate_id: str) -> dict[str, Any]:
         if len(rows) != PAGE_SIZE:
             raise RuntimeError("板块成员分页提前结束")
     snapshot = _member_snapshot(day, plate_id, pages)
-    _write(path, snapshot)
+    membership_store.put(day, plate_id, snapshot)
     return snapshot
 
 
@@ -123,7 +139,7 @@ def breadth(day: str, plate_id: str) -> dict[str, Any]:
         if code not in pool:
             continue
         row = pool[code]
-        if abs(float(member["price"]) - float(row["price"])) > 0.005:
+        if member.get("price") is not None and row.get("price") is not None and abs(float(member["price"]) - float(row["price"])) > 0.005:
             raise RuntimeError(f"{day} {code} 板块行情与当日涨停池价格不一致")
         stocks.append({"code": code, "name": row["name"], "boards": row["boards"]})
     stocks.sort(key=lambda row: (-row["boards"], row["code"]))
