@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import ctypes
 import msvcrt
 import re
+import json
 import sys
 import time
 
@@ -182,13 +183,62 @@ def fill_times(days, attempts):
     _write(error_path, {"errors": errors})
 
 
+def update_market(days):
+    from ultraboard.ths import limit_pool, open_limit_pool
+    def fetch(day):
+        if (OUT / 'market' / f'{day}.json').exists():return
+        for provider in (limit_pool, open_limit_pool):
+            try:provider.load_day(day, fetch_missing=True)
+            except Exception as exc:
+                print('同花顺缺项，使用已有补缺流程',day,provider.__name__,repr(exc),flush=True)
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        list(pool.map(fetch,days))
+    run_market(days)
+
+
+def plan_days(args, now=None):
+    now = now or datetime.now(CN_TZ)
+    cutoff = (now.date() if now.hour >= 16 else now.date() - timedelta(days=1)).isoformat()
+    end = args.end or cutoff
+    if end > cutoff:
+        raise ValueError('请求日期尚未到收盘更新时间（北京时间16点）')
+    report = OUT / 'coverage.json'
+    saved = _read(report) if report.exists() else None
+    start = args.start or (saved['start'] if saved else min((p.parent.name for p in RAW.glob('*/zt_pool.json')), default=None))
+    if start is None:
+        raise ValueError('首次建库需要 --start YYYY-MM-DD')
+    if start > end:
+        raise ValueError('开始日期晚于结束日期')
+    calendar = trading_days(start, end)
+    if not args.daily or args.start or not saved:
+        return calendar
+    pending = {d for d in calendar if d > saved['end']}
+    for entries in saved['gaps'].values():
+        for entry in entries:
+            day = entry if isinstance(entry,str) else entry['date'] if isinstance(entry,dict) else entry[0]
+            if day in calendar: pending.add(day)
+    # 包含紧邻前日，供昨日涨停股价格及细分前后比较使用；不扩成全历史扫描。
+    indices = {d:i for i,d in enumerate(calendar)}
+    selected = set(pending)
+    for day in pending:
+        index = indices[day]
+        if index: selected.add(calendar[index-1])
+    return sorted(selected)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--daily", action="store_true", help="只处理新增和已知缺失日期")
+    parser.add_argument("--check", action="store_true", help="只输出更新计划，不联网、不写数据")
     parser.add_argument("--start")
     parser.add_argument("--end")
     parser.add_argument("--wait-pid", type=int)
     parser.add_argument("--attempts", type=int, choices=(1, 2, 3), default=2)
     args = parser.parse_args()
+    days = plan_days(args)
+    if args.check or not days:
+        print(json.dumps({'status':'planned' if days else 'up_to_date', 'dates':days},separators=(',',':')))
+        return 0
     OUT.mkdir(parents=True, exist_ok=True)
     with (OUT / "complete.lock").open("a+b") as lock:
         if lock.tell() == 0:
@@ -203,10 +253,11 @@ def main():
                 if args.wait_pid:
                     state("waiting_existing_batch", pid=args.wait_pid)
                     wait_process(args.wait_pid)
-                now = datetime.now(CN_TZ)
-                end = args.end or (now.date() if now.hour >= 16 else now.date() - timedelta(days=1)).isoformat()
-                start = args.start or min(p.parent.name for p in RAW.glob("*/zt_pool.json"))
-                days = trading_days(start, end)
+                # 取得锁后重新计划，避免另一批刚完成后重复补采。
+                days = plan_days(args)
+                if not days:
+                    state('up_to_date')
+                    return 0
                 state("scan")
                 gaps = audit(days)["gaps"]
                 errors = []
@@ -221,24 +272,14 @@ def main():
                 if any(gaps[k] for k in ("pool", "ladder", "reasons")):
                     run("kaipanla", lambda: run_kpl(days))
                 if gaps["market"] or gaps["seal_action"]:
-                    run("market", lambda: run_market(days))
+                    run("market", lambda: update_market(days))
+                if any(gaps[k] for k in ('pool','ladder','reasons','market','seal_action')):
+                    # 新池决定本日个股与价格需求，必须在来源阶段完成后计算。
+                    gaps = audit(days)['gaps']
                 if gaps["first_limit_attack_time"]:
                     run("first_limit_times", lambda: fill_times(days, args.attempts))
                 if gaps["prices"]:
-                    def prices():
-                        tasks = {(code, int(item["date"][:4]), item["date"])
-                                 for item in gaps["prices"] for code in item["missing_codes"]}
-                        for _ in range(args.attempts):
-                            failed = []
-                            with ThreadPoolExecutor(max_workers=4) as pool:
-                                for task, result in zip(tasks, pool.map(fetch_year, tasks)):
-                                    if result[1]:
-                                        print(result, flush=True)
-                                        failed.append(task)
-                            tasks = failed
-                            if not tasks: break
-                        run_prices(days, fetch=False)
-                    run("prices", prices)
+                    run("prices", lambda: run_prices(days))
                     run("suspensions", lambda: run_status(days))
                 if gaps["opening_reference"] or gaps["prices"]:
                     run("references", lambda: run_references(days))
@@ -250,7 +291,13 @@ def main():
                 # 零缺项也仅代表字段齐备，不冒充全部来源口径已验收。
                 state("needs_attention" if errors or any(counts.values()) else "ready_for_review",
                       gaps=counts, failed_stages=errors, report="data/replay/coverage.json")
-                return 2 if errors or any(counts.values()) else 0
+                code = 2 if errors or any(counts.values()) else 0
+                # 日志留文件，终端只输出最终机器可读状态。
+                with redirect_stdout(sys.__stdout__):
+                    print(json.dumps({'status':'needs_attention' if code else 'complete',
+                                      'dates':days,'gaps':counts,'failed_stages':errors,
+                                      'report':'data/replay/coverage.json'},separators=(',',':')),flush=True)
+                return code
             except Exception as exc:
                 state("failed", error=repr(exc))
                 raise

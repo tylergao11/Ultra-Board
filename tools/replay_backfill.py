@@ -284,7 +284,25 @@ def audit(days: list[str]) -> dict:
               "complete": False,
               "required_fields_complete": not any(gaps.values()),
               "note": "炸板首次触板时间允许为空，列于optional_missing；历史成员为供应商补采返回版本。字段齐备不等同于历史当日快照。"}
-    _write(OUT / "coverage.json", result)
+    report = OUT / 'coverage.json'
+    combined = result
+    if report.exists():
+        previous = _read(report)
+        if previous.get('start') and previous.get('end'):
+            touched=set(days)
+            def item_day(item):
+                return item if isinstance(item,str) else item['date'] if isinstance(item,dict) else item[0]
+            combined={**result, 'start':min(previous['start'],result['start']), 'end':max(previous['end'],result['end'])}
+            combined['trade_days']=len(trading_days(combined['start'],combined['end']))
+            for section in ('gaps','optional_missing'):
+                combined[section]={key:sorted([item for item in previous.get(section,{}).get(key,[]) if item_day(item) not in touched]+items,key=item_day)
+                                   for key,items in result[section].items()}
+            for unscanned in trading_days(combined['start'],combined['end']):
+                if unscanned not in touched and not previous['start'] <= unscanned <= previous['end']:
+                    combined['gaps']['pool'].append({'date':unscanned,'error':'not_checked'})
+            combined['gaps']['pool'].sort(key=item_day)
+            combined['required_fields_complete']=not any(combined['gaps'].values())
+    _write(report, combined)
     print("日期", days[0], days[-1], "缺口", {k: len(v) for k, v in gaps.items()}, flush=True)
     return result
 

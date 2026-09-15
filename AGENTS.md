@@ -60,7 +60,7 @@ query(day, code=code, fields=("code", "open_pct", "first_limit_time", "has_resea
 - 行情采用已保存的同花顺主源、打板客补缺结果；开收盘价来自同花顺未复权行情，开盘涨幅使用对应参考价。读取时不重新比对来源或记录差异。
 - 以“交易日＋股票代码”组织事实。价格只存 `data/stock_prices/年份.sqlite3`，年行情和每日价格文件只作映射；成员关系只存个股到细分编号，查询时计算交集。
 - 催化组解释只存或返回一次，个股引用组编号；禁止按题材重复保存成员行情，也不保存可重算的数量、时间格式和派生状态副本。
-- 维护数据时，迁移后回读验证，再删除旧副本；统一补缺入口是 `tools/replay_complete.py`。维护完成按用户授权直接提交推送当前分支，不把维护任务夹进复盘讨论。
+- 维护数据时，迁移后回读验证，再删除旧副本；每日新增与补缺统一调用 `python tools/update_data.py`（或 `npm run data:update`）。维护完成按用户授权直接提交推送当前分支，不把维护任务夹进复盘讨论。
 
 ## 当前状态
 
@@ -90,3 +90,11 @@ query(day, code=code, fields=("code", "open_pct", "first_limit_time", "has_resea
 
 - [数据基建](docs/数据基建.md)：本地接口、字段、维护入口与已知限制；其中旧交易讨论不构成当前规则。
 - [节点接力复盘接续](docs/节点接力复盘接续.md)：接续记录；与当前指示冲突时以当前指示为准。
+
+## 每日数据更新
+
+- 用户要求更新数据时，直接运行 `python tools/update_data.py`。脚本按本地交易日历，补齐已收盘的新日期和覆盖报告中的必需缺口；北京时间16点前不纳入当天。
+- `python tools/update_data.py --check` 只显示待处理日期，不联网、不写数据。历史范围补缺用 `--start YYYY-MM-DD --end YYYY-MM-DD`；不带范围为日常增量。
+- 脚本自行执行来源、行情、价格、停牌/参考价、成员及最终检查；包含必要前日上下文。后续 Agent 不自行反复扫描、拆分补采或另写脚本。
+- 已完整时直接返回 `up_to_date`；成功返回 `complete`，缺必需数据返回 `needs_attention` 且退出码为2。错误与进度见 `data/replay/complete.log`、`complete_state.json`；汇总见 `coverage.json`，旧日期覆盖保留。
+- 失败后重跑同一入口续补；已允许为空的炸板首次触板时间不进入补采计划。缺下一年交易日历时明确报错，不能自行把工作日当交易日。
