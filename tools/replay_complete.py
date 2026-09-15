@@ -15,7 +15,7 @@ import time
 from bs4 import BeautifulSoup
 import requests
 
-from replay_backfill import RAW, OUT, CN_TZ, audit, trading_days, run_kpl, run_members
+from replay_backfill import RAW, OUT, CN_TZ, audit, trading_days, run_kpl, run_members, MEMBER_SCOPE_VERSION
 from replay_sources import DATA, fetch_year, run_prices, run_market, market_day, add_seal_actions, stamp
 from replay_status import run_status
 from replay_reference import run_references
@@ -213,6 +213,8 @@ def plan_days(args, now=None):
     if not args.daily or args.start or not saved:
         return calendar
     pending = {d for d in calendar if d > saved['end']}
+    checked = set(saved.get('member_scope_checked_dates', [])) if saved.get('member_scope_version') == MEMBER_SCOPE_VERSION else set()
+    pending.update(set(calendar) - checked)
     for entries in saved['gaps'].values():
         for entry in entries:
             day = entry if isinstance(entry,str) else entry['date'] if isinstance(entry,dict) else entry[0]
@@ -283,7 +285,7 @@ def main():
                     run("suspensions", lambda: run_status(days))
                 if gaps["opening_reference"] or gaps["prices"]:
                     run("references", lambda: run_references(days))
-                if gaps["members"] or gaps["breadth"] or gaps["pool"] or gaps["reasons"]:
+                if gaps["member_names"] or gaps["members"] or gaps["breadth"] or gaps["pool"] or gaps["reasons"]:
                     run("members", lambda: run_members(days, attempts=args.attempts))
                 state("final_scan")
                 final = audit(days)

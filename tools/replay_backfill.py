@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -19,6 +20,7 @@ DATA = ROOT / "data"
 KPL = DATA / "kaipanla"
 RAW = KPL / "raw"
 OUT = DATA / "replay"
+MEMBER_SCOPE_VERSION = 2
 
 
 def trading_days(start: str, end: str) -> list[str]:
@@ -100,22 +102,72 @@ def import_members() -> int:
     return count
 
 
+def catalyst_names(days):
+    """当前概念缓存只提供名称到编号，不用当前说明认定历史属性。"""
+    names = {}
+    for path in sorted((KPL / 'concepts_current').glob('*/*.json')):
+        for item in _read(path).get('concepts', []):
+            name, code = item.get('CName', '').strip(), str(item.get('CCode', ''))
+            if name and len(code) == 6 and code.isdigit():
+                names.setdefault(name, set()).add(code)
+    for day in days:
+        path = RAW / day / 'history_limit_resumption.json'
+        for group in (_read(path) if path.exists() else {}).get('list', []):
+            codes = str(group.get('ZSCode', '')).split(',')
+            labels = str(group.get('ZSName', '')).split(',')
+            for code, label in zip(codes, labels):
+                if len(code) == 6 and code.isdigit():
+                    names.setdefault(label.strip(), set()).add(code)
+    return names
+
+
+def catalyst_members(days):
+    """从催化标题提取实际出现的名称，括号内细分不能被栏目大类吞掉。"""
+    names = catalyst_names(days)
+    needed, unresolved = set(), []
+    for day in days:
+        path = RAW / day / 'history_limit_resumption.json'
+        for group in (_read(path) if path.exists() else {}).get('list', []):
+            for row in group.get('StockList', []):
+                header = str(row[17]).split('；', 1)[0].split('\n', 1)[0]
+                inner = {name.strip() for part in re.findall(r'[（(]([^()（）]+)[）)]', header)
+                         for name in re.split(r'[+＋,，、]', part)}
+                for name in set(re.split(r'[+＋()（）,，、]', header)):
+                    name = name.strip()
+                    if not name:
+                        continue
+                    codes = names.get(name, set())
+                    if len(codes) == 1:
+                        needed.add((day, next(iter(codes))))
+                    elif name in inner or len(codes) > 1:
+                        unresolved.append({'date': day, 'code': str(row[0]), 'name': name,
+                                           'error': '细分名称未对应唯一开盘啦编号'})
+    return needed, unresolved
+
+
 def member_plan(days: list[str]) -> list[tuple[str, str]]:
-    """当日来源实际出现的细分及前一交易日；不抓未出现的全市场概念。"""
+    """栏目编号及催化实际细分；两者都采集前一交易日用于同口径比较。"""
     needed = set()
+    fine, _ = catalyst_members(days)
     for index, day in enumerate(days):
-        codes = set()
+        previous = None
+        if index:
+            previous = date.fromisoformat(day) - timedelta(days=1)
+            while not trading_days(previous.isoformat(), previous.isoformat()):
+                previous -= timedelta(days=1)
+        codes = {plate for d, plate in fine if d == day}
         pool_path = RAW / day / "zt_pool.json"
         if pool_path.exists():
             codes.update(str(x.get("sector_code", "")) for x in _read(pool_path)["stocks"])
         reason_path = RAW / day / "history_limit_resumption.json"
         if reason_path.exists():
-            codes.update(str(x.get("ZSCode", "")) for x in _read(reason_path).get("list", []))
+            codes.update(code for x in _read(reason_path).get("list", [])
+                         for code in str(x.get("ZSCode", "")).split(','))
         for code in codes:
             if len(code) == 6 and code.isdigit():
                 needed.add((day, code))
-                if index:
-                    needed.add((days[index - 1], code))
+                if previous is not None:
+                    needed.add((previous.isoformat(), code))
     return sorted(needed)
 
 
@@ -123,6 +175,11 @@ def run_members(days: list[str], attempts: int = 2) -> None:
     from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
     import threading
     import_members()
+    # 只有名称映射不足时才补查相关股票的开盘啦概念，已有缓存由原接口复用。
+    from ultraboard.kaipanla.query import concepts
+    _, unresolved = catalyst_members(days)
+    for code in sorted({item['code'] for item in unresolved}):
+        concepts(code)
     full_plan = member_plan(days)
     plan = []
     for day, plate in full_plan:
@@ -138,7 +195,7 @@ def run_members(days: list[str], attempts: int = 2) -> None:
             plan.append((day, plate))
     print("成员计划", len(plan), "已有", sum((KPL / "plate_members" / d / f"{p}.json").exists() for d, p in plan), flush=True)
     _write(OUT / "member_plan.json", {"start": days[0], "end": days[-1], "requests": plan,
-                                    "scope": "daily source sector IDs with one previous trading day"})
+                                    "scope": "source sector IDs and catalyst names with previous trading day"})
     local = threading.local()
 
     def one(job):
@@ -221,7 +278,8 @@ def run_members(days: list[str], attempts: int = 2) -> None:
 def audit(days: list[str]) -> dict:
     from replay_sources import price_requirements
     optional_times = []
-    gaps = {key: [] for key in ("pool", "ladder", "reasons", "market", "seal_action", "first_limit_attack_time", "prices", "opening_reference", "members", "breadth")}
+    gaps = {key: [] for key in ("pool", "ladder", "reasons", "market", "seal_action", "first_limit_attack_time", "prices", "opening_reference", "member_names", "members", "breadth")}
+    _, gaps['member_names'] = catalyst_members(days)
     required_prices = {}
     for code, dates in price_requirements(days).items():
         for day in dates:
@@ -279,6 +337,8 @@ def audit(days: list[str]) -> dict:
         if membership_store.snapshot(day, plate) is None and (not breadth_path.exists() or _read(breadth_path).get("limit_count") is None):
             gaps["breadth"].append([day, plate])
     result = {"start": days[0], "end": days[-1], "trade_days": len(days),
+              "member_scope_version": MEMBER_SCOPE_VERSION,
+              "member_scope_checked_dates": days,
               "checked_at": datetime.now(CN_TZ).isoformat(), "gaps": gaps,
               "optional_missing": {"failed_limit_first_touch_time": optional_times},
               "complete": False,
@@ -293,6 +353,8 @@ def audit(days: list[str]) -> dict:
             def item_day(item):
                 return item if isinstance(item,str) else item['date'] if isinstance(item,dict) else item[0]
             combined={**result, 'start':min(previous['start'],result['start']), 'end':max(previous['end'],result['end'])}
+            checked = previous.get('member_scope_checked_dates', []) if previous.get('member_scope_version') == MEMBER_SCOPE_VERSION else []
+            combined['member_scope_checked_dates'] = sorted(set(checked) | touched)
             combined['trade_days']=len(trading_days(combined['start'],combined['end']))
             for section in ('gaps','optional_missing'):
                 combined[section]={key:sorted([item for item in previous.get(section,{}).get(key,[]) if item_day(item) not in touched]+items,key=item_day)
@@ -302,6 +364,9 @@ def audit(days: list[str]) -> dict:
                     combined['gaps']['pool'].append({'date':unscanned,'error':'not_checked'})
             combined['gaps']['pool'].sort(key=item_day)
             combined['required_fields_complete']=not any(combined['gaps'].values())
+    unchecked = set(trading_days(combined['start'], combined['end'])) - set(combined['member_scope_checked_dates'])
+    combined['member_scope_unchecked_days'] = len(unchecked)
+    combined['required_fields_complete'] = combined['required_fields_complete'] and not unchecked
     _write(report, combined)
     print("日期", days[0], days[-1], "缺口", {k: len(v) for k, v in gaps.items()}, flush=True)
     return result

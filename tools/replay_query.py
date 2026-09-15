@@ -70,6 +70,7 @@ def query_raw(day: str, code: str | None = None, plate: str | None = None, *, fi
             result["breadth"] = {**breadth, "source_path": str(breadth_path.relative_to(ROOT))}
         else:
             result["breadth"] = {"plate_id": plate, "missing": "breadth", "limit_count": None}
+            result['missing_components'].append('plate_members:' + plate)
     return result
 
 
@@ -132,6 +133,9 @@ def query(day, code=None, plate=None, *, fields=None, pool=None):
     if plate:
         b=raw.get('breadth',{})
         result['plate']={'id':plate,'member_count':b.get('member_count'),'limit_count':b.get('limit_count')}
+        if b.get('limit_count') is None:
+            result['plate']['status'] = 'needs_data'
+            result['plate']['reason'] = '该日期的完整细分成员或涨停池未齐备，空列表不表示零只涨停'
     return result
 
 
