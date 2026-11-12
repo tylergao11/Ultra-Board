@@ -13,6 +13,7 @@ import tempfile
 import zipfile
 
 from research.system import ResearchStore, json_text, now_text, sha256_bytes, sha256_file
+from research.batch import commit_batch, load_and_verify, prepare_batch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,9 +36,9 @@ def main() -> None:
     baseline.add_argument("--output", default="data/store/migrations/baseline-20261112-initial")
 
     sub.add_parser("migrate", help="run or reuse the complete migration")
-    sub.add_parser("sync-rules", help="synchronize current versioned rules without reimporting data")
-    sub.add_parser("summary", help="show database counts and active versions")
-    sub.add_parser("rules", help="show current versioned research rules")
+    sub.add_parser("sync-rules", help="synchronize the current rule files without reimporting data")
+    sub.add_parser("summary", help="show current database counts")
+    sub.add_parser("rules", help="show the current research rules")
 
     stock = sub.add_parser("stock", help="query a stock file")
     stock.add_argument("--code", required=True)
@@ -50,8 +51,7 @@ def main() -> None:
     pool.add_argument("--type", required=True)
     pool.add_argument("--date", required=True)
     pool.add_argument("--record-key")
-    pool.add_argument("--input-version", help="defaults to the current import batch; use 'all' for history")
-    pool.add_argument("--rule-version")
+    pool.add_argument("--input-batch", dest="input_version", help="defaults to the current imported data")
 
     research = sub.add_parser("research", help="query a complete research record")
     research.add_argument("--record-key", required=True)
@@ -64,8 +64,25 @@ def main() -> None:
     impact = sub.add_parser("impact", help="locate research affected by a stock, source, date or rule object")
     impact.add_argument("--object", required=True)
 
-    write = sub.add_parser("write", help="transactionally submit a versioned research revision")
-    write.add_argument("--input", required=True, help="UTF-8 JSON request file")
+    write = sub.add_parser("write", help="submit a research conclusion using the current rules")
+    write.add_argument("--input", required=True, help="UTF-8 JSON request object or request array")
+
+    batch_prepare = sub.add_parser("batch-prepare", help="prepare one lightweight research batch and decision template")
+    batch_prepare.add_argument("--output", required=True, help="output directory for facts.json and decisions.json")
+    batch_prepare.add_argument("--limit", type=int, default=10)
+    batch_prepare.add_argument("--year", type=int)
+    batch_prepare.add_argument("--record-key", action="append", dest="record_keys")
+    batch_prepare.add_argument("--hydrate-current", action="store_true", help="fill the template from current conclusions for audit or replay")
+
+    batch_commit = sub.add_parser("batch-commit", help="commit a compact decision file and run fast batch verification")
+    batch_commit.add_argument("--facts", required=True)
+    batch_commit.add_argument("--decisions", required=True)
+    batch_commit.add_argument("--no-publish", action="store_true", help="skip regenerating the two display tables")
+
+    batch_verify = sub.add_parser("batch-verify", help="run the fast per-batch database gate")
+    batch_verify.add_argument("--facts", required=True)
+    batch_verify.add_argument("--decisions", required=True)
+    batch_verify.add_argument("--set-cursor", action="store_true", help="record this verified batch as the current research cursor")
 
     export = sub.add_parser("export", help="generate compact tables, CSV and statistics")
     export.add_argument("--output-root")
@@ -116,8 +133,7 @@ def main() -> None:
             "database": str(store.db_path),
             "database_size": store.db_path.stat().st_size if store.db_path.exists() else 0,
             "tables": {name: connection.execute(f"SELECT COUNT(*) AS c FROM {name}").fetchone()["c"] for name in tables},
-            "current_batch": connection.execute("SELECT value FROM store_meta WHERE key='current_batch_key'").fetchone()["value"],
-            "rules": {row["rule_type"]: row["version"] for row in connection.execute("SELECT rule_type,version FROM rule_sets WHERE status='current'")},
+            "rules": {row["rule_type"]: row["source_path"] for row in connection.execute("SELECT rule_type,source_path FROM rule_sets WHERE status='current'")},
         }
         connection.close()
         emit(result)
@@ -128,7 +144,7 @@ def main() -> None:
     elif args.command == "attributes":
         emit(store.query_attributes(args.code, args.date))
     elif args.command == "pool":
-        emit(store.query_pool(args.type, args.date, args.record_key, args.input_version, args.rule_version))
+        emit(store.query_pool(args.type, args.date, args.record_key, args.input_version, None))
     elif args.command == "research":
         emit(store.query_research(args.record_key, args.plan))
     elif args.command == "issues":
@@ -136,7 +152,34 @@ def main() -> None:
     elif args.command == "impact":
         emit(store.query_impact(args.object))
     elif args.command == "write":
-        emit(store.write_research(json.loads((ROOT / args.input).read_text(encoding="utf-8"))))
+        payload = json.loads((ROOT / args.input).read_text(encoding="utf-8"))
+        if isinstance(payload, list):
+            emit([store.write_research(item) for item in payload])
+        else:
+            emit(store.write_research(payload))
+    elif args.command == "batch-prepare":
+        emit(prepare_batch(
+            store,
+            ROOT / args.output,
+            limit=args.limit,
+            year=args.year,
+            record_keys=args.record_keys,
+            hydrate_current=args.hydrate_current,
+        ))
+    elif args.command == "batch-commit":
+        emit(commit_batch(
+            store,
+            ROOT / args.facts,
+            ROOT / args.decisions,
+            publish=not args.no_publish,
+        ))
+    elif args.command == "batch-verify":
+        emit(load_and_verify(
+            store,
+            ROOT / args.facts,
+            ROOT / args.decisions,
+            set_cursor=args.set_cursor,
+        ))
     elif args.command == "export":
         emit(store.export_all(ROOT / args.output_root if args.output_root else None, args.publish_root))
     elif args.command == "verify":

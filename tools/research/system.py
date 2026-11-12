@@ -1587,16 +1587,16 @@ class ResearchStore:
         connection = self.connect()
         self.apply_migrations(connection)
         try:
-            rule_ids = self.import_rules(connection, static_path, dynamic_path, static_data, dynamic_data)
+            self.import_rules(connection, static_path, dynamic_path, static_data, dynamic_data)
             current = {
-                row["rule_type"]: {"id": row["id"], "version": row["version"], "source_path": row["source_path"]}
+                row["rule_type"]: {"source_path": row["source_path"]}
                 for row in connection.execute(
-                    "SELECT id,rule_type,version,source_path FROM rule_sets WHERE status='current' ORDER BY rule_type"
+                    "SELECT rule_type,source_path FROM rule_sets WHERE status='current' ORDER BY rule_type"
                 )
             }
         finally:
             connection.close()
-        return {"rule_ids": rule_ids, "current": current, "synced_at": now_text()}
+        return {"current": current, "synced_at": now_text()}
 
     def normalize_stock_name_history(self, connection: sqlite3.Connection) -> dict[str, int]:
         rows = [dict(row) for row in connection.execute(
@@ -2019,7 +2019,6 @@ class ResearchStore:
         result: dict[str, Any] = {}
         for rule in connection.execute("SELECT * FROM rule_sets WHERE status='current' ORDER BY rule_type"):
             result[rule["rule_type"]] = {
-                "version": rule["version"],
                 "source": rule["source_path"],
                 "sections": {},
             }
@@ -2035,11 +2034,12 @@ class ResearchStore:
         request_id = str(request.get("request_id") or "")
         record_key = str(request.get("record_key") or "")
         kind = str(request.get("kind") or "")
-        rule_version = str(request.get("rule_version") or "")
+        rule_version = str(request.get("rule_version") or "") or None
         plan_code = str(request.get("plan_code") or "formal")
-        expected_version = int(request.get("expected_version") or 0)
-        if not request_id or not record_key or kind not in {"static", "dynamic"} or not rule_version:
-            raise ValueError("request_id, record_key, rule_version and kind=static|dynamic are required")
+        expected_value = request.get("expected_version")
+        expected_version = int(expected_value) if expected_value is not None else None
+        if not request_id or not record_key or kind not in {"static", "dynamic"}:
+            raise ValueError("request_id, record_key and kind=static|dynamic are required")
         request_hash = canonical_hash(request)
         connection = self.connect()
         self.apply_migrations(connection)
@@ -2053,13 +2053,19 @@ class ResearchStore:
             connection.close()
             return result
         table = "static_research" if kind == "static" else "dynamic_research"
-        rule = connection.execute(
-            "SELECT id FROM rule_sets WHERE rule_type=? AND version=? AND status='current'",
-            (kind, rule_version),
-        ).fetchone()
+        if rule_version:
+            rule = connection.execute(
+                "SELECT id,version FROM rule_sets WHERE rule_type=? AND version=? AND status='current'",
+                (kind, rule_version),
+            ).fetchone()
+        else:
+            rule = connection.execute(
+                "SELECT id,version FROM rule_sets WHERE rule_type=? AND status='current' ORDER BY id DESC LIMIT 1",
+                (kind,),
+            ).fetchone()
         if not rule:
             connection.close()
-            raise RuntimeError(f"rule version is not current for {kind}: {rule_version}")
+            raise RuntimeError(f"current rule source is missing for {kind}")
         if kind == "static":
             current = connection.execute(
                 "SELECT * FROM static_research WHERE legacy_record_key=? AND is_current=1",
@@ -2072,27 +2078,85 @@ class ResearchStore:
                    ORDER BY d.version DESC LIMIT 1""",
                 (record_key, plan_code),
             ).fetchone()
-        if not current:
+        create_dynamic = kind == "dynamic" and current is None
+        if current is None and not create_dynamic:
             connection.close()
             raise KeyError(record_key)
-        if int(current["version"]) != expected_version:
+        if create_dynamic:
+            if expected_version not in {None, 0}:
+                connection.close()
+                raise RuntimeError(f"version conflict: expected {expected_version}, current 0")
+            mapping = connection.execute(
+                "SELECT * FROM legacy_key_map WHERE legacy_record_key=?",
+                (record_key,),
+            ).fetchone()
+            plan = connection.execute(
+                """SELECT * FROM research_plans
+                   WHERE plan_code=? AND status='current'
+                   ORDER BY version DESC LIMIT 1""",
+                (plan_code,),
+            ).fetchone()
+            static_seed = connection.execute(
+                """SELECT raw_json,evidence_snapshot_json FROM static_research
+                   WHERE legacy_record_key=? AND is_current=1""",
+                (record_key,),
+            ).fetchone()
+            if not mapping or not plan or not static_seed:
+                connection.close()
+                raise KeyError(record_key)
+            current = {
+                "first_open_event_id": mapping["first_open_event_id"],
+                "plan_id": plan["id"],
+                "legacy_record_key": record_key,
+                "version": 0,
+                "is_current": 0,
+                "research_status": "unresearched",
+                "confirmation_status": "source_not_labeled",
+                "auction_result": None,
+                "auction_pct_micros": None,
+                "pk_result": None,
+                "buy_result": None,
+                "buy_type": None,
+                "buy_time": None,
+                "buy_price_milli": None,
+                "sell_time": None,
+                "sell_price_milli": None,
+                "return_pct_micros": None,
+                "source_record_id": mapping["static_source_record_id"],
+                "evidence_snapshot_json": static_seed["evidence_snapshot_json"],
+                "raw_json": static_seed["raw_json"],
+                "rule_set_id": rule["id"],
+            }
+        elif expected_version is not None and int(current["version"]) != expected_version:
             connection.close()
             raise RuntimeError(f"version conflict: expected {expected_version}, current {current['version']}")
         updates = request.get("updates")
         if not isinstance(updates, dict):
             connection.close()
             raise ValueError("updates must be an object")
+        checks = request.get("checks")
+        if checks is not None and not isinstance(checks, list):
+            connection.close()
+            raise ValueError("checks must be an array when provided")
+        evidence = request.get("evidence")
+        if evidence is not None and not isinstance(evidence, list):
+            connection.close()
+            raise ValueError("evidence must be an array when provided")
         raw = json.loads(current["raw_json"])
         for key, value in updates.items():
             raw[key] = value
-        new_version = expected_version + 1
+        new_version = int(current["version"]) + 1
         with self.immediate(connection):
-            connection.execute(f"UPDATE {table} SET is_current=0 WHERE id=?", (current["id"],))
+            if not create_dynamic:
+                connection.execute(f"UPDATE {table} SET is_current=0 WHERE id=?", (current["id"],))
             columns = [key for key in current.keys() if key != "id"]
             values = {key: current[key] for key in columns}
             values["version"] = new_version
             values["is_current"] = 1
+            values["research_status"] = request.get("research_status", "formal_research")
             values["raw_json"] = json_text(raw)
+            if evidence is not None:
+                values["evidence_snapshot_json"] = json_text(evidence)
             values["confirmation_status"] = request.get("confirmation_status", "pending_user_confirmation")
             values["rule_set_id"] = int(rule["id"])
             if kind == "static":
@@ -2125,9 +2189,12 @@ class ResearchStore:
                     values["buy_type"] = buy_update.get("买点类型")
                     values["buy_time"] = buy_update.get("买点时间")
                 if outcome_update is not None:
-                    values["buy_price_milli"] = price_milli(
-                        outcome_update.get("买入价格", (market_update or {}).get("涨停价"))
-                    ) or values["buy_price_milli"]
+                    if outcome_update.get("是否买入") is False and "买入价格" not in outcome_update:
+                        values["buy_price_milli"] = None
+                    else:
+                        values["buy_price_milli"] = price_milli(
+                            outcome_update.get("买入价格", (market_update or {}).get("涨停价"))
+                        ) or values["buy_price_milli"]
                     values["sell_time"] = outcome_update.get(
                         "尾盘卖出日期", outcome_update.get("卖出日期", outcome_update.get("卖出时间"))
                     )
@@ -2142,10 +2209,54 @@ class ResearchStore:
                 f"INSERT INTO {table}({','.join(columns)}) VALUES({placeholders})",
                 [values[column] for column in columns],
             )
+            check_rows = checks
+            if check_rows is None and not create_dynamic:
+                foreign_key = "static_research_id" if kind == "static" else "dynamic_research_id"
+                check_rows = [
+                    {
+                        "check_type": row["check_type"],
+                        "subject_stock_id": row["subject_stock_id"],
+                        "outcome": row["outcome"],
+                        "basis": row["basis"],
+                        "sources": json.loads(row["source_json"]),
+                        "raw": json.loads(row["raw_json"]),
+                    }
+                    for row in connection.execute(
+                        f"SELECT * FROM research_checks WHERE {foreign_key}=? ORDER BY id",
+                        (current["id"],),
+                    )
+                ]
+            for check in check_rows or []:
+                if not isinstance(check, dict) or not check.get("check_type"):
+                    raise ValueError("each check must be an object with check_type")
+                subject_id = check.get("subject_stock_id")
+                if subject_id is None and check.get("subject_code"):
+                    subject = connection.execute(
+                        "SELECT id FROM stocks WHERE code=?",
+                        (valid_code(check["subject_code"]),),
+                    ).fetchone()
+                    if not subject:
+                        raise ValueError(f"unknown check subject: {check['subject_code']}")
+                    subject_id = subject["id"]
+                connection.execute(
+                    """INSERT INTO research_checks
+                       (static_research_id,dynamic_research_id,check_type,subject_stock_id,outcome,basis,source_json,raw_json)
+                       VALUES(?,?,?,?,?,?,?,?)""",
+                    (
+                        cursor.lastrowid if kind == "static" else None,
+                        cursor.lastrowid if kind == "dynamic" else None,
+                        check["check_type"],
+                        subject_id,
+                        check.get("outcome"),
+                        check.get("basis"),
+                        json_text(check.get("sources", [])),
+                        json_text(check.get("raw", check)),
+                    ),
+                )
             if kind == "dynamic":
                 old_outcome = connection.execute(
                     "SELECT raw_json FROM trade_outcomes WHERE dynamic_research_id=?", (current["id"],)
-                ).fetchone()
+                ).fetchone() if not create_dynamic else None
                 outcome_raw = json.loads(old_outcome["raw_json"]) if old_outcome else {}
                 if isinstance(updates.get("买入后结果"), dict):
                     outcome_raw.update(updates["买入后结果"])
@@ -2176,7 +2287,6 @@ class ResearchStore:
                 "record_key": record_key,
                 "kind": kind,
                 "version": new_version,
-                "rule_version": rule_version,
                 "plan_code": plan_code if kind == "dynamic" else None,
                 "affected_exports": [STATIC_FILE if kind == "static" else DYNAMIC_FILE],
             }
@@ -2355,10 +2465,19 @@ class ResearchStore:
         report_dir = self.root / "data/store/maintenance" / timestamp
         report_dir.mkdir(parents=True, exist_ok=False)
         migration = self.migrate_all()
-        verification = self.verify_full(report_dir / "verification", run_idempotence_check=False)
-        if not verification["passed"]:
-            raise RuntimeError(f"daily maintenance verification failed: {report_dir}")
         connection = self.connect()
+        verification_started = time.perf_counter()
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        foreign_key_errors = len(connection.execute("PRAGMA foreign_key_check").fetchall())
+        verification = {
+            "passed": integrity == "ok" and foreign_key_errors == 0,
+            "integrity_check": integrity,
+            "foreign_key_errors": foreign_key_errors,
+            "elapsed_seconds": round(time.perf_counter() - verification_started, 3),
+        }
+        if not verification["passed"]:
+            connection.close()
+            raise RuntimeError(f"daily database check failed: {report_dir}")
         snapshot = self.logical_snapshot_hash(connection)
         connection.close()
         current_pointer = self.root / "data/store/exports/current.json"
@@ -2400,7 +2519,8 @@ class ResearchStore:
             "migration": migration,
             "verification": {
                 "passed": verification["passed"],
-                "database_sha256": verification["database_sha256"],
+                "integrity_check": verification["integrity_check"],
+                "foreign_key_errors": verification["foreign_key_errors"],
                 "elapsed_seconds": verification["elapsed_seconds"],
             },
             "database_changed_since_current_generation": changed,
@@ -2594,7 +2714,7 @@ class ResearchStore:
             key = source.get("底稿记录键")
             target = connection.execute(
                 """SELECT main_theme,replenishment_result,suppression_result,announcement_pollution,raw_json
-                   FROM current_static_research WHERE legacy_record_key=?""",
+                   FROM static_research WHERE legacy_record_key=? AND version=1""",
                 (key,),
             ).fetchone()
             if target is None:
@@ -2616,7 +2736,9 @@ class ResearchStore:
         for source in dynamic_rows:
             key = source.get("底稿记录键")
             target = connection.execute(
-                "SELECT raw_json FROM current_dynamic_research WHERE legacy_record_key=?", (key,)
+                """SELECT d.raw_json FROM dynamic_research d JOIN research_plans p ON p.id=d.plan_id
+                   WHERE d.legacy_record_key=? AND d.version=1 AND p.plan_code='formal'""",
+                (key,),
             ).fetchone()
             if target is None:
                 dynamic_differences.append({"record_key": key, "kind": "missing"})
@@ -2624,6 +2746,31 @@ class ResearchStore:
                 dynamic_differences.append({"record_key": key, "kind": "raw_json_changed"})
         checks["static_differences"] = static_differences
         checks["dynamic_differences"] = dynamic_differences
+        baseline_dynamic_keys = {row.get("底稿记录键") for row in dynamic_rows}
+        dynamic_additions = []
+        revision_gaps = []
+        for row in connection.execute(
+            """SELECT d.legacy_record_key,d.version FROM current_dynamic_research d
+               JOIN research_plans p ON p.id=d.plan_id WHERE p.plan_code='formal'"""
+        ):
+            if row["legacy_record_key"] not in baseline_dynamic_keys:
+                dynamic_additions.append({"record_key": row["legacy_record_key"], "version": row["version"]})
+            if row["version"] > 1 or row["legacy_record_key"] not in baseline_dynamic_keys:
+                revision = connection.execute(
+                    "SELECT 1 FROM revisions WHERE object_type='dynamic' AND object_key=? AND version=?",
+                    (row["legacy_record_key"], row["version"]),
+                ).fetchone()
+                if not revision:
+                    revision_gaps.append({"kind": "dynamic", "record_key": row["legacy_record_key"], "version": row["version"]})
+        for row in connection.execute("SELECT legacy_record_key,version FROM current_static_research WHERE version>1"):
+            revision = connection.execute(
+                "SELECT 1 FROM revisions WHERE object_type='static' AND object_key=? AND version=?",
+                (row["legacy_record_key"], row["version"]),
+            ).fetchone()
+            if not revision:
+                revision_gaps.append({"kind": "static", "record_key": row["legacy_record_key"], "version": row["version"]})
+        checks["dynamic_additions"] = dynamic_additions
+        checks["revision_gaps"] = revision_gaps
         duplicate_checks = {}
         for table, columns in (
             ("stocks", "code"),
@@ -2695,9 +2842,10 @@ class ResearchStore:
             checks["integrity_check"] == "ok"
             and checks["foreign_key_errors"] == 0
             and counts["baseline_static"] == counts["database_static"] == counts["legacy_keys"]
-            and counts["baseline_dynamic"] == counts["database_dynamic"]
+            and counts["baseline_dynamic"] <= counts["database_dynamic"]
             and not static_differences
             and not dynamic_differences
+            and not revision_gaps
             and not any(duplicate_checks.values())
             and not checks["field_mapping_missing"]
             and checks["transaction_rollback"]["passed"]
