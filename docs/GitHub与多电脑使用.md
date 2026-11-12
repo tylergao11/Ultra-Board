@@ -37,26 +37,19 @@ powershell -ExecutionPolicy Bypass -File tools/setup_home.ps1 -Force
 
 ## 日常同步
 
-拉取更新：
+日常使用只保留两个总入口。开始工作：
 
 ```powershell
-git pull
-python -B tools/research_cli.py maintain --keep-backups 3
+powershell -ExecutionPolicy Bypass -File tools/start_work.ps1
 ```
 
-提交普通更新：
+完成工作：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools/sync_github.ps1 -Message "更新每日市场数据"
+powershell -ExecutionPolicy Bypass -File tools/finish_work.ps1 -Message "本次工作摘要"
 ```
 
-研究结论、规则或结构发生重要变化，以及准备切换电脑时，附带数据库发布：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File tools/sync_github.ps1 -Message "更新研究结论" -PublishDatabase
-```
-
-`sync_github.ps1` 会先核验正式库摘要，排查暂存区中的超大普通 Git 文件，再提交和推送。`-PublishDatabase` 会在推送成功后调用 `publish_database_release.ps1`，更新滚动 Release。
+`start_work.ps1` 会检查工作区、快进拉取 GitHub、安装当前数据库并保留最多两份本机旧库。`finish_work.ps1` 会根据数据和规则变化运行维护与核验，随后提交、推送并更新滚动数据库 Release。底层脚本继续保留给 agent 排障和单项操作。
 
 ## 单独发布数据库
 

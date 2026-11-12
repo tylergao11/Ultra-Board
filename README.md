@@ -46,22 +46,19 @@ python -B tools/research_cli.py rules
 
 ## 日常流程
 
-1. 开始工作前获取 GitHub 更新。
-2. 将开盘啦最新资料落盘到现有 `data/` 目录。
-3. 运行每日维护，完成增量导入、核验、导表和本机恢复轮换。
-4. 提交原始资料、规则、代码、报告和生成表。
+agent 开始实际工作前运行总入口：
 
 ```powershell
-git pull
-python -B tools/research_cli.py maintain --keep-backups 3
-powershell -ExecutionPolicy Bypass -File tools/sync_github.ps1 -Message "更新每日市场数据"
+powershell -ExecutionPolicy Bypass -File tools/start_work.ps1
 ```
 
-研究结论、数据库结构或规则发生重要更新时，同时发布数据库快照：
+完成下载、研究或修改后运行结束入口：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools/sync_github.ps1 -Message "更新研究结论" -PublishDatabase
+powershell -ExecutionPolicy Bypass -File tools/finish_work.ps1 -Message "本次工作摘要"
 ```
+
+开始入口负责拉取 GitHub、保护本机现场并安装当前数据库；结束入口负责维护、核验、提交、推送和发布数据库。具体实现留在脚本中，agent 按 `AGENTS.md` 自动执行。
 
 ## 目录
 
@@ -72,6 +69,8 @@ data/store/rules/       正式规则源
 docs/                   执行计划、使用说明和多电脑说明
 tools/research/         数据库、迁移、查询、统计与恢复实现
 tools/research_cli.py   统一命令入口
+tools/start_work.ps1    开始工作的跨电脑同步入口
+tools/finish_work.ps1   结束工作的提交发布入口
 ```
 
 ## 文档

@@ -2,7 +2,9 @@
 param(
     [string]$Repository = "tylergao11/Ultra-Board",
     [string]$Tag = "research-store-current",
-    [switch]$Force
+    [switch]$Force,
+    [ValidateRange(0, 10)]
+    [int]$KeepLocalBackups = 2
 )
 
 Set-StrictMode -Version Latest
@@ -54,6 +56,15 @@ try {
             $backupPath = Join-Path $backupDir "research-before-setup-$stamp.sqlite"
             [System.IO.File]::Move($databasePath, $backupPath)
             Write-Host "原数据库已移动到：$backupPath"
+            $oldBackups = @(Get-ChildItem -LiteralPath $backupDir -File -Filter "research-before-setup-*.sqlite" |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -Skip $KeepLocalBackups)
+            foreach ($oldBackup in $oldBackups) {
+                if ($oldBackup.DirectoryName -ne $backupDir) {
+                    throw "本机备份路径异常：$($oldBackup.FullName)"
+                }
+                [System.IO.File]::Delete($oldBackup.FullName)
+            }
         }
         [System.IO.File]::Move($downloadPath, $databasePath)
         Write-Host "研究库已安装：$databasePath"
