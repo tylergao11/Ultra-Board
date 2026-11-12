@@ -54,7 +54,6 @@ try {
         asset = "research.sqlite"
         sha256 = $hash
         size_bytes = $size
-        current_batch = $summary.current_batch
         generation_key = $generationKey
         logical_snapshot = $logicalSnapshot
         rules = $summary.rules
