@@ -86,6 +86,14 @@ try {
     if ($releaseViewExitCode -ne 0) {
         $releaseExists = $false
     }
+    $databaseUploadRequired = $true
+    if ($releaseExists) {
+        $releaseInfo = (& gh release view $Tag --repo $Repository --json assets | Out-String) | ConvertFrom-Json
+        $databaseAsset = $releaseInfo.assets | Where-Object { $_.name -eq "research.sqlite" } | Select-Object -First 1
+        if ($databaseAsset -and $databaseAsset.size -eq $size -and $databaseAsset.digest -eq "sha256:$hash") {
+            $databaseUploadRequired = $false
+        }
+    }
     $notes = @"
 Ultra-Board 当前正式研究数据库。
 
@@ -97,6 +105,11 @@ Ultra-Board 当前正式研究数据库。
 下载后运行 tools/setup_home.ps1 自动校验和安装。
 "@
     if ($releaseExists) {
+        $head = (git -C $root rev-parse HEAD).Trim()
+        & gh api --method PATCH "repos/$Repository/git/refs/tags/$Tag" -f "sha=$head" -F "force=true" *> $null
+        if ($LASTEXITCODE -ne 0) {
+            throw "更新滚动 Release 标签失败。"
+        }
         & gh release edit $Tag --repo $Repository --title "研究数据库当前快照" --notes $notes --latest
     }
     else {
@@ -107,7 +120,15 @@ Ultra-Board 当前正式研究数据库。
         throw "创建或更新 GitHub Release 失败。"
     }
 
-    & gh release upload $Tag $databasePath $checksumPath $releaseManifestPath --repo $Repository --clobber
+    $uploadFiles = @($checksumPath, $releaseManifestPath)
+    if ($databaseUploadRequired) {
+        $uploadFiles = @($databasePath) + $uploadFiles
+    }
+    else {
+        Write-Host "远端数据库 digest 已一致，跳过 403 MB 重复上传。"
+    }
+    $uploadArguments = @("release", "upload", $Tag) + $uploadFiles + @("--repo", $Repository, "--clobber")
+    & gh @uploadArguments
     if ($LASTEXITCODE -ne 0) {
         throw "上传数据库 Release 资产失败。"
     }
