@@ -1,0 +1,2662 @@
+# KPL 接口文档
+
+> 来源: KPL接口.docx — longhuvip 私有 API 集合
+>
+> 共 671 段落 + 50 返回示例表
+
+---
+
+## 接口
+
+**[2]** 使用案例-龙虾等可参考该案例：
+
+<details><summary>返回示例 1</summary>
+
+```python
+import requests
+import json
+
+# 接口配置
+url = "https://apphis.longhuvip.com/w1/api/index.php?a=ChangeStatistics&st=100&apiv=w44&c=HisHomeDingPan&PhoneOSNew=1&UserID=[REDACTED]&DeviceID=[REDACTED]&VerSion=5.23.0.4&Token=[REDACTED]&Index=0&"
+headers = {
+    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+
+def get_morning_bidding():
+    """
+    请求实时竞价接口并打印原始返回数据
+    """
+    try:
+        response = requests.post(url, headers=headers, timeout=10)
+
+        # 尝试解析JSON并格式化打印
+        try:
+            data = response.json()
+            print(json.dumps(data, ensure_ascii=False, indent=2))
+        except:
+            # 如果不是JSON，直接打印原始文本
+            print(response.text)
+
+        return response
+        
+    except requests.exceptions.Timeout:
+        print("错误: 请求超时")
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"错误: 请求失败 - {str(e)}")
+        return None
+    except Exception as e:
+        print(f"错误: {str(e)}")
+        return None
+
+if __name__ == "__main__":
+    get_morning_bidding()
+```
+
+</details>
+
+## 日k线与分时
+
+## k线-个股：
+
+- `https://apphis.longhuvip.com/w1/api/index.php?a=GetKLineDay_W14&st=111&c=StockLineData&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.19.0.0&Token=[REDACTED]&Index=0&apiv=w40&Type=d&StockID=302132&UserID=[REDACTED]&Is_FS=1&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[10]** 接口返回示例：
+
+<details><summary>返回示例 2</summary>
+
+```json
+{
+    "StockID": "302132",
+    "name": "",
+    "Time": 1765464431,
+    "x": [
+        "20250702",
+        "20250703"  //“x”的日期是从过去到现在，最后一个日期是最近的
+],
+    "y": [
+        [
+            85,  //开盘价
+            84.1,  //收盘
+            85.68,  //最高
+            83.64  //最低
+        ],
+        [
+            84.36,
+            83.75,
+            84.7,
+            83.36
+        ]
+ ],
+    "vol": [
+        154742,  //成交量
+        112896
+ ],
+    "bal": [
+        1306476038,  //成交额
+        946850158
+],
+    "turnover": [
+        2.62,  // 换手率
+        1.91
+ ],
+    "CQ": [
+        "",
+        ""
+ ],
+    "state": [
+        0,
+        0
+ ],
+    "state1": [
+        0,
+        0 
+ ],
+    "stateZT": [
+        0, 
+        0
+ ],
+    "firstPre": 0,
+    "ttag": 0.002917999999999976,
+    "errcode": "0"
+}
+```
+
+</details>
+
+
+## k线与、实时涨幅
+
+**[13]** 接口：
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?a=GetStockTrendIncremental&c=StockL2Data&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.20.0.2&Token=[REDACTED]&apiv=w41&Type=1&StockID=002278&UserID=[REDACTED]&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+
+**[20]** 注意：StockID 需要替换为对应的自选股的股票代码，
+
+**[21]** 返回说明：
+最后面的部分里
+
+<details><summary>返回示例 3</summary>
+
+```json
+{
+    "code": "300322",
+    "day": "20250728",
+    "time": "1753688730",
+    "preclose_px": 15.75,
+    "hprice": 18.9,
+    "lprice": 15.85,
+    "begin_px": 15.95,
+    "trend": [
+        [
+            "09:30",
+            15.95,
+            15.95,
+            1595,
+            1
+        ],
+[
+            "15:00",
+            18.9,
+            17.982,
+            18427,
+            2
+        ]
+    ],
+  "errcode": "0",
+    "Name": "300322",
+    "total_turnover": 2138479068,  /*竞价成交额*/
+    "px_change_rate": 17.46,    /*实时涨幅*/
+    "time2": 1753672589,
+    "ttag": 0.0009660000000000224
+}
+```
+
+</details>
+
+## 盘口五档
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?a=GetStockPanKou&c=StockL2Data&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.20.0.2&Token=[REDACTED]&apiv=w41&UserID=[REDACTED]&&StockID=000001`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[28]** 接口返回示例：
+
+<details><summary>返回示例 4</summary>
+
+```json
+{
+    "day": 20251106,
+    "code": "301285",
+    "name": "鸿日达",
+    "preclose_px": 50.83,
+    "status": 86,
+    "real": {
+        "time": 153000000,
+        "last_px": 51.51,
+        "px_change": 0.68,
+        "px_change_rate": 1.34,
+        "high_px": 52,
+        "low_px": 50.01,
+        "open_px": 50.83,
+        "avg_px": 50.854,
+        "turnover_ratio": 3.15,   //换手率
+        "total_amount": 24762,
+        "total_turnover": 125924281,
+        "vol_ratio": 0.74,
+        "up_px": 61,
+        "down_px": 40.66,
+        "amplitude": 3.92,
+        "entrust_rate": -68.37,
+        "amount_in": 10850,
+        "amount_out": 13912,
+        "dyn_pb_rate": 10.45,
+        "pe_rate": -426.96,
+        "TTMPeRate": -190.65,
+        "jtPeRate": -1405.76,
+        "circulation_amount": 78499808,
+        "circulation_value": 4043525110,
+        "total_shares": 206670000,
+        "market_value": 10645571700,
+        "phcj_volume": 0,
+        "phcj_turnover": 0,
+        "actualcirculation_value": 4043525110
+    },
+    "sourcetype": 8,
+    "errcode": "0",
+    "ts": 1762414754,
+    "weituo": {
+        "totals": 6722,
+        "avg_askpx": 52.9,
+        "s10": [
+            0,
+            0
+        ],
+        "s9": [
+            0,
+            0
+        ],
+        "s8": [
+            0,
+            0
+        ],
+        "s7": [
+            0,
+            0
+        ],
+        "s6": [
+            0,
+            0
+        ],
+        "s5": [
+            51.6,
+            40
+        ],
+        "s4": [
+            51.58,
+            18
+        ],
+        "s3": [
+            51.54,
+            4
+        ],
+        "s2": [
+            51.53,
+            8
+        ],
+        "s1": [
+            51.52,
+            5
+        ],
+        "totalb": 1263,
+        "avg_bidpx": 50,
+        "b1": [
+            51.51,
+            12
+        ],
+        "b2": [
+            51.43,
+            24
+        ],
+        "b3": [
+            51.42,
+            3
+        ],
+        "b4": [
+            51.41,
+            39
+        ],
+        "b5": [
+            51.4,
+            9
+        ],
+        "b6": [
+            0,
+            0
+        ],
+        "b7": [
+            0,
+            0
+        ],
+        "b8": [
+            0,
+            0
+        ],
+        "b9": [
+            0,
+            0
+        ],
+        "b10": [
+            0,
+            0
+        ]
+    },
+    "ttag": 0.0007470000000000532
+}
+```
+
+</details>
+
+
+
+## 涨停、跌停、炸板 - 实时
+
+## 涨停实时
+
+- `https://flash-api.xuangubao.com.cn/api/pool/detail?pool_name=limit_up`
+
+## 炸板实时
+
+- `https://flash-api.xuangubao.com.cn/api/pool/detail?pool_name=limit_up_broken`
+
+## 跌停实时
+
+- `https://flash-api.xuangubao.com.cn/api/pool/detail?pool_name=limit_down&date=`
+
+
+## L2大单
+
+## 大单成交
+
+**[41]** url = "https://apphq.longhuvip.com/w1/api/index.php?Order=0&st=20&a=GetMainMonitor_w30&c=StockYiDongKanPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.7.0.12&Token=[REDACTED]&Index=0&Money=2&apiv=w31&StockID=600126&UserID=[REDACTED]&IsBS=0&"
+ headers = {
+ "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+ "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+ }
+
+**[42]** 接口中：
+
+**[43]** 30万，对应的接口里的“Money”的值是0
+
+**[44]** 50万，对应的接口里的“Money”的值是1
+
+**[45]** 100万，对应的接口里的“Money”的值是2
+
+**[46]** 300万，对应的接口里的“Money”的值是3
+
+**[47]** 1000万，对应的接口里的“Money”的值是4
+
+**[48]** 返回：
+
+<details><summary>返回示例 5</summary>
+
+```json
+{
+    "List": [
+        [
+            "2",  //买卖方
+            "1778651941",  // 时间戳
+            "1075",  // 成交量
+            "1011575",  // 金额
+            "9.41",  // 均价
+            "2026-05-13 13:59:01"  // 时间
+        ],
+```
+
+</details>
+
+**[49]** 其他说明：买卖方向 说明：1 被动卖2 主动买（时刻池主动买）3 被动买（时刻池被动买）4 主动卖
+
+
+## 大单委托
+
+- `https://apphq.longhuvip.com/w1/api/index.php?a=GetWeiTuo_W14&st=3000&c=StockL2Data&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.18.0.4&Token=[REDACTED]&Tur=30&apiv=w39&Type=2&Vol=500&StockID=000001&VType=1&UserID=[REDACTED]&VOrder=0&`
+
+**[53]** 说明：
+
+**[54]** Vol：委托量阈值（手），只可选择：500，1000，2000，5000，10000
+
+**[55]** Tur：委托金额阈值，30，50，100，200，500，1000
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+
+**[61]** 返回：
+
+<details><summary>返回示例 6</summary>
+
+```json
+{
+    "List": [
+        [
+            "09:30:01",      // 时间
+            "1234567890",    // 委托序号
+            "10.50",         // 价格
+            "1000",          // 手数
+            "1050000",       // 成交额
+            "1",             // 买/卖： 1→买(红)、2→卖(绿)
+            "…",
+            "0",             // 涨停：1 显示「涨停」，0 不显示
+            "0",             // 撤单：1 显示「撤」，0 不显示
+            "…"
+        ]
+```
+
+</details>
+
+## 涨停复盘 - 复盘啦
+
+- `https://apphwshhq.longhuvip.com/w1/api/index.php?a=GetPlateInfo_w38&st=1000&c=DailyLimitResumption&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.21.0.0&Index=0&apiv=w42&`
+
+<details><summary>返回示例 7</summary>
+
+```json
+{
+    "nums": {
+        "SZJS": 2990,  //上涨家数
+        "XDJS": 2036,  //下跌家数
+        "ZT": 97,  //涨停
+        "DT": 24,  //跌停
+        "ZBL": 28.3333,  //炸板率
+        "yestRase": 1.389  //昨日涨停表现
+    },
+    "list": [
+        {
+            "ZSCode": "801074",  //板块代码
+            "ZSName": "核电",  //板块
+            "TCExplain": "",
+            "GroupStr": "",
+            "StockList": [
+                [
+                    "000777",  //股票代码
+                    "中核科技",  //股票名称
+                    0,
+                    "",
+                    0,
+                    0,
+                    1759973841,,  //涨停时间
+                    0,
+                    70447232,  //封单
+                    "首板",
+                    1,  //连板数
+                    "可控核聚变、核电",  //开盘个股属性
+                    239159833,
+                    682199256,
+                    11.73,  //实际换手
+                    5877917502,  //实际流通
+                    "可控核聚变",  //开盘个股原因
+                    "核电(可控核聚变)；根据2025年5月19日互动易：中核科技在涉核和非核领域均有较完整的工业阀门产品谱系，具有强大的阀门科研能力，目前正积极进行聚变堆的相关技术积累，对接核聚变阀门设备需求部门，可有力支撑核聚变阀门的自主开发和供货。",  //开盘详细原因
+                    1
+                ],
+```
+
+</details>
+
+
+## 市场情绪 接口
+
+### 涨停跌停-数量
+
+**[67]** 实时接口:
+
+- `https://apphwshhq.longhuvip.com/w1/api/index.php?a=RiseFallAnalysis&apiv=w43&c=HomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.22.0.2&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[73]** 返回：
+
+<details><summary>返回示例 8</summary>
+
+```json
+{
+  "info": [
+    [
+      47,  //涨停
+      3,  //跌停
+      43,  //自然涨停
+      1,  //曾跌停
+      18.9655,  //破板率
+      11,  //炸板
+      "2026-04-10"  //日期
+    ]
+  ],
+  "ttag": 0.001956000000000069,
+  "errcode": "0"
+}
+```
+
+</details>
+
+
+**[75]** 历史接口：
+
+- `https://apphis.longhuvip.com/w1/api/index.php?a=RiseFallAnalysis&st=250&apiv=w43&c=HisHomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.22.0.2&Index=0&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[81]** 返回：
+
+<details><summary>返回示例 9</summary>
+
+```json
+{
+  "info": [
+    [
+      53,  //涨停  
+      1,  //跌停
+      50, //自然涨停
+      3,  //曾跌停
+      23.1884,  //破板率
+      16,  //炸板
+      "2026-04-09"  //日期
+    ],
+```
+
+</details>
+
+
+### 上涨/下跌家数
+
+- `https://apphwshhq.longhuvip.com/w1/api/index.php?a=MoodNumCount&apiv=w43&c=MarketMood&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.22.0.2&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[89]** 返回：
+
+<details><summary>返回示例 10</summary>
+
+```json
+{
+  "list": {
+    "SZJS": 4279, //上涨家数
+    "XDJS": 836,  //下跌家数
+    "ZTJS": 54,  //涨停家数
+    "DTJS": 2,  //跌停家数
+    "qscln": 137018971,  //全市场量能
+    "q_zrcs": 130451698,
+    "bl": 7.65,
+    "color": 1
+  },
+  "ttag": 0.009352000000000027,
+  "errcode": "0"
+}
+```
+
+</details>
+
+
+### 昨日涨停今表现
+
+- `https://apphwshhq.longhuvip.com/w1/api/index.php?a=GetPlate_Info_QJ&apiv=w42&c=ZhiShuRanking&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.21.0.2&PlateID=801900&Date=&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[97]** 返回：
+
+<details><summary>返回示例 11</summary>
+
+```json
+{
+  "List": [
+    "--",
+    -55,
+    77463686247,
+    -90149191,
+    1.716,  //涨幅
+    0,
+    0,
+    0
+  ],
+  "Time": 1775792104,
+  "Date": "2026-04-10",
+  "Min": "0925",
+  "Max": "1130",
+  "ttag": 0.00653999999999999,
+  "errcode": "0"
+}
+```
+
+</details>
+
+
+### 昨日连板今表现
+
+- `https://apphwshhq.longhuvip.com/w1/api/index.php?a=GetPlate_Info_QJ&apiv=w42&c=ZhiShuRanking&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.21.0.2&PlateID=801902&Date=&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[105]** 返回：
+
+<details><summary>返回示例 12</summary>
+
+```json
+{
+  "List": [
+    "--",
+    175,
+    25383913383,
+    0,
+    4.508,  //涨幅
+    0,
+    0,
+    0
+  ],
+  "Time": 1775792191,
+  "Date": "2026-04-10",
+  "Min": "0925",
+  "Max": "1130",
+  "ttag": 0.005114000000000007,
+  "errcode": "0"
+}
+```
+
+</details>
+
+
+### 昨日破板今日表现
+
+- `https://apphwshhq.longhuvip.com/w1/api/index.php?a=GetPlate_Info_QJ&apiv=w42&c=ZhiShuRanking&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.21.0.2&PlateID=801903&Date=&
+返回：`
+
+<details><summary>返回示例 13</summary>
+
+```json
+{
+  "List": [
+    "--",
+    -108,
+    15860895075,
+    15394918,
+    -0.803,  //涨幅
+    0,
+    0,
+    0
+  ],
+  "Time": 1775792523,
+  "Date": "2026-04-10",
+  "Min": "0925",
+  "Max": "1130",
+  "ttag": 0.0010729999999999906,
+  "errcode": "0"
+}
+```
+
+</details>
+
+
+### 今日破板率
+
+- `https://apphwshhq.longhuvip.com/w1/api/index.php?a=RiseFallAnalysis&apiv=w43&c=HomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.22.0.2&`
+
+**[112]** 返回：
+
+<details><summary>返回示例 14</summary>
+
+```json
+{
+  "info": [
+    [
+      48,
+      2,
+      44,
+      3,
+      32.3944,  //涨幅
+      23,
+      "2026-04-10"
+    ]
+  ],
+  "ttag": 0.0016720000000000068,
+  "errcode": "0"
+}
+```
+
+</details>
+
+### 情绪值指标/连板高度
+
+- `https://apphq.longhuvip.com/w1/api/index.php?a=ChangeStatistics&st=10&c=HomeDingPan`
+
+**[115]** 返回：
+
+<details><summary>返回示例 15</summary>
+
+```json
+{
+  "info": [
+    {
+      "ztjs": "9",  //涨停家数
+      "Day": "2026-04-10",  
+      "df_num": "0",  //大幅回撤
+      "strong": "48",  //情绪指标
+      "lbgd": "3"  //连板高度
+    }
+  ],
+  "tip": "温馨提示：情绪指标过高（75），短期有释放亏钱效应的风险；情绪指标过低（25），短线有反弹回暖需求；提示仅供参考",
+  "ttag": 0.0005359999999999809,
+  "errcode": "0"
+}
+```
+
+</details>
+
+
+### 情绪-强度-历史
+
+- `https://apphis.longhuvip.com/w1/api/index.php?a=ChangeStatistics&st=100&apiv=w44&c=HisHomeDingPan&PhoneOSNew=1&UserID=[REDACTED]&DeviceID=[REDACTED]&VerSion=5.23.0.4&Token=[REDACTED]&Index=0&`
+
+
+**[120]** 返回：
+
+<details><summary>返回示例 16</summary>
+
+```json
+{
+  "info": [
+    {
+      "strong": "41",  //情绪指标
+      "ztjs": "53",  //涨停家数
+      "lbgd": "5",  //连板高度
+      "Day": "2026-04-09",
+      "df_num": "3"  //大幅回撤
+    },
+```
+
+</details>
+
+
+## 龙虎榜接口
+
+### （龙虎榜页面）接口：
+
+<details><summary>返回示例 17</summary>
+
+```http
+POST /w1/api/index.php HTTP/1.1
+Content-Type: application/x-www-form-urlencoded; charset=UTF-8
+User-Agent: Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)
+Host: applhb.longhuvip.com
+Connection: Keep-Alive
+Accept-Encoding: gzip
+Content-Length: 195
+
+a=GetStockList&st=500&c=LongHuBang&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.23.0.4&Token=[REDACTED]&Time=&Index=0&apiv=w44&Type=2&UserID=[REDACTED]&
+```
+
+</details>
+
+### （买入营业部、卖出营业部）接口：
+
+<details><summary>返回示例 18</summary>
+
+```http
+POST /w1/api/index.php?apiv=w44&PhoneOSNew=1&VerSion=5.23.0.4 HTTP/1.1
+Host: applhb.longhuvip.com
+Connection: keep-alive
+Content-Length: 166
+sec-ch-ua: "Chromium";v="116", "Not)A;Brand";v="24", "Android WebView";v="116"
+Accept: application/json, text/javascript, */*; q=0.01
+Content-Type: application/x-www-form-urlencoded; charset=UTF-8
+sec-ch-ua-mobile: ?1
+User-Agent: Mozilla/5.0 (Linux; Android 14; V2178A Build/UP1A.231005.007; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/116.0.0.0 Mobile Safari/537.36;kaipanla 5.23.0.4
+sec-ch-ua-platform: "Android"
+Origin: https://apppage.longhuvip.com
+X-Requested-With: com.aiyu.kaipanla
+Sec-Fetch-Site: same-site
+Sec-Fetch-Mode: cors
+Sec-Fetch-Dest: empty
+Referer: https://apppage.longhuvip.com/
+Accept-Encoding: gzip, deflate, br
+Accept-Language: zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7
+
+c=Stock&a=GetNewOneStockInfo&Type=0&Time=2026-04-02&StockID=000720&UserID=[REDACTED]&Token=[REDACTED]&DeviceID=[REDACTED]
+```
+
+</details>
+
+
+## 涨停、跌停、炸板 - 历史
+
+## 涨停历史
+
+- `https://flash-api.xuangubao.com.cn/api/pool/detail?pool_name=limit_up&date=2024-11-14`
+
+## 炸板历史
+
+- `https://flash-api.xuangubao.com.cn/api/pool/detail?pool_name=limit_up_broken&date=2024-11-14`
+
+## 跌停历史
+
+- `https://flash-api.xuangubao.com.cn/api/pool/detail?pool_name=limit_down&date=2024-12-26`
+
+## 昨日涨停
+
+- `https://flash-api.xuangubao.com.cn/api/pool/detail?pool_name=yesterday_limit_up&date=2025-12-26`
+
+
+## 竞价接口
+
+### 竞价涨停委买额接口：
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?Order=1&a=MorningBiddingList&st=60&c=HomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.20.0.2&Token=[REDACTED]&Index=0&PidType=0&apiv=w41&Type=4&UserID=[REDACTED]&`
+
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+
+**[145]** 竞价委买额接口返回接口返回示例：
+
+<details><summary>返回示例 19</summary>
+
+```json
+{
+    "info": [
+        [
+            "002969",  //股票代码
+            "嘉美包装",  //股票名称
+            6.07,
+            9.96,  //实时涨幅
+            1381972304,  //涨停委买额
+            9.96,  //竞价涨幅
+            2222228,  //竞价净额
+            0.16,  //竞价换手
+            4058402,  //竞价成交额
+            37199550,  //20分后委买
+            4058402,
+            "实控人变更、酿酒",  //板块
+            2547574181,  //实际流通
+            12878114,
+            17454281,
+            -4576167,
+            "6天4板"  //连扳数
+        ],
+```
+
+</details>
+
+
+**[147]** Index 是分页，第一页0，第二页60，第三页120，第四180，，（n-1）*60
+
+
+### 历史竞价接口：
+
+**[150]** 历史页面，底部完整数据使用，实时页面不使用
+
+**[151]** 接口要点，注意分页的参数，还有日期
+
+- `https://apphis.longhuvip.com/w1/api/index.php?Order=1&a=MorningBiddingList&st=20&c=HisHomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.20.0.2&Token=[REDACTED]&Index=0&PidType=0&Date=2025-06-19&apiv=w41&Type=4&UserID=[REDACTED]&`
+
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[158]** 返回：和实时竞价接口（7）的字段一致
+
+
+### 竞价-个股竞价分时
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?a=GetStockBid&c=StockL2Data&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.20.0.2&Token=[REDACTED]&apiv=w41&StockID=000785&UserID=[REDACTED]&`
+
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+
+**[168]** 返回
+
+<details><summary>返回示例 20</summary>
+
+```json
+{
+    "code": "000785",
+    "day": 20250828,
+    "bid": [
+        [
+            "09:15",//时间
+            3.03,//价格
+            1,
+            134//成交量
+        ],
+[
+            "09:15",
+            3.04,
+            0,
+            1281
+        ],
+  ],
+    "preclose_px": 3.06,
+    "hprice": 3.05,
+    "lprice": 3.03,
+    "openpx": 3.06,
+    "flag": 2,
+    "time": 1756385437,
+    "errcode": "0",
+    "ttag": 0.0003830000000000222
+}
+```
+
+</details>
+
+## 大盘直播
+
+**[170]** 实时
+
+- `https://api.fupanwang.com/kpl/zhibo?`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+
+**[177]** 历史
+
+- `https://apphis.longhuvip.com/w1/api/index.php?a=ZhiBoContent&st=0&c=HisConceptionPoint&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.19.0.0&index=0&Date=YYYY-MM-DD&apiv=w40&`
+
+
+**[180]** （将 Date=YYYY-MM-DD 替换为实际交易日，例如 Date=2026-04-21）
+
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+## 市场情绪 - 曲线变化
+
+## 上涨与下跌数量 - 曲线
+
+- `https://flash-api.xuangubao.com.cn/api/market_indicator/line?fields=rise_count,fall_count&date=2024-12-26`
+
+## 涨停数与跌停数 - 曲线
+
+- `https://flash-api.xuangubao.com.cn/api/market_indicator/line?fields=limit_up_count,limit_down_count&date=2024-12-26`
+
+## 炸板数量 - 曲线
+
+- `https://flash-api.xuangubao.com.cn/api/market_indicator/line?fields=limit_up_broken_count,limit_up_broken_ratio&date=2024-12-26`
+
+## 昨日涨停今日表现 - 曲线
+
+- `https://flash-api.xuangubao.com.cn/api/market_indicator/line?fields=yesterday_limit_up_avg_pcp&date=2024-12-26`
+
+## 市场温度 - 曲线
+
+- `https://flash-api.xuangubao.com.cn/api/market_indicator/line?fields=market_temperature&date=2024-12-26`
+
+
+**[198]** 热点解读
+
+- `https://flash-api.xuangubao.com.cn/api/surge_stock/stocks?date=20241226&normal=true&uplimit=true`
+
+**[200]** 板块名称与对应题材
+
+- `https://flash-api.xuangubao.com.cn/api/surge_stock/plates?date=1735185263`
+
+## 板块强度/精选板块
+
+### 精选板块列表-实时：
+
+- `https://apphq.longhuvip.com/w1/api/index.php?Order=1&a=RealRankingInfo&st=60&apiv=w26&Type=1&c=ZhiShuRanking&PhoneOSNew=1&DeviceID=[REDACTED]&Index=0&ZSType=7`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[209]** 返回：
+
+<details><summary>返回示例 21</summary>
+
+```json
+{
+    "list": [
+        [
+            "801807",   //板块代码
+            "算力",//名称
+            12505,//强度
+            2.503,  //涨幅
+            0.753,  //涨速
+            524251307081,  //成交额
+            350201029,  //主力净额
+            27494806325, //主买
+            -27144605296, //主卖
+            1.114,  //量比
+            12058520900160,  //流通值
+            2.66,
+            1106957986,     //300万大单净额
+            15534772229888, //总市值
+            -202302767, //机构增仓
+            76.2651,   //今PE
+            56.53,     //明PE
+            12505, //强度2，未知
+            2.503 //涨幅2
+        ],
+        [
+            "801660",  //板块代码
+            "通信",  //板块名称
+            7602, //强度（时刻池）
+            0.126, //涨幅
+            0,  //涨速
+            1405620402, //成交额
+            89906965,   //主力净额（时刻池）
+            293509488,
+            -203602523,
+            2.42,  //量比
+            5253626856256,
+            0,
+            10724700,       //300万大单净额（时刻池条件）
+            6042991996224,
+            -1945712565,
+            32.4867,
+            23.5526,
+            -507,
+            0.126    
+            ],
+```
+
+</details>
+
+**[210]** 股票代码，股票名称，涨幅，板块，主力净额，实际换手，实际流通，净成占比，量比，领涨次数，
+
+
+### 精选板块列表-历史
+
+- `https://apphis.longhuvip.com/w1/api/index.php?Order=1&a=RealRankingInfo&st=60&c=ZhiShuRanking&PhoneOSNew=1&RStart=0925&DeviceID=[REDACTED]&VerSion=5.20.0.2&Index=0&Date=2025-06-13&REnd=1500&apiv=w41&Type=5&ZSType=7&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+
+**[219]** 新的1
+
+<details><summary>返回示例 22</summary>
+
+```http
+POST /w1/api/index.php HTTP/1.1
+Content-Type: application/x-www-form-urlencoded; charset=UTF-8
+User-Agent: Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)
+Host: apphwshhq.longhuvip.com
+Connection: Keep-Alive
+Accept-Encoding: gzip
+Content-Length: 179
+
+Order=1&a=RealRankingInfo&st=60&c=ZhiShuRanking&PhoneOSNew=1&RStart=0925&DeviceID=[REDACTED]&VerSion=5.23.0.4&Index=0&REnd=1500&apiv=w44&Type=1&ZSType=7&
+```
+
+</details>
+
+**[220]** 新的2
+
+<details><summary>返回示例 23</summary>
+
+```http
+POST /w1/api/index.php HTTP/1.1
+Content-Type: application/x-www-form-urlencoded; charset=UTF-8
+User-Agent: Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)
+Host: apphwshhq.longhuvip.com
+Connection: Keep-Alive
+Accept-Encoding: gzip
+Content-Length: 179
+
+
+
+Order=1&a=RealRankingInfo&st=60&c=ZhiShuRanking&PhoneOSNew=1&RStart=1410&DeviceID=[REDACTED]&VerSion=5.23.0.4&Index=0&REnd=1415&apiv=w44&Type=5&ZSType=7&
+```
+
+</details>
+
+
+**[222]** Date 日期
+
+**[223]** url中的index，第一页为0，第二页index为60，第三页为120，第n页为（n-1)*60
+
+
+**[225]** 返回：
+
+<details><summary>返回示例 24</summary>
+
+```json
+{
+    "list": [
+        [
+            "801660",板块代码
+            "通信",  //名称
+            7602, //强度
+            0.126,
+            0,
+            1405620402, //成交额
+            89906965,   //主力净额
+            293509488,
+            -203602523,
+            2.42,量比
+            5253626856256,
+            0,
+            10724700,       300万大单净额
+            6042991996224,
+            -1945712565,
+            32.4867,
+            23.5526,
+            -507,
+            0.126    
+            ],
+```
+
+</details>
+
+### 精选板块-当天历史
+
+<details><summary>返回示例 25</summary>
+
+```text
+https://apphwshhq.longhuvip.com/w1/api/index.php?Order=1&a=RealRankingInfo&st=60&c=ZhiShuRanking&PhoneOSNew=1&RStart=0925&DeviceID=[REDACTED]&VerSion=5.21.0.2&Index=0&REnd=0930&apiv=w42&Type=1&ZSType=7&
+
+
+
+Order=1，Type=1，表示默认按强度降序排序
+```
+
+</details>
+
+## 板块成分股
+
+### 板块成分股-当天历史：
+
+**[229]** 未测试： 支持9999
+
+**[230]** 大单净额排序：
+
+- `https://apphwshhq.longhuvip.com/w1/api/index.php?Order=1&TSZB=0&a=ZhiShuStockList_W8&st=60&c=ZhiShuRanking&PhoneOSNew=1&old=1&DeviceID=[REDACTED]&VerSion=5.21.0.2&IsZZ=0&Token=[REDACTED]&Index=0&REnd=0930&apiv=w42&Type=1&IsKZZType=0&UserID=[REDACTED]&TSZB_Type=0&filterType=0&PlateID=801074&RStart=0925`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+
+**[237]** 涨幅排序：
+
+- `https://apphwshhq.longhuvip.com/w1/api/index.php?Order=1&TSZB=0&a=ZhiShuStockList_W8&st=60&c=ZhiShuRanking&PhoneOSNew=1&old=1&DeviceID=[REDACTED]&VerSion=5.21.0.2&IsZZ=0&Token=[REDACTED]&Index=0&REnd=1500&apiv=w42&Type=-4&IsKZZType=0&UserID=[REDACTED]&TSZB_Type=0&filterType=0&PlateID=801074&RStart=0925`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[243]** 板块成分股-历史日期
+
+<details><summary>返回示例 26</summary>
+
+```text
+https://apphis.longhuvip.com/w1/api/index.php?Order=1&TSZB=0&a=ZhiShuStockList_W8&st=1000&c=ZhiShuRanking&PhoneOSNew=1&RStart=0925&old=1&DeviceID=[REDACTED]&VerSion=5.20.0.2&IsZZ=0&Token=[REDACTED]&Index=0&Date=2025-06-13&REnd=1500&apiv=w41&Type=1&IsKZZType=0&UserID=[REDACTED]&PlateID=801057&TSZB_Type=0&filterType=0&
+
+headers = {
+ "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+ "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+ }
+
+其中 Date 是日期，格式类似“2025-06-13”，
+“PlateID”是板块代码
+```
+
+</details>
+
+
+<details><summary>返回示例 27</summary>
+
+```json
+{
+    "list": [
+        [
+            "601138",  //股票代码
+            "工业富联",  //股票名称
+            "",
+            0,
+            "服务器、算力",
+            62.3,
+            2.18,  //涨幅
+            362617150,
+            0.12,
+            0.032113,
+            289886209861,
+            343553295,
+            -199497964,
+            144055331,
+            94.74,
+            55.02,
+            39.73,
+            0.12,
+            0.07,
+            0.05,
+            0,
+            7.55106,
+            0,
+            "",
+            "",
+            0.03,
+            "",
+            0,
+            "--",
+            "--",
+            "",
+            "",
+            "",
+            0,
+            0,
+            0,
+            0,
+            1205193901949,
+            1205193901949,
+            "",
+            0,
+            1,
+            "-5960776686",
+            "23216000000",
+            "34252733333",
+            "58199066666",
+            "73464900000",
+            "35.1853",
+            "20.7081",
+            "2022-03-31",
+            165075371,
+            "56.4627",
+            "16.405",
+            7.77,
+            -0.46,
+            0,
+            60.69,
+            "2.18",
+            20000,
+            20000,
+            "40.19",
+            "39.43",
+            "51.91"
+        ],
+```
+
+</details>
+
+## 涨停原因
+
+### 当天涨停原因：
+
+<details><summary>返回示例 28</summary>
+
+```text
+https://apphq.longhuvip.com/w1/api/index.php?a=GetKLineZhangTing&apiv=w24&c=StockLineData&StockID=000001
+
+“headers = {  
+    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",  
+    "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",  
+}”
+```
+
+</details>
+
+**[247]** 返回：
+
+<details><summary>返回示例 29</summary>
+
+```json
+{
+    "StockID": "001337",  //股票代码
+    "List": [
+        {
+            "Date": "2026-01-28",
+            "ZSCode": [
+                "801048"
+            ],
+            "PZSCode": 0,
+            "Reason": "黄金；1月28日，现货黄金涨势不减再创新高，首次突破5200美元/盎司，本月累计上涨逾880美元。\r\n\r\n黄金：2025年11月5日互动，截至2024年10月31日，公司梭罗沟金矿采矿许可证范围内经评审备案的资源量中，保有矿石资源量876万吨，保有金金属量28,130千克。梭罗沟金矿区挖金沟矿段保有金金属量为1,332千克。",  //开盘啦原因
+            "SCDW": "",
+            "SCLT": "日内龙一",
+            "GNSM": "1月28日，现货黄金涨势不减再创新高，首次突破5200美元/盎司，本月累计上涨逾880美元。\r\n\r\n黄金：2025年11月5日互动，截至2024年10月31日，公司梭罗沟金矿采矿许可证范围内经评审备案的资源量中，保有矿石资源量876万吨，保有金金属量28,130千克。梭罗沟金矿区挖金沟矿段保有金金属量为1,332千克。",
+            "Type": "0",
+            "Group_Str": "",
+            "Boom_ZS": "截止上午十点，沪金主连价格最高突破1176.88，涨幅超2.7%，创历史新高"
+        }
+    ],
+    "Time": 1769575529,
+    "ttag": 0.0022010000000000085,
+    "errcode": "0"
+}
+```
+
+</details>
+
+### 历史涨停原因：
+
+<details><summary>返回示例 30</summary>
+
+```python
+import requests
+import json
+
+url = "https://apphis.longhuvip.com/w1/api/index.php?a=GetKLineZhangTing&a=GetDayZhangTing&apiv=w24&apiv=w40&c=StockLineData&c=HisLimitResumption&StockID=000001\"&StockID=000001&st=25&PhoneOSNew=1&UserID=[REDACTED]&DeviceID=[REDACTED]&VerSion=5.19.0.0&Token=[REDACTED]&Index=0"
+headers = {"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)"}
+try:
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    try:
+        data = response.json()
+        print(json.dumps(data, indent=4, ensure_ascii=False))
+    except ValueError:
+        print(response.text)
+except requests.RequestException as e:
+    print(f"请求出错: {e}")
+```
+
+</details>
+
+**[249]** 返回：
+
+<details><summary>返回示例 31</summary>
+
+```json
+{
+    "StockID": "000001",
+    "List": [
+        {
+            "ZSCode": [
+                "801027"
+            ],
+            "Reason": "银行；平安银行股份有限公司主要从事经有关监管机构批准的各项商业银行业务。",
+            "Date": "2024-02-21",
+            "SCDW": "",
+            "SCLT": "日内龙一",
+            "GNSM": "平安银行股份有限公司主要从事经有关监管机构批准的各项商业银行业务。",
+            "Type": "0",
+            "PZSCode": "",
+            "Group_Str": "",
+            "Boom_ZS": ""
+        },
+```
+
+</details>
+
+
+## 实时连板涨停
+
+### [实时涨停 - 导出.py]
+
+### 1，涨停的首板
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?Order=0&a=DailyLimitPerformance&st=2000&c=HomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.18.0.2&Index=0&PidType=1&apiv=w39&Type=4&`
+
+**[255]** PidType=1 是一板，PidType=2 是二板，PidType=3 是三板 ，PidType=4 是四板，PidType=5，是更高
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+
+**[261]** 接口返回示例：
+
+<details><summary>返回示例 32</summary>
+
+```json
+{
+    "info": [
+        [
+            [
+                "002248",  // 股票代码
+                "华东数控", // 股票名称
+                0,
+                "",
+                1756776300, // 涨停时间
+                "新型工业化", // 涨停原因
+                94266592, // 封单
+                635186569, // 最大封单
+                233460041, // 主力净额
+                403982933, // 主力买入
+                -170522892, // 主力卖出
+                576763515, // 成交额
+                "工业母机、基础建设", // 
+                2868089937, // 实际流通
+                20.11, // 实际换手
+                1, //今
+                1,
+                2.04, // 振幅
+                "",
+                "801511", // 板块代码
+                3 // 涨停数量
+            ],
+```
+
+</details>
+
+
+### 2，涨停的2板
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?Order=0&a=DailyLimitPerformance&st=2000&c=HomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.18.0.2&Index=0&PidType=2&apiv=w39&Type=4&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[269]** 返回结构一样
+
+
+### 3，涨停的3板
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?Order=0&a=DailyLimitPerformance&st=2000&c=HomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.18.0.2&Index=0&PidType=3&apiv=w39&Type=4&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[277]** 返回结构一样
+
+
+### 4，涨停的4板
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?Order=0&a=DailyLimitPerformance&st=2000&c=HomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.18.0.2&Index=0&PidType=4&apiv=w39&Type=4&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[285]** 返回结构一样
+
+
+### 5，涨停的更高
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?Order=0&a=DailyLimitPerformance&st=2000&c=HomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.18.0.2&Index=0&PidType=5&apiv=w39&Type=4&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[293]** 返回结构一样
+
+
+## 历史涨停 接口
+
+### 1，历史涨停的首板
+
+- `https://apphis.longhuvip.com/w1/api/index.php?Order=0&st=1000&a=DailyLimitPerformance&c=HisHomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.7.0.12&Index=0&PidType=1&apiv=w31&Type=4&Day=2024-10-15&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[302]** 日期的参数是“Day”，日期的格式类似“2024-10-15”
+
+**[303]** “PidType=1”是几板
+
+
+**[305]** 接口返回示例：
+
+
+
+### 2，涨停的2板
+
+- `https://apphis.longhuvip.com/w1/api/index.php?Order=0&st=1000&a=DailyLimitPerformance&c=HisHomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.7.0.12&Index=0&PidType=2&apiv=w31&Type=4&Day=2024-10-15&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[314]** 返回结构一样
+
+<details><summary>返回示例 33</summary>
+
+```json
+{
+    "info": [
+        [
+            [
+                "002248",  //股票代码
+                "华东数控", //股票名称
+                0,
+                "",
+                1756776300, //涨停时间
+                "新型工业化", //涨停原因
+                94266592, //封单
+                635186569, //最大封单
+                233460041, //主力净额
+                403982933, //主力买入
+                -170522892, //主力卖出
+                576763515, //成交额
+                "工业母机、基础建设", //板块
+                2868089937, //实际流通
+                20.11, //实际换手
+                1,
+                1,
+                2.04, //振幅
+                "",
+                "801511", //板块代码
+                3 //涨停数量
+            ],
+```
+
+</details>
+
+### 3，涨停的3板
+
+- `https://apphis.longhuvip.com/w1/api/index.php?Order=0&st=1000&a=DailyLimitPerformance&c=HisHomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.7.0.12&Index=0&PidType=3&apiv=w31&Type=4&Day=2024-10-15&`
+
+
+**[318]** 返回结构一样
+
+
+### 4，涨停的4板
+
+- `https://apphis.longhuvip.com/w1/api/index.php?Order=0&st=1000&a=DailyLimitPerformance&c=HisHomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.7.0.12&Index=0&PidType=4&apiv=w31&Type=4&Day=2024-10-15&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[326]** 返回结构一样
+
+
+### 5，涨停的更高
+
+- `https://apphis.longhuvip.com/w1/api/index.php?Order=0&st=1000&a=DailyLimitPerformance&c=HisHomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.7.0.12&Index=0&PidType=5&apiv=w31&Type=4&Day=2024-10-15&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[334]** 返回结构一样
+
+
+
+## 未涨停的 - 实时接口
+
+### 1，未涨停的首板
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?Order=1&a=DailyLimitPerformance2&st=2000&apiv=w40&Type=5&c=HomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.19.0.0&Index=0&PidType=1&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[344]** 返回：
+
+**[345]** {
+
+**[346]** "info": [
+
+**[347]** [
+
+**[348]** [
+
+**[349]** "688585",  //股票代码
+
+**[350]** "上纬新材",  //股票名称
+
+**[351]** 1,
+
+**[352]** "",
+
+**[353]** 97.6,  //价格
+
+**[354]** 14.66,  //涨幅
+
+**[355]** "智元机器人、科创板",  //板块
+
+**[356]** 103220682,  //主力净额
+
+**[357]** 1420595725,  //主力买入
+
+**[358]** -1317375043,  //主力卖出
+
+**[359]** 2574205307,  //成交额
+
+**[360]** 6048830543,  //实际流通
+
+**[361]** 42.84,  //实际换手
+
+**[362]** "",
+
+**[363]** 16.73,  //振幅
+
+**[364]** "",
+
+**[365]** 1
+
+**[366]** ],
+
+
+
+
+### 2，未涨停的2板
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?Order=1&a=DailyLimitPerformance2&st=2000&apiv=w40&Type=5&c=HomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.19.0.0&Index=0&PidType=2&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[376]** 返回结构一样
+
+
+### 3，未涨停的3板
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?Order=1&a=DailyLimitPerformance2&st=2000&apiv=w40&Type=5&c=HomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.19.0.0&Index=0&PidType=3&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[384]** 返回结构一样
+
+
+
+### 4，未涨停的4板
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?Order=1&a=DailyLimitPerformance2&st=2000&apiv=w40&Type=5&c=HomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.19.0.0&Index=0&PidType=4&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[393]** 返回结构一样
+
+
+
+### 5，未涨停的更高
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?Order=1&a=DailyLimitPerformance2&st=2000&apiv=w40&Type=5&c=HomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.19.0.0&Index=0&PidType=5&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[402]** 返回结构一样
+
+
+
+## 历史 - 未涨停接口
+
+### 1，未涨停首板
+
+- `https://apphis.longhuvip.com/w1/api/index.php?Order=1&a=DailyLimitPerformance2&st=1000&c=HisHomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.21.0.0&Index=0&PidType=1&apiv=w42&Type=5&Day=2025-09-01&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[412]** 日期的参数是“Day”，日期的格式类似“2024-10-15”
+
+
+**[414]** 返回：
+
+<details><summary>返回示例 34</summary>
+
+```json
+{
+    "info": [
+        [
+            [
+                "688585",  //股票代码
+                "上纬新材",  //股票名称
+                1,
+                "",
+                97.6,  //价格
+                14.66,  //涨幅
+                "智元机器人、科创板",  //板块
+                103220682,  //主力净额
+                1420595725,  //主力买入
+                -1317375043,  //主力卖出
+                2574205307,  //成交额
+                6048830543,  //实际流通
+                42.84,  //实际换手
+                "",
+                16.73,  //振幅
+                "",
+                1
+            ],
+```
+
+</details>
+
+
+### 2，未涨停2板
+
+- `https://apphis.longhuvip.com/w1/api/index.php?Order=1&a=DailyLimitPerformance2&st=1000&c=HisHomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.21.0.0&Index=0&PidType=2&apiv=w42&Type=5&Day=2025-09-01&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[422]** 返回结构一样
+
+
+
+### 3，未涨停3板
+
+- `https://apphis.longhuvip.com/w1/api/index.php?Order=1&a=DailyLimitPerformance2&st=1000&c=HisHomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.21.0.0&Index=0&PidType=3&apiv=w42&Type=5&Day=2025-09-01&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[431]** 返回结构一样
+
+
+### 4，未涨停4板
+
+- `https://apphis.longhuvip.com/w1/api/index.php?Order=1&a=DailyLimitPerformance2&st=1000&c=HisHomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.21.0.0&Index=0&PidType=4&apiv=w42&Type=5&Day=2025-09-01&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[439]** 返回结构一样
+
+
+### 5，未涨停 更高
+
+- `https://apphis.longhuvip.com/w1/api/index.php?Order=1&a=DailyLimitPerformance2&st=1000&c=HisHomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.21.0.0&Index=0&PidType=4&apiv=w42&Type=5&Day=2025-09-01&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+
+## 百日新高
+
+**[449]** 板块排序
+
+- `https://apphwshhq.longhuvip.com/w1/api/index.php?a=GroupCount_w28&c=StockNewHigh&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.20.0.8&apiv=w41&Type=0_0_0_0_0&`
+
+<details><summary>返回示例 35</summary>
+
+```json
+{
+    "List": [
+        [
+            "芯片",
+            "76,18",
+            801001
+        ],
+        [
+            "算力",
+            "44,10",
+            801807
+        ],
+```
+
+</details>
+
+## 短线精灵
+
+- `https://apphq.longhuvip.com/w1/api/index.php?a=Radar&st=100&apiv=w33&c=HomeDingPan&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.11.0.6&Index=0&`
+
+<details><summary>返回示例 36</summary>
+
+```json
+{
+    "list": [
+        {
+            "time": 1778655419,
+            "status": "封涨大减",
+            "stock_name": "工业富联",
+            "plate_type": 1,
+            "status_color": 1,
+            "zf": "",
+            "content": "涨停封单大幅减少1.82亿元，剩余封单12.74亿元",
+            "content2": "剩余封单12.74亿",
+            "stockid": "601138",
+            "LBstatus": "首板"
+        },
+```
+
+</details>
+
+## 盘中人气热榜
+
+- `https://apphq.longhuvip.com/w1/api/index.php?Order=1&a=GetHotPHB&st=50&apiv=w29&Type=1&c=StockBidYiDong&PhoneOSNew=1&DeviceID=[REDACTED]`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+
+## 全球指数
+
+**[461]** url = "https://apphq.longhuvip.com/w1/api/index.php?a=GlobalCommon&apiv=w29&c=GlobalIndex&PhoneOSNew=1&UserID=[REDACTED]&DeviceID=[REDACTED]&Token=[REDACTED]&View=1%2C2%2C3%2C4%2C5%2C6"
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+```
+
+<details><summary>返回示例 37</summary>
+
+```text
+}{
+    "CYWWZS": [
+        {
+            "code": "DJI",
+            "prod_name": "道琼斯",
+            "last_px": "49760.560",
+            "turnover": "0.000",
+            "increase_rate": "0.11%",
+            "increase_amount": "56.09",
+            "cn": "0",
+            "state": "0",
+            "type": "4"
+        },
+```
+
+</details>
+
+## 指定个股的 分时大单-区间统计
+
+**[466]** 实时：
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?a=StockChouMaByTimeNew_W5&apiv=w41&c=StockYiDongKanPan&StockID=300322&PhoneOSNew=1&UserID=[REDACTED]&DeviceID=[REDACTED]&VerSion=5.20.0.2&Token=[REDACTED]&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[472]** 返回：
+
+<details><summary>返回示例 38</summary>
+
+```json
+{
+    "List": [
+        [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            "09:25",
+            0
+        ],
+                [
+            107652247,  //大于50万 
+            -5860228,  //30万到50万 
+            -22082083,  //10万到30万 
+            -79708852,  //小于10万 
+            107082081,  //
+            136,  //异动次数 
+            1733989884,  //成交金额 
+            646653955,  //主力买入 
+            -544861936,  //主力卖出 
+            "15:00",  //时间
+            11.81  //换手率 
+        ]
+    ],
+    "Time": 1778667468,
+    "ttag": 0.0012389999999999901,
+    "errcode": "0"
+}
+```
+
+</details>
+
+
+**[474]** 历史：
+
+- `https://apphis.longhuvip.com/w1/api/index.php?a=GetStockChouMa_New&c=StockL2History&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.20.0.2&Token=[REDACTED]&apiv=w41&Type=1&StockID=002265&UserID=[REDACTED]&Day=20250717&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[480]** 返回：
+
+<details><summary>返回示例 39</summary>
+
+```json
+{
+    "List": [
+        [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            "09:25",
+            0
+        ],
+                [
+            107652247,  //大于50万 
+            -5860228,  //30万到50万 
+            -22082083,  //10万到30万 
+            -79708852,  //小于10万 
+            107082081,  //
+            136,  //异动次数 
+            1733989884,  //成交金额 
+            646653955,  //主力买入 
+            -544861936,  //主力卖出 
+            "15:00",  //时间
+            11.81  //换手率 
+        ]
+    ],
+    "Time": 1778667468,
+    "ttag": 0.0012389999999999901,
+    "errcode": "0"
+}
+```
+
+</details>
+
+## 指定个股-大单净额
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?a=GetStockDaDanTrendIncremental&c=StockL2Data&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.20.0.2&Token=[REDACTED]&Time=15%3A00&apiv=w41&StockID=300322&UserID=[REDACTED]&`
+
+<details><summary>返回示例 40</summary>
+
+```json
+{
+    "dadanjinge": [
+        [
+            "15:00",
+            101792019 //大单净额
+        ]
+    ],
+    "time": 1778656081,
+    "time2": 1778668526,
+    "day": "20260513",
+    "max": 109160696,
+    "min": -13346785,
+    "code": "300322",
+    "errcode": "0",
+    "ttag": 0.00038199999999999346
+}
+```
+
+</details>
+
+## 涨停基因
+
+**[484]** url = "https://apphwhq.longhuvip.com/w1/api/index.php?a=GetZhangTingGene&apiv=w42&c=StockL2Data&StockID=001330&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.21.0.0&"
+ headers = {
+ "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+ "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+ }
+
+<details><summary>返回示例 41</summary>
+
+```json
+{
+  "List": [9, 3, 100, 88.8889, 11.1111, 12.5],
+  "ttag": 0.000313000000000007,
+  "errcode": "0"
+}
+
+其中"List"中的6个值，依次为：涨停家数，5%溢价次，次日红盘%，首板封板率，首板破板率，连板率
+```
+
+</details>
+
+## 大面股
+
+- `https://apphis.longhuvip.com/w1/api/index.php?Date=2024-03-29&Index=0&PhoneOSNew=2&VerSion=5.13.0.3&a=GetPMSL_KQXY&apiv=w35&c=FuPanLa&st=20`
+
+**[487]** 返回：
+
+<details><summary>返回示例 42</summary>
+
+```json
+{
+    "List": [
+        [
+            "002676",
+            "顺威股份",
+            "-1.18%",
+            -10.2,
+            "",
+            0,
+            "聚丙烯、壳资源"
+        ],
+```
+
+</details>
+
+## 板块内涨停数
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?a=GetPlate_Info_QJ&apiv=w41&c=ZhiShuRanking&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.20.0.2&PlateID=801062&Date=&`
+
+<details><summary>返回示例 43</summary>
+
+```json
+{
+    "List": [
+        2,  //排名
+        3682,  //强度
+        351385938717,  //成交额
+        34765068,  //主力净额
+        -0.606,  //涨幅
+        5,  //涨停数
+        904917466,  //涨停封单
+        662596257  //大单封单
+    ],
+    "Time": 1763436472,
+    "Date": "2025-11-18",
+    "Min": "0925",
+    "Max": "1125",
+    "ttag": 0.005740000000000023,
+    "errcode": "0"
+}
+```
+
+</details>
+
+## 板块竞价异动
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?a=GetBKJJ_W36&c=StockBidYiDong&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.20.0.8&Token=[REDACTED]&apiv=w41&UserID=[REDACTED]&`
+
+**[492]** 返回：
+
+<details><summary>返回示例 44</summary>
+
+```json
+{
+    "Day": "2026-05-13",
+    "List1": [
+        [
+            "801045",
+            "医药",
+            6.3,  //竞价爆量
+            507679648,  //异动金额
+            -1309,
+            -74957647  //主力净额
+        ],
+```
+
+</details>
+
+### 异动板块的个股
+
+- `https://apphwhq.longhuvip.com/w1/api/index.php?Order=1&a=GetBKJJBL&st=20&IsLB=0&c=StockBidYiDong&PhoneOSNew=1&IsZT=0&DeviceID=[REDACTED]&VerSion=5.20.0.8&Isst=1&Token=[REDACTED]&Index=0&filter=1&apiv=w41&Type=1&StockID=801519&UserID=[REDACTED]&`
+
+<details><summary>返回示例 45</summary>
+
+```json
+{
+    "Day": "2026-05-13",
+    "List": [
+        [
+            "688506",
+            "百利天恒",
+            264.6, 
+            0.57,  //实时的涨幅 
+            11,  //竞价的量比 
+            2397745,  //竞价的金额 
+            1.46,  //竞价的涨幅 
+            1067797,  //竞价期间大单净额 
+            0.01,  //竞价换手率 
+            23658745156,  //实际流通市值 
+            "创新药、科创板",
+            1,
+            "",
+            ""
+        ],
+```
+
+</details>
+
+## 区间统计
+
+## 板块区间统计
+
+## 板块列表（end为当日）
+
+**[498]** 接口：
+
+- `https://apphwshhq.longhuvip.com/w1/api/index.php?Order=1&a=GetInterviewsByDateZS&st=30&c=StockLineData&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.20.0.8&DEnd=2026-05-13&Index=0&DStart=2025-08-18&apiv=w41&Type=1&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[504]** 返回：
+
+<details><summary>返回示例 46</summary>
+
+```json
+{
+    "List": [
+        [
+            "801997",  //板块代码
+            "电子布",  //板块名称
+            28.34,  //区间涨幅
+            4524573625,  //主力买入
+            -4358139576,  //主力卖出
+            166434049,  //区间净额
+            42697209280,  //区间成交
+            253980319904,  //实际流通
+            1,  //净流入天数
+            1,  //未知，不需要显示
+            -28195544,  //未知，不需要显示
+            8512.75  //未知，不需要显示
+        ],
+```
+
+</details>
+
+## 全市场个股区间统计（end为当日）
+
+- `https://apphwshhq.longhuvip.com/w1/api/index.php?Order=1&a=GetInterviewsByDateStock&st=30&c=StockLineData&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.20.0.8&DEnd=2025-08-19&Index=0&DStart=2025-08-12&apiv=w41&Type=2&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+<details><summary>返回示例 47</summary>
+
+```json
+{
+    "List": [
+        [
+            "300620",  //股票代码
+            "光库科技",  //股票名称
+            99.6,  //未知，不需要显示
+            76.14,  //区间涨幅
+            7915262102,  //主力买入
+            -8264866047,  //主力卖出
+            -349603945,  //区间净额
+            145.915,  //实际换手
+            15310901542,  //区间成交
+            13013432509,  //实际流通
+            "并购重组、CPO/MPO",  //板块
+            1,  //融券
+            "游资",  //买入类型
+            3,  //净流入天数
+            426588710,  //未知，不需要显示
+            0  //未知，不需要显示
+        ]
+```
+
+</details>
+
+## 机构增仓，沪深港通
+
+## 机构增仓
+
+### 实时接口（最新季度）:
+
+- `https://apphis.longhuvip.com/w1/api/index.php?c=ZhuLiChiCang&a=GGList_JGCC&Type=1&Order=1&Index=0&st=30&IsBX=0&UserID=[REDACTED]&Token=[REDACTED]&DeviceID=[REDACTED]`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+### 历史接口:
+
+- `https://apphis.longhuvip.com/w1/api/index.php?c=ZhuLiChiCang&a=GGList_JGCC&Type=1&Order=1&Index=0&st=30&Date=2025-09-30&IsBX=0&UserID=[REDACTED]&Token=[REDACTED]&DeviceID=[REDACTED]`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[525]** 注意：关于”历史接口“，
+
+**[526]** 2025年第三季度，对应的接口里的“Date”的值是 2025-09-30
+
+**[527]** 2025年第二季度，对应的接口里的“Date”的值是 2025-06-30
+
+**[528]** 2025年第一季度，对应的接口里的“Date”的值是 2025-03-31
+
+**[529]** 2024年第四季度，对应的接口里的“Date”的值是 2024-12-31
+
+**[530]** 2024年第三季度，对应的接口里的“Date”的值是 2024-09-30
+
+**[531]** 2024年第二季度，对应的接口里的“Date”的值是 2024-06-30
+
+
+
+
+## 机构增仓_个股-接口
+
+
+### 实时接口（最新季度）、历史接口：
+
+- `https://apphis.longhuvip.com/w1/api/index.php?c=ZhuLiChiCang&a=GGList_JGCC_Plate_Stocks&IndexID=801001&Type=1&Order=1&Index=0&st=20&IsBX=0&SonIndexID=&Date=2025-12-31&UserID=[REDACTED]&Token=[REDACTED]&DeviceID=[REDACTED]`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[543]** 注意：
+
+**[544]** 2025年第四季度，对应的接口里的“Date”的值是 2025-12-31
+
+**[545]** 2025年第三季度，对应的接口里的“Date”的值是 2025-09-30
+
+**[546]** 2025年第二季度，对应的接口里的“Date”的值是 2025-06-30
+
+**[547]** 2025年第一季度，对应的接口里的“Date”的值是 2025-03-31
+
+**[548]** 2024年第四季度，对应的接口里的“Date”的值是 2024-12-31
+
+**[549]** 2024年第三季度，对应的接口里的“Date”的值是 2024-09-30
+
+**[550]** 2024年第二季度，对应的接口里的“Date”的值是 2024-06-30
+
+
+
+
+## 沪深港通_北向资金_按板块
+
+
+### 实时接口：（最新季度）
+
+- `https://apphis.longhuvip.com/w1/api/index.php?Order=1&a=GGList_BXZJ&st=20&c=ZhuLiChiCang&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.23.0.4&Token=[REDACTED]&Index=0&Date=&apiv=w44&Type=1&UserID=[REDACTED]&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+### 历史接口：
+
+- `https://apphis.longhuvip.com/w1/api/index.php?Order=1&a=GGList_BXZJ&st=20&c=ZhuLiChiCang&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.23.0.4&Token=[REDACTED]&Index=0&Date=2025-12-31&apiv=w44&Type=1&UserID=[REDACTED]&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[568]** 注意：关于”历史接口“，
+
+**[569]** 2025年第四季度，对应的接口里的“Date”的值是 2025-12-31
+
+**[570]** 2025年第三季度，对应的接口里的“Date”的值是 2025-09-30
+
+**[571]** 2025年第二季度，对应的接口里的“Date”的值是 2025-06-30
+
+**[572]** 2025年第一季度，对应的接口里的“Date”的值是 2025-03-31
+
+**[573]** 2024年第四季度，对应的接口里的“Date”的值是 2024-12-31
+
+**[574]** 2024年第三季度，对应的接口里的“Date”的值是 2024-09-30
+
+
+
+
+## 沪深港通_北向资金_按板块-个股
+
+
+## 实时接口：（最新季度）
+
+- `https://apphis.longhuvip.com/w1/api/index.php?Order=1&a=GGList_BXZJ_Stocks&IndexID=801660&st=20&c=ZhuLiChiCang&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.23.0.4&Token=[REDACTED]&Index=0&Date=&apiv=w44&Type=1&UserID=[REDACTED]&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+## 历史接口：
+
+- `https://apphis.longhuvip.com/w1/api/index.php?Order=1&a=GGList_BXZJ_Stocks&IndexID=801088&st=20&c=ZhuLiChiCang&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.23.0.4&Token=[REDACTED]&Index=0&Date=2025-12-31&apiv=w44&Type=1&UserID=[REDACTED]&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[592]** 注意：关于”历史接口“，
+
+**[593]** 2025年第四季度，对应的接口里的“Date”的值是 2025-12-31
+
+**[594]** 2025年第三季度，对应的接口里的“Date”的值是 2025-09-30
+
+**[595]** 2025年第二季度，对应的接口里的“Date”的值是 2025-06-30
+
+**[596]** 2025年第一季度，对应的接口里的“Date”的值是 2025-03-31
+
+**[597]** 2024年第四季度，对应的接口里的“Date”的值是 2024-12-31
+
+**[598]** 2024年第三季度，对应的接口里的“Date”的值是 2024-09-30
+
+
+
+## 异动提醒
+
+## 异动实时接口
+
+- `https://apphwshhq.longhuvip.com/w1/api/index.php?a=GetPianLiZhi_Index&apiv=w44&c=StockBidYiDong&ZDJK_Type=1&PhoneOSNew=1&UserID=[REDACTED]&DeviceID=[REDACTED]&VerSion=5.23.0.4&Token=[REDACTED]&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[608]** 返回：
+
+<details><summary>返回示例 48</summary>
+
+```json
+{
+    "Day": "2026-05-13",
+    "Many_Num": 19,
+    "Time": 1778660552,
+    "List": [
+        [
+            "603629",
+            "利通电子",
+            1,
+            "连续30个交易日内涨幅偏离值累计达到 200%",
+            0,
+            24,
+            181.31,
+            "涨幅达到6.43%将触发严重异动",
+            6.43,
+            181.31,
+            "",
+            183.82,
+            "未达到严重异动条件"
+        ],
+```
+
+</details>
+
+## 股东变更
+
+- `https://applhb.longhuvip.com/w1/api/index.php?Order=10&a=GuDongRenShu&st=50&c=YiDianCangWei&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.23.0.4&Token=[REDACTED]&Index=0&ShowDate=0&IsNew=0&EndDate=2026-04-15&JiangFu=1&apiv=w44&StratDate=2026-04-01&UserID=[REDACTED]&Tag=0&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+## 股东追踪，追股东
+
+- `https://applhb.longhuvip.com/w1/api/index.php?c=JGTracking&a=JGStockListox&OrderType=0&index=0&Type=1&st=46&JGID=5&UserID=[REDACTED]&Token=[REDACTED]&DeviceID=[REDACTED]`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+## 股东追踪，追个股
+
+- `https://applhb.longhuvip.com/w1/api/index.php?a=GetJGNameID&c=JGTracking&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.23.0.4&IsPer=1&apiv=w44&StockID=002600&Day=2026-03-27&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+## 个股 - 全部相关 概念板块
+
+- `https://apphwshhq.longhuvip.com/w1/api/index.php?a=GetStockIDPlate&apiv=w43&Type=2&c=StockL2Data&StockID=002931&PhoneOSNew=1&UserID=[REDACTED]&DeviceID=[REDACTED]&VerSion=5.22.0.2&Token=[REDACTED]&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+## 新闻快讯
+
+## 头条
+
+- `https://apparticle.longhuvip.com/w1/api/index.php?a=GetTopList&st=1&apiv=w44&c=PCNewsFlash&PhoneOSNew=1&UserID=[REDACTED]&DeviceID=[REDACTED]&VerSion=5.23.0.4&Token=[REDACTED]&Index=0&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[640]** 返回：
+
+<details><summary>返回示例 49</summary>
+
+```json
+{
+    "List": [
+        {
+            "Date": "2026-05-13",
+            "Detail": [
+                {
+                    "ID": "47593694496508489",
+                    "Date": "2026-05-13",
+                    "Title": "国台办：将支持福建不断探索海峡两岸融合发展新路径、新模式",
+                    "Content": "<p>财联社5月13日讯，国务院台办举行例行新闻发布会。</p><p><strong>上海居民何时可赴台湾本岛旅游？国台办回应</strong></p><p>有记者问：近日，上海市文旅局发布公告，宣布上海居民可通过上海市、福建省具备相关资质的旅行社报名赴金门、马祖团队游和个人游。请问目前相关情况进展如何？何时可实现上海居民赴台湾本岛旅游？</p>",
+                    "Sort": "1",
+                    "IsDel": "0",
+                    "State": "1",
+                    "AddTime": "1778640402",
+                    "UpTime": "1778642810",
+                    "CID": "47593694496508489"
+                },
+```
+
+</details>
+
+## 新闻
+
+- `https://apparticle.longhuvip.com/w1/api/index.php?a=GetList&st=20&c=PCNewsFlash&PhoneOSNew=1&DeviceID=[REDACTED]&VerSion=5.23.0.4&Token=[REDACTED]&Index=0&apiv=w44&Type=0&UserID=[REDACTED]&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+**[647]** 返回：
+
+<details><summary>返回示例 50</summary>
+
+```json
+{
+    "List": [
+        {
+            "CID": "1705985",
+            "Time": "1778660038",
+            "Title": "蜀道装备：氦气价格上涨有望为公司氦气业务带来积极影响",
+            "Type": "0",
+            "PushUrl": "",
+            "Source": "e公司",
+            "IsSDXZ": "0",
+            "AiRate": null,
+            "Content": "【蜀道装备：氦气价格上涨有望为公司氦气业务带来积极影响】5月13日电，蜀道装备(300540)5月13日在互动平台表示，公司高度关注近期国内氦气市场的供需变化与价格趋势，控股子公司内蒙古深冷特种气体有限公司运营的LNG-BOG提氦装置已实现稳定生产与销售，氦气价格上涨有望为公司氦气业务带来积极影响，预计本年度将贡献一定收益。为把握市场机遇，公司将多措并举加大供应力度：一是持续优化内蒙古雅海提氦装置工艺，提升生产效率与产品竞争力；二是持续拓宽销售渠道，全力提升市场份额与经营业绩。",
+            "Stocks": [
+                [
+                    "300540",
+                    "蜀道装备",
+                    "-0.73%"
+                ]
+            ],
+```
+
+</details>
+
+## 明天炒什么
+
+## 明天炒什么（列表）
+
+- `https://applhb.longhuvip.com/w1/api/index.php?a=InfoList&st=10&apiv=w44&c=Topic&PhoneOSNew=1&UserID=[REDACTED]&DeviceID=[REDACTED]&VerSion=5.23.0.4&Token=[REDACTED]&Index=0&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+
+## 明天炒什么 利好个股
+
+- `https://applhb.longhuvip.com/w1/api/index.php?a=InfoZS&apiv=w44&c=Topic&PhoneOSNew=1&UserID=[REDACTED]&DeviceID=[REDACTED]&VerSion=5.23.0.4&ZS=801660&Token=[REDACTED]&ID=2160&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+
+## 明天炒什么 文章内容
+
+- `https://applhb.longhuvip.com/w1/api/index.php?a=InfoGet&apiv=w44&c=Topic&PhoneOSNew=1&UserID=[REDACTED]&DeviceID=[REDACTED]&VerSion=5.23.0.4&Token=[REDACTED]&ID=2160&`
+
+```python
+headers = {
+"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+"User-Agent": "Dalvik/2.1.0 (Linux; U; Android 14; V2178A Build/UP1A.231005.007)",
+}
+```
+
+
+

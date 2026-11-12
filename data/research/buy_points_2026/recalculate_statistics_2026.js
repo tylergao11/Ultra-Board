@@ -1,6 +1,10 @@
 const fs = require('fs');
 
 const total = JSON.parse(fs.readFileSync('一字首开研究总表.json', 'utf8'));
+const tradeStudyPath = '一字首开买卖研究表.json';
+const tradeStudy = JSON.parse(fs.readFileSync(tradeStudyPath, 'utf8'));
+// This script reproduces the archived auction-ranking baseline only.
+// Current first-touch decisions are recorded separately in the trade study.
 const audit = JSON.parse(fs.readFileSync('data/research/buy_points_2026/audit_2026_findings.json', 'utf8'));
 const buyPointObservations = JSON.parse(fs.readFileSync('data/research/buy_points_2026/buy_point_observations.json', 'utf8'));
 const records = total['一字首开股票与数据'].filter((record) => String(record.关注日期 || '').startsWith('2026-'));
@@ -281,9 +285,9 @@ const output = {
 
 fs.writeFileSync('data/research/buy_points_2026/statistics_2026.json', `${JSON.stringify(output, null, 2)}\n`, 'utf8');
 if (output.status.startsWith('complete:')) {
-  total['2026统计结果'] = {
+  tradeStudy.迁移前统计存档['2026统计结果'] = {
     数据截至: tradingDays.at(-1),
-    状态: '已按当前正式口径重算并通过一致性核验',
+    状态: '原竞价排名口径重算，仅作迁移前统计资料',
     统计摘要: statistics,
     买入样本: output.buySamples.map((sample) => ({
       首开日期: sample.date,
@@ -303,6 +307,6 @@ if (output.status.startsWith('complete:')) {
     })),
     统计来源: 'data/research/buy_points_2026/statistics_2026.json',
   };
-  fs.writeFileSync('一字首开研究总表.json', `${JSON.stringify(total, null, 2)}\n`, 'utf8');
+  fs.writeFileSync(tradeStudyPath, `${JSON.stringify(tradeStudy, null, 2)}\n`, 'utf8');
 }
 console.log(JSON.stringify({ status: output.status, statistics }, null, 2));

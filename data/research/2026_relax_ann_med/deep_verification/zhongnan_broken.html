@@ -1,0 +1,3548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=680">
+    <script>
+    (function () {
+        // 设计稿固定 680px：必须在 head 尽早设置，且用 screen.width（不受当前 viewport 影响）
+        // 否则手机首屏会按错误宽度渲染，需要用户手动缩放
+        var DESIGN_WIDTH = 680;
+        var meta = document.querySelector('meta[name=viewport]');
+        function adjustViewport() {
+            if (!meta) return;
+            var orientation = window.orientation;
+            var sw = window.screen.width;
+            var sh = window.screen.height;
+            // 横屏取较长边作为“设备宽度”
+            var deviceWidth = (orientation === 90 || orientation === -90)
+                ? Math.max(sw, sh)
+                : Math.min(sw, sh);
+            if (!deviceWidth) {
+                deviceWidth = window.innerWidth || document.documentElement.clientWidth || DESIGN_WIDTH;
+            }
+            if (deviceWidth > DESIGN_WIDTH) {
+                meta.setAttribute('content', 'width=device-width, initial-scale=1.0');
+            } else {
+                var scale = deviceWidth / DESIGN_WIDTH;
+                meta.setAttribute(
+                    'content',
+                    'width=' + DESIGN_WIDTH +
+                    ', initial-scale=' + scale +
+                    ', maximum-scale=' + scale +
+                    ', minimum-scale=' + scale +
+                    ', user-scalable=no'
+                );
+            }
+        }
+        adjustViewport();
+        // 仅在旋转时重算；不要绑 resize（地址栏显隐会误触发，导致比例跳动）
+        window.addEventListener('orientationchange', function () {
+            setTimeout(adjustViewport, 300);
+        });
+    })();
+    </script>
+    
+<title>2026-08-26 涨停炸板_分歧强度与回封质量分析 - 芦苇复盘</title>
+<meta name="description" content="涨停炸板，重点跟踪炸板个股的分歧与回封质量，帮助评估资金承接能力与情绪稳定性，识别潜在拐点并提前预警高风险阶段。"/>
+
+    <link rel="stylesheet" href="/static/app.css">
+    <link rel="shortcut icon" href="/static/favicon.ico" />
+</head>
+<body>
+    
+    
+    <div class="bg-primary">
+        <div class="container mx-auto flex items-center justify-between gap-2 text-white lg:py-0">
+            <a href="/" class="flex min-w-0 shrink-0 items-center space-x-2 mr-2 lg:mr-10">
+                <span class="size-8 shrink-0 icon-[tabler--abacus]"></span>
+                <span class="truncate text-lg font-medium leading-tight lg:text-2xl">芦苇复盘</span>
+            </a>
+            <ul class="navbar-nav hidden lg:flex flex-1 min-w-0 items-center justify-start">
+                
+                <li><a href="/" class="">首页</a></li>
+                
+                <li><a href="/bidding/" class="">竞价看板</a></li>
+                
+                <li><a href="/trading/" class="">盘中看板</a></li>
+                
+                <li><a href="/review/" class="active">复盘看板</a></li>
+                
+                <li><a href="/lhb/" class="">龙虎榜</a></li>
+                
+                <li><a href="/bjs/" class="">北交所</a></li>
+                
+                <li><a href="/ggt/" class="">港股通</a></li>
+                
+                <li><a href="/about" class="">关于本站</a></li>
+                
+            </ul>
+            <ul class="navbar-nav flex lg:hidden flex-1 min-w-0 items-center justify-start overflow-x-auto">
+                
+                <li class="shrink-0"><a href="/bidding/" class="">竞价看板</a></li>
+                
+                <li class="shrink-0"><a href="/trading/" class="">盘中看板</a></li>
+                
+                <li class="shrink-0"><a href="/review/" class="active">复盘看板</a></li>
+                
+                <li class="shrink-0"><a href="/lhb/" class="">龙虎榜</a></li>
+                
+                <li class="shrink-0"><a href="/bjs/" class="">北交所</a></li>
+                
+            </ul>
+            <div class="flex items-center shrink-0 gap-2">
+                <a href="/about" class="lg:hidden text-sm whitespace-nowrap px-1 ">关于本站</a>
+                <button type="button" id="site-nav-drawer-open" class="lg:hidden inline-flex items-center justify-center size-9 rounded-lg border border-white/40 bg-white/10 hover:bg-white/20 transition-colors" aria-label="打开导航菜单" aria-expanded="false" aria-controls="site-nav-drawer">
+                    <span class="icon-[tabler--menu-2] size-5"></span>
+                </button>
+                <a href="/search" class="flex items-center justify-center size-8 rounded-full border border-white/50 bg-white/15 hover:bg-white/25 transition-colors" title="股票搜索">
+                    <span class="icon-[tabler--search] size-5 stroke-[2]"></span>
+                </a>
+            </div>
+        </div>
+    </div>
+    <div id="site-nav-drawer-backdrop" class="site-nav-drawer-backdrop fixed inset-0 z-[100] bg-black/50 opacity-0 pointer-events-none transition-opacity duration-200 lg:hidden" aria-hidden="true"></div>
+    <div id="site-nav-drawer" class="site-nav-drawer pointer-events-none fixed inset-y-0 left-0 z-[101] flex w-[min(22rem,88vw)] max-w-full -translate-x-full flex-col bg-primary text-white shadow-xl transition-transform duration-200 ease-out lg:hidden" role="dialog" aria-modal="true" aria-labelledby="site-nav-drawer-title" aria-hidden="true">
+        <div class="flex items-center justify-between gap-2 border-b border-white/15 px-3 py-3">
+            <span id="site-nav-drawer-title" class="text-lg font-medium">芦苇复盘</span>
+            <button type="button" id="site-nav-drawer-close" class="inline-flex size-9 items-center justify-center rounded-lg hover:bg-white/15" aria-label="关闭菜单">
+                <span class="icon-[tabler--x] size-6"></span>
+            </button>
+        </div>
+        <nav class="flex-1 overflow-y-auto py-2" aria-label="主导航">
+            <ul>
+                
+                <li>
+                    <a href="/" class=" site-nav-drawer-link block px-4 py-3.5 text-base border-b border-white/10 hover:bg-white/10">首页</a>
+                </li>
+                
+                <li>
+                    <a href="/bidding/" class=" site-nav-drawer-link block px-4 py-3.5 text-base border-b border-white/10 hover:bg-white/10">竞价看板</a>
+                </li>
+                
+                <li>
+                    <a href="/trading/" class=" site-nav-drawer-link block px-4 py-3.5 text-base border-b border-white/10 hover:bg-white/10">盘中看板</a>
+                </li>
+                
+                <li>
+                    <a href="/review/" class="active site-nav-drawer-link block px-4 py-3.5 text-base border-b border-white/10 hover:bg-white/10">复盘看板</a>
+                </li>
+                
+                <li>
+                    <a href="/lhb/" class=" site-nav-drawer-link block px-4 py-3.5 text-base border-b border-white/10 hover:bg-white/10">龙虎榜</a>
+                </li>
+                
+                <li>
+                    <a href="/bjs/" class=" site-nav-drawer-link block px-4 py-3.5 text-base border-b border-white/10 hover:bg-white/10">北交所</a>
+                </li>
+                
+                <li>
+                    <a href="/ggt/" class=" site-nav-drawer-link block px-4 py-3.5 text-base border-b border-white/10 hover:bg-white/10">港股通</a>
+                </li>
+                
+                <li>
+                    <a href="/about" class=" site-nav-drawer-link block px-4 py-3.5 text-base border-b border-white/10 hover:bg-white/10">关于本站</a>
+                </li>
+                
+            </ul>
+        </nav>
+    </div>
+
+    
+        
+        
+
+        <div class="bg-error-content">
+            <div class="container mx-auto py-2 flex flex-col md:flex-row md:justify-between items-center text-sm">
+                
+                <div class="flex md:space-x-3 text-secondary">
+                    <div class="flex space-x-2">
+                        <span>上证指数</span>
+                        
+                        <p class="
+                         text-info 
+                        ">
+                            <span>3651.72</span>
+                            <span class="text-secondary"> / </span>
+                            <span>-0.79%</span>
+                        </p>
+                    </div>
+                    <div>
+                        <span>两市成交 <span class="text-primary">1.85万亿</span></span>
+                        
+                        <span>较昨日 <span class="
+                             text-error 
+                        ">2637亿</span></span>
+                    </div>
+                </div>
+                
+                <div class="flex space-x-3 text-secondary">
+                    <span class="font-bold">热门板块</span>
+                    <div class="flex items-center space-x-3">
+                        
+                        <a class="link link-secondary link-hover"
+                        href="/review/sector/%E5%A4%A7%E6%B6%88%E8%B4%B9">大消费 (8家)</a>
+                        
+                        <a class="link link-secondary link-hover"
+                        href="/review/sector/%E6%9C%BA%E5%99%A8%E4%BA%BA">机器人 (6家)</a>
+                        
+                        <a class="link link-secondary link-hover"
+                        href="/review/sector/%E5%85%89%E4%BC%8F">光伏 (2家)</a>
+                        
+                        <a class="link link-secondary link-hover"
+                        href="/review/sector/%E5%8C%BB%E8%8D%AF">医药 (2家)</a>
+                        
+                        <a class="link link-secondary link-hover"
+                        href="/review/sector/%E4%B8%9A%E7%BB%A9%E5%A2%9E%E9%95%BF">业绩增长 (2家)</a>
+                        
+                    </div>
+                </div>
+            </div>
+        </div>
+    
+
+    
+<div class="container mx-auto mt-6">
+    <div class="flex justify-between">
+        <div class="flex items-center md:space-x-6 flex-1">
+            <div class="flex items-center space-x-1 max-md:hidden">
+                <span class="size-8 icon-[tabler--arrow-big-up-lines] text-primary"></span>
+                <span class="text-2xl font-bold">复盘看板</span>
+            </div>
+            <ul class="flex space-x-2 section-nav">
+                
+
+
+<ul class="flex gap-2 section-nav flex-wrap">
+    
+        <li><a href="/review/limitup" class="btn btn-text">今日涨停</a></li>
+    
+        <li><a href="/review/limitup_column" class="btn btn-text">涨停梯队</a></li>
+    
+        <li><a href="/review/action" class="btn btn-text">异动解析</a></li>
+    
+        <li><a href="/review/limitup_broken" class="btn btn-primary">涨停炸板</a></li>
+    
+        <li><a href="/review/limitdown" class="btn btn-text">今日跌停</a></li>
+    
+        <li><a href="/review/capital_flow" class="btn btn-text">资金流向</a></li>
+    
+        <li><a href="/review/recent_boards" class="btn btn-text">近期连板</a></li>
+    
+        <li><a href="/review/kcb_surge" class="btn btn-text">科创板异动</a></li>
+    
+        <li><a href="/review/ema_cross_up" class="btn btn-text">九五至尊</a></li>
+    
+        <li><a href="/review/ema_cross_down" class="btn btn-text">潜龙在渊</a></li>
+    
+</ul>
+
+            </ul>
+        </div>
+        <div class="dropdown relative">
+            <div class="dropdown-toggle btn btn-sm btn-info rounded-full">
+                <span>08-26</span>
+                <span class="icon-[tabler--chevron-down] dropdown-open:rotate-180 size-4"></span>
+            </div>
+            <div class="dropdown-menu dropdown-open:opacity-100 hidden">
+                <div class="grid grid-cols-2 gap-2 p-2">
+                    
+                        <a href="/review/limitup_broken/2026-11-12" 
+                        class="btn btn-sm btn-outline btn-info rounded-full">2026-11-12</a>
+                    
+                        <a href="/review/limitup_broken/2026-11-11" 
+                        class="btn btn-sm btn-outline btn-info rounded-full">2026-11-11</a>
+                    
+                        <a href="/review/limitup_broken/2026-11-10" 
+                        class="btn btn-sm btn-outline btn-info rounded-full">2026-11-10</a>
+                    
+                        <a href="/review/limitup_broken/2026-11-09" 
+                        class="btn btn-sm btn-outline btn-info rounded-full">2026-11-09</a>
+                    
+                        <a href="/review/limitup_broken/2026-11-06" 
+                        class="btn btn-sm btn-outline btn-info rounded-full">2026-11-06</a>
+                    
+                        <a href="/review/limitup_broken/2026-11-05" 
+                        class="btn btn-sm btn-outline btn-info rounded-full">2026-11-05</a>
+                    
+                        <a href="/review/limitup_broken/2026-11-04" 
+                        class="btn btn-sm btn-outline btn-info rounded-full">2026-11-04</a>
+                    
+                        <a href="/review/limitup_broken/2026-11-03" 
+                        class="btn btn-sm btn-outline btn-info rounded-full">2026-11-03</a>
+                    
+                        <a href="/review/limitup_broken/2026-11-02" 
+                        class="btn btn-sm btn-outline btn-info rounded-full">2026-11-02</a>
+                    
+                        <a href="/review/limitup_broken/2026-10-30" 
+                        class="btn btn-sm btn-outline btn-info rounded-full">2026-10-30</a>
+                    
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="p-3 border rounded-lg flex flex-wrap text-sm gap-2 mt-6">
+        
+        <a href="#医药" class="btn btn-sm btn-outline btn-text rounded-full">
+            医药 (5家)
+        </a>
+        
+        <a href="#其他" class="btn btn-sm btn-outline btn-text rounded-full">
+            其他 (12家)
+        </a>
+        
+    </div>
+
+    
+    <div>
+        <div class="mt-6 alert alert-soft alert-primary flex justify-between" id="医药">
+            <div class="flex space-x-4">
+                <span class="font-medium">医药 (5家)</span>
+                <div>
+                    <span>54.05亿</span>
+                </div>
+                <span class="text-sm hidden md:block">海创药业与Evommune达成VAV1分子胶降解剂海外授权合作</span>
+            </div>
+            <a href="/review/sector/%E5%8C%BB%E8%8D%AF" class="link link-primary">
+                近期表现
+            </a>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+            
+                <div data-stock-card class="border rounded relative overflow-hidden">
+                    
+                    
+                    
+                    <div class="p-2 space-y-1">
+                        <p>
+                            <a class="underline text-primary font-medium" href="https://quote.eastmoney.com/sz002880.html?jump_to_web=true" target="_blank">002880</a>
+                            <a class="underline text-primary font-medium " href="/stock/detail/SZ002880">卫光生物</a>
+                            <span data-percent class=" text-error ">7.41%</span> 
+                            <span data-amount class=" bg-warning-content ">3.7亿</span>
+                            
+                            <span>/</span>
+                            <span data-market-cap class="">54亿</span>
+                            
+                        </p>
+
+                        
+                        
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">板数</span>
+        <span>
+            0板
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封板</span>
+        <span>13:26</span>
+    </p>
+    <span>
+        <span class="text-secondary text-sm">L1</span>
+        <span class="
+        
+        ">-55.8万</span>
+    </span>
+    
+    <p>
+        <span class="text-secondary text-sm">偏离:</span>
+        <span data-ema-gap class="">
+            71.1
+        </span>
+    </p>
+    
+</div>
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">换手</span>
+        <span class="
+        
+        ">6.67</span>
+    </p>
+    
+    <p>
+        <span class="text-secondary text-sm">量比</span>
+        <span data-volume-ratio class=" text-error ">
+            5.18
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封值比:</span>
+        <span>
+            
+                -0.0
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封成比:</span>
+        <span class="">
+            
+                -0.2
+            
+        </span>
+    </p>
+</div>
+
+
+                        
+                        
+
+<div class="flex gap-3">
+    
+    <p>
+        <span class="text-secondary text-sm">ROE</span>
+        <span data-roe class="">3.3</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">毛利</span>
+        <span class=" text-error ">36.4</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">负债</span>
+        <span>31.2</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">利润</span>
+        <span data-net-profit class="">8122.8万</span>
+    </p>
+    
+</div>
+
+
+
+                        
+                        
+
+
+
+
+
+<div class="flex gap-2 text-sm">
+    <span class="text-secondary">资金:</span>
+    
+    <span data-capital class=" text-error ">
+        154.9万
+    </span>
+    
+    
+    <span class=" text-error ">
+        415.1万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -150.6万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -510.8万
+    </span>
+    
+</div>
+
+
+
+
+                    <div class="text-sm line-clamp-2">
+                            
+                            
+                            <span class="font-bold
+                            
+                            " title="医药">
+                                [医药]
+                            </span>
+                            
+                            <!-- <span class="text-secondary" title="生物制品生产、销售及研发。">
+                                生物制品生产、销售及研发。
+                            </span> -->
+                            <span class="text-secondary" title="公司拟建设卫光生物智能产业基地，现有年投浆量已由约400吨提升至650吨">
+                                公司拟建设卫光生物智能产业基地，现有年投浆量已由约400吨提升至650吨
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border-t">
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=KXL&amp;type=&amp;formula=OBV&amp;nid=0.002880" loading="lazy">
+                        </div>
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=rc&amp;type=&amp;nid=0.002880" loading="lazy">
+                        </div>
+                    </div>
+                </div>
+            
+                <div data-stock-card class="border rounded relative overflow-hidden">
+                    
+                    
+                    
+                    <div class="p-2 space-y-1">
+                        <p>
+                            <a class="underline text-primary font-medium" href="https://quote.eastmoney.com/sh600594.html?jump_to_web=true" target="_blank">600594</a>
+                            <a class="underline text-primary font-medium " href="/stock/detail/SH600594">益佰制药</a>
+                            <span data-percent class=" text-error ">6.25%</span> 
+                            <span data-amount class=" bg-warning-content ">4.6亿</span>
+                            
+                            <span>/</span>
+                            <span data-market-cap class="">30.2亿</span>
+                            
+                        </p>
+
+                        
+                        
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">板数</span>
+        <span>
+            0板
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封板</span>
+        <span>09:33</span>
+    </p>
+    <span>
+        <span class="text-secondary text-sm">L1</span>
+        <span class="
+        
+        ">18.3万</span>
+    </span>
+    
+    <p>
+        <span class="text-secondary text-sm">偏离:</span>
+        <span data-ema-gap class="">
+            41.6
+        </span>
+    </p>
+    
+</div>
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">换手</span>
+        <span class="
+        
+        ">14.39</span>
+    </p>
+    
+    <p>
+        <span class="text-secondary text-sm">量比</span>
+        <span data-volume-ratio class="">
+            2.83
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封值比:</span>
+        <span>
+            
+                0.0
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封成比:</span>
+        <span class="">
+            
+                0.0
+            
+        </span>
+    </p>
+</div>
+
+
+                        
+                        
+
+<div class="flex gap-3">
+    
+    <p>
+        <span class="text-secondary text-sm">ROE</span>
+        <span data-roe class="">-3.7</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">毛利</span>
+        <span class=" text-error ">57.7</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">负债</span>
+        <span>32.9</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">利润</span>
+        <span data-net-profit class=" text-info ">-8033.8万</span>
+    </p>
+    
+</div>
+
+
+
+                        
+                        
+
+
+
+
+
+<div class="flex gap-2 text-sm">
+    <span class="text-secondary">资金:</span>
+    
+    <span data-capital class=" text-info ">
+        -72万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -261.4万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -302.5万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -1620.2万
+    </span>
+    
+</div>
+
+
+
+
+                    <div class="text-sm line-clamp-2">
+                            
+                            
+                            <span class="font-bold
+                            
+                            " title="医药">
+                                [医药]
+                            </span>
+                            
+                            <!-- <span class="text-secondary" title="药品的研发、生产和销售;综合性医院、肿瘤专科医院、肿瘤放疗中心的运营与管理;开发、研制、生产及销售以苗药为特色的大健康产品。">
+                                药品的研发、生产和销售;综合性医院、肿瘤专科医院、肿瘤放疗中心的运营与管理;开发、研制、生产及销售以苗药为特色的大健康产品。
+                            </span> -->
+                            <span class="text-secondary" title="主要涵盖抗肿瘤类、心血管类和镇咳类三大领域，其中中药注射剂艾迪注射液是公司核心产品，与复方斑蝥胶囊适用于肝癌、肺癌等">
+                                主要涵盖抗肿瘤类、心血管类和镇咳类三大领域，其中中药注射剂艾迪注射液是公司核心产品，与复方斑蝥胶囊适用于肝癌、肺癌等
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border-t">
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=KXL&amp;type=&amp;formula=OBV&amp;nid=1.600594" loading="lazy">
+                        </div>
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=rc&amp;type=&amp;nid=1.600594" loading="lazy">
+                        </div>
+                    </div>
+                </div>
+            
+                <div data-stock-card class="border rounded relative overflow-hidden">
+                    
+                    
+                    
+                    <div class="p-2 space-y-1">
+                        <p>
+                            <a class="underline text-primary font-medium" href="https://quote.eastmoney.com/sz002412.html?jump_to_web=true" target="_blank">002412</a>
+                            <a class="underline text-primary font-medium " href="/stock/detail/SZ002412">汉森制药</a>
+                            <span data-percent class=" text-error ">6.16%</span> 
+                            <span data-amount class=" bg-warning-content ">24.3亿</span>
+                            
+                            <span>/</span>
+                            <span data-market-cap class="">67亿</span>
+                            
+                        </p>
+
+                        
+                        
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">板数</span>
+        <span>
+            0板
+            
+            (6/5)
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封板</span>
+        <span>09:30</span>
+    </p>
+    <span>
+        <span class="text-secondary text-sm">L1</span>
+        <span class="
+        
+        ">87.7万</span>
+    </span>
+    
+    <p>
+        <span class="text-secondary text-sm">偏离:</span>
+        <span data-ema-gap class=" text-error ">
+            176.4
+        </span>
+    </p>
+    
+</div>
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">换手</span>
+        <span class="
+        
+        ">37.11</span>
+    </p>
+    
+    <p>
+        <span class="text-secondary text-sm">量比</span>
+        <span data-volume-ratio class=" text-error ">
+            6.85
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封值比:</span>
+        <span>
+            
+                0.0
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封成比:</span>
+        <span class="">
+            
+                0.0
+            
+        </span>
+    </p>
+</div>
+
+
+                        
+                        
+
+<div class="flex gap-3">
+    
+    <p>
+        <span class="text-secondary text-sm">ROE</span>
+        <span data-roe class="">6.0</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">毛利</span>
+        <span class=" text-error ">78.2</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">负债</span>
+        <span>4.1</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">利润</span>
+        <span data-net-profit class=" text-error ">1.6亿</span>
+    </p>
+    
+</div>
+
+
+
+                        
+                        
+
+
+
+
+
+<div class="flex gap-2 text-sm">
+    <span class="text-secondary">资金:</span>
+    
+    <span data-capital class=" text-error ">
+        755.9万
+    </span>
+    
+    
+    <span class=" text-error ">
+        1753.8万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -968.3万
+    </span>
+    
+    
+    <span class=" text-error ">
+        441.1万
+    </span>
+    
+</div>
+
+
+
+
+                    <div class="text-sm line-clamp-2">
+                            
+                            
+                            <span class="font-bold
+                            
+                            " title="医药">
+                                [医药]
+                            </span>
+                            
+                            <!-- <span class="text-secondary" title="传统中成药制剂、化学药、医用制剂的研发、生产和销售。">
+                                传统中成药制剂、化学药、医用制剂的研发、生产和销售。
+                            </span> -->
+                            <span class="text-secondary" title="公司主营消化系统和心脑血管中药生产企业">
+                                公司主营消化系统和心脑血管中药生产企业
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border-t">
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=KXL&amp;type=&amp;formula=OBV&amp;nid=0.002412" loading="lazy">
+                        </div>
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=rc&amp;type=&amp;nid=0.002412" loading="lazy">
+                        </div>
+                    </div>
+                </div>
+            
+                <div data-stock-card class="border rounded relative overflow-hidden">
+                    
+                    
+                    
+                    <div class="p-2 space-y-1">
+                        <p>
+                            <a class="underline text-primary font-medium" href="https://quote.eastmoney.com/sz000931.html?jump_to_web=true" target="_blank">000931</a>
+                            <a class="underline text-primary font-medium " href="/stock/detail/SZ000931">中 关 村</a>
+                            <span data-percent class=" text-error ">4.02%</span> 
+                            <span data-amount class=" bg-warning-content ">8.2亿</span>
+                            
+                            <span>/</span>
+                            <span data-market-cap class="">42.7亿</span>
+                            
+                        </p>
+
+                        
+                        
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">板数</span>
+        <span>
+            0板
+            
+            (5/3)
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封板</span>
+        <span>09:30</span>
+    </p>
+    <span>
+        <span class="text-secondary text-sm">L1</span>
+        <span class="
+        
+        ">-40万</span>
+    </span>
+    
+    <p>
+        <span class="text-secondary text-sm">偏离:</span>
+        <span data-ema-gap class="">
+            24.9
+        </span>
+    </p>
+    
+</div>
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">换手</span>
+        <span class="
+        
+        ">19.61</span>
+    </p>
+    
+    <p>
+        <span class="text-secondary text-sm">量比</span>
+        <span data-volume-ratio class="">
+            3.59
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封值比:</span>
+        <span>
+            
+                -0.0
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封成比:</span>
+        <span class="">
+            
+                -0.0
+            
+        </span>
+    </p>
+</div>
+
+
+                        
+                        
+
+<div class="flex gap-3">
+    
+    <p>
+        <span class="text-secondary text-sm">ROE</span>
+        <span data-roe class="">-3.0</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">毛利</span>
+        <span class=" text-error ">46.6</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">负债</span>
+        <span>52.7</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">利润</span>
+        <span data-net-profit class=" text-info ">-4801.9万</span>
+    </p>
+    
+</div>
+
+
+
+                        
+                        
+
+
+
+
+
+<div class="flex gap-2 text-sm">
+    <span class="text-secondary">资金:</span>
+    
+    <span data-capital class=" text-error ">
+        144.4万
+    </span>
+    
+    
+    <span class=" text-error ">
+        263.4万
+    </span>
+    
+    
+    <span class=" text-error ">
+        113.1万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -786.6万
+    </span>
+    
+</div>
+
+
+
+
+                    <div class="text-sm line-clamp-2">
+                            
+                            
+                            <span class="font-bold
+                            
+                            " title="医药">
+                                [医药]
+                            </span>
+                            
+                            <!-- <span class="text-secondary" title="生物医药及健康品业务、养老医疗业务、商砼业务和其他业务。">
+                                生物医药及健康品业务、养老医疗业务、商砼业务和其他业务。
+                            </span> -->
+                            <span class="text-secondary" title="公司拟与海徕科在创新抗体药物研发等领域开展合作">
+                                公司拟与海徕科在创新抗体药物研发等领域开展合作
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border-t">
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=KXL&amp;type=&amp;formula=OBV&amp;nid=0.000931" loading="lazy">
+                        </div>
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=rc&amp;type=&amp;nid=0.000931" loading="lazy">
+                        </div>
+                    </div>
+                </div>
+            
+                <div data-stock-card class="border rounded relative overflow-hidden">
+                    
+                    
+                    <div class="absolute right-0 top-0 z-0 bg-error-content text-error rounded-bl px-1.5">
+                        <a href="/stock/detail/SZ002172" target="_blank"
+                        class="text-[11px] font-medium">榜6</a>
+                    </div>
+                    
+                    
+                    <div class="p-2 space-y-1">
+                        <p>
+                            <a class="underline text-primary font-medium" href="https://quote.eastmoney.com/sz002172.html?jump_to_web=true" target="_blank">002172</a>
+                            <a class="underline text-primary font-medium " href="/stock/detail/SZ002172">澳洋健康</a>
+                            <span data-percent class=" text-error ">2.6%</span> 
+                            <span data-amount class=" bg-warning-content ">13.2亿</span>
+                            
+                            <span>/</span>
+                            <span data-market-cap class="">37.6亿</span>
+                            
+                        </p>
+
+                        
+                        
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">板数</span>
+        <span>
+            0板
+            
+            (11/6)
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封板</span>
+        <span>09:37</span>
+    </p>
+    <span>
+        <span class="text-secondary text-sm">L1</span>
+        <span class="
+        
+        ">-149.2万</span>
+    </span>
+    
+    <p>
+        <span class="text-secondary text-sm">偏离:</span>
+        <span data-ema-gap class="">
+            50.4
+        </span>
+    </p>
+    
+</div>
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">换手</span>
+        <span class="
+        
+        ">35.33</span>
+    </p>
+    
+    <p>
+        <span class="text-secondary text-sm">量比</span>
+        <span data-volume-ratio class="">
+            1.48
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封值比:</span>
+        <span>
+            
+                -0.0
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封成比:</span>
+        <span class="">
+            
+                -0.1
+            
+        </span>
+    </p>
+</div>
+
+
+                        
+                        
+
+<div class="flex gap-3">
+    
+    <p>
+        <span class="text-secondary text-sm">ROE</span>
+        <span data-roe class=" text-error ">19.3</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">毛利</span>
+        <span class="">12.2</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">负债</span>
+        <span>89.3</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">利润</span>
+        <span data-net-profit class="">3748.7万</span>
+    </p>
+    
+</div>
+
+
+
+                        
+                        
+
+
+
+
+
+<div class="flex gap-2 text-sm">
+    <span class="text-secondary">资金:</span>
+    
+    <span data-capital class=" text-error ">
+        2.3亿
+    </span>
+    
+    
+    <span class=" text-error ">
+        7529.5万
+    </span>
+    
+    
+    <span class=" text-error ">
+        4.2亿
+    </span>
+    
+    
+    <span class=" text-error ">
+        2.3亿
+    </span>
+    
+</div>
+
+
+
+
+                    <div class="text-sm line-clamp-2">
+                            
+                            
+                            <span class="font-bold
+                            
+                            " title="医药">
+                                [医药]
+                            </span>
+                            
+                            <!-- <span class="text-secondary" title="医疗服务业务、医药流通业务、生物科技业务。">
+                                医疗服务业务、医药流通业务、生物科技业务。
+                            </span> -->
+                            <span class="text-secondary" title="子公司江苏澳洋医药物流有限公司具体经营内容包括中药材配送、销售业务">
+                                子公司江苏澳洋医药物流有限公司具体经营内容包括中药材配送、销售业务
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border-t">
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=KXL&amp;type=&amp;formula=OBV&amp;nid=0.002172" loading="lazy">
+                        </div>
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=rc&amp;type=&amp;nid=0.002172" loading="lazy">
+                        </div>
+                    </div>
+                </div>
+            
+        </div>
+    </div>
+    
+    <div>
+        <div class="mt-6 alert alert-soft alert-primary flex justify-between" id="其他">
+            <div class="flex space-x-4">
+                <span class="font-medium">其他 (12家)</span>
+                <div>
+                    <span>84.36亿</span>
+                </div>
+                <span class="text-sm hidden md:block"></span>
+            </div>
+            <a href="/review/sector/%E5%85%B6%E4%BB%96" class="link link-primary">
+                近期表现
+            </a>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+            
+                <div data-stock-card class="border rounded relative overflow-hidden">
+                    
+                    
+                    
+                    <div class="p-2 space-y-1">
+                        <p>
+                            <a class="underline text-primary font-medium" href="https://quote.eastmoney.com/sz300333.html?jump_to_web=true" target="_blank">300333</a>
+                            <a class="underline text-primary font-medium  bg-info-content " href="/stock/detail/SZ300333">兆日科技</a>
+                            <span data-percent class=" text-error ">16.75%</span> 
+                            <span data-amount class=" bg-warning-content ">10.9亿</span>
+                            
+                            <span>/</span>
+                            <span data-market-cap class="">35.2亿</span>
+                            
+                        </p>
+
+                        
+                        
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">板数</span>
+        <span>
+            0板
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封板</span>
+        <span>13:40</span>
+    </p>
+    <span>
+        <span class="text-secondary text-sm">L1</span>
+        <span class="
+        
+        ">-87.9万</span>
+    </span>
+    
+    <p>
+        <span class="text-secondary text-sm">偏离:</span>
+        <span data-ema-gap class="">
+            89.4
+        </span>
+    </p>
+    
+</div>
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">换手</span>
+        <span class="
+        
+        ">26.86</span>
+    </p>
+    
+    <p>
+        <span class="text-secondary text-sm">量比</span>
+        <span data-volume-ratio class="">
+            2.18
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封值比:</span>
+        <span>
+            
+                -0.0
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封成比:</span>
+        <span class="">
+            
+                -0.1
+            
+        </span>
+    </p>
+</div>
+
+
+                        
+                        
+
+<div class="flex gap-3">
+    
+    <p>
+        <span class="text-secondary text-sm">ROE</span>
+        <span data-roe class="">6.0</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">毛利</span>
+        <span class=" text-error ">51.7</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">负债</span>
+        <span>1.6</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">利润</span>
+        <span data-net-profit class="">3528.9万</span>
+    </p>
+    
+</div>
+
+
+
+                        
+                        
+
+
+
+
+
+<div class="flex gap-2 text-sm">
+    <span class="text-secondary">资金:</span>
+    
+    <span data-capital class=" text-info ">
+        -2680.7万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -5729万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -1.1亿
+    </span>
+    
+    
+    <span class=" text-info ">
+        -1.1亿
+    </span>
+    
+</div>
+
+
+
+
+                    <div class="text-sm line-clamp-2">
+                            
+                            
+                            <span class="font-bold
+                             text-error 
+                            " title="国产芯片|股权转让|大金融">
+                                [国产芯片 | 股权转让 | 大金融]
+                            </span>
+                            
+                            <!-- <span class="text-secondary" title="专注于银行对公移动支付安全产品、票据防伪及纸纹防伪技术的研发及销售。">
+                                专注于银行对公移动支付安全产品、票据防伪及纸纹防伪技术的研发及销售。
+                            </span> -->
+                            <span class="text-secondary" title="传统电子支付密码器系统行业龙头，实控人拟变更为曲嘉麟">
+                                传统电子支付密码器系统行业龙头，实控人拟变更为曲嘉麟
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border-t">
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=KXL&amp;type=&amp;formula=OBV&amp;nid=0.300333" loading="lazy">
+                        </div>
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=rc&amp;type=&amp;nid=0.300333" loading="lazy">
+                        </div>
+                    </div>
+                </div>
+            
+                <div data-stock-card class="border rounded relative overflow-hidden">
+                    
+                    
+                    
+                    <div class="p-2 space-y-1">
+                        <p>
+                            <a class="underline text-primary font-medium" href="https://quote.eastmoney.com/sz002078.html?jump_to_web=true" target="_blank">002078</a>
+                            <a class="underline text-primary font-medium " href="/stock/detail/SZ002078">太阳纸业</a>
+                            <span data-percent class=" text-error ">8.79%</span> 
+                            <span data-amount class=" bg-warning-content ">12.8亿</span>
+                            
+                            <span>/</span>
+                            <span data-market-cap class=" text-error bg-error-content ">415.9亿</span>
+                            
+                        </p>
+
+                        
+                        
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">板数</span>
+        <span>
+            0板
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封板</span>
+        <span>13:38</span>
+    </p>
+    <span>
+        <span class="text-secondary text-sm">L1</span>
+        <span class="
+        
+        ">-3.9万</span>
+    </span>
+    
+    <p>
+        <span class="text-secondary text-sm">偏离:</span>
+        <span data-ema-gap class="">
+            38.0
+        </span>
+    </p>
+    
+</div>
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">换手</span>
+        <span class="
+         text-error bg-error-content 
+        ">3.04</span>
+    </p>
+    
+    <p>
+        <span class="text-secondary text-sm">量比</span>
+        <span data-volume-ratio class=" text-error ">
+            6.14
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封值比:</span>
+        <span>
+            
+                -0.0
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封成比:</span>
+        <span class="">
+            
+                -0.0
+            
+        </span>
+    </p>
+</div>
+
+
+                        
+                        
+
+<div class="flex gap-3">
+    
+    <p>
+        <span class="text-secondary text-sm">ROE</span>
+        <span data-roe class="">9.2</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">毛利</span>
+        <span class="">15.7</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">负债</span>
+        <span>48.0</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">利润</span>
+        <span data-net-profit class=" text-error ">29.2亿</span>
+    </p>
+    
+</div>
+
+
+
+                        
+                        
+
+
+
+
+
+<div class="flex gap-2 text-sm">
+    <span class="text-secondary">资金:</span>
+    
+    <span data-capital class=" text-info ">
+        -1483.3万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -1239.3万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -3833.2万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -1.5亿
+    </span>
+    
+</div>
+
+
+
+
+                    <div class="text-sm line-clamp-2">
+                            
+                            
+                            <span class="font-bold
+                            
+                            " title="造纸">
+                                [造纸]
+                            </span>
+                            
+                            <!-- <span class="text-secondary" title="机制纸、纸制品、木浆、纸板的生产和销售。">
+                                机制纸、纸制品、木浆、纸板的生产和销售。
+                            </span> -->
+                            <span class="text-secondary" title="公司为中国造纸行业龙头之一，兖州45万吨文化纸、老挝80万吨包装纸均计划于2020年底-2021年年初投放">
+                                公司为中国造纸行业龙头之一，兖州45万吨文化纸、老挝80万吨包装纸均计划于2020年底-2021年年初投放
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border-t">
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=KXL&amp;type=&amp;formula=OBV&amp;nid=0.002078" loading="lazy">
+                        </div>
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=rc&amp;type=&amp;nid=0.002078" loading="lazy">
+                        </div>
+                    </div>
+                </div>
+            
+                <div data-stock-card class="border rounded relative overflow-hidden">
+                    
+                    
+                    
+                    <div class="p-2 space-y-1">
+                        <p>
+                            <a class="underline text-primary font-medium" href="https://quote.eastmoney.com/sz002026.html?jump_to_web=true" target="_blank">002026</a>
+                            <a class="underline text-primary font-medium " href="/stock/detail/SZ002026">山东威达</a>
+                            <span data-percent class=" text-error ">8.18%</span> 
+                            <span data-amount class=" bg-warning-content ">4.6亿</span>
+                            
+                            <span>/</span>
+                            <span data-market-cap class="">49.4亿</span>
+                            
+                        </p>
+
+                        
+                        
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">板数</span>
+        <span>
+            0板
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封板</span>
+        <span>13:00</span>
+    </p>
+    <span>
+        <span class="text-secondary text-sm">L1</span>
+        <span class="
+        
+        ">-142万</span>
+    </span>
+    
+    <p>
+        <span class="text-secondary text-sm">偏离:</span>
+        <span data-ema-gap class="">
+            73.8
+        </span>
+    </p>
+    
+</div>
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">换手</span>
+        <span class="
+        
+        ">9.01</span>
+    </p>
+    
+    <p>
+        <span class="text-secondary text-sm">量比</span>
+        <span data-volume-ratio class=" text-error ">
+            8.32
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封值比:</span>
+        <span>
+            
+                -0.0
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封成比:</span>
+        <span class="">
+            
+                -0.3
+            
+        </span>
+    </p>
+</div>
+
+
+                        
+                        
+
+<div class="flex gap-3">
+    
+    <p>
+        <span class="text-secondary text-sm">ROE</span>
+        <span data-roe class="">8.0</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">毛利</span>
+        <span class="">24.5</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">负债</span>
+        <span>27.0</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">利润</span>
+        <span data-net-profit class=" text-error ">3.2亿</span>
+    </p>
+    
+</div>
+
+
+
+                        
+                        
+
+
+
+
+
+<div class="flex gap-2 text-sm">
+    <span class="text-secondary">资金:</span>
+    
+    <span data-capital class=" text-info ">
+        -254.7万
+    </span>
+    
+    
+    <span class=" text-error ">
+        273万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -17.9万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -30.7万
+    </span>
+    
+</div>
+
+
+
+
+                    <div class="text-sm line-clamp-2">
+                            
+                            
+                            <span class="font-bold
+                            
+                            " title="机器人">
+                                [机器人]
+                            </span>
+                            
+                            <!-- <span class="text-secondary" title="钻夹头、电动工具开关、粉末冶金件、精密铸造制品、锯片、机床及附件、智能制造系统集成及智能装备的研发、生产和销售。">
+                                钻夹头、电动工具开关、粉末冶金件、精密铸造制品、锯片、机床及附件、智能制造系统集成及智能装备的研发、生产和销售。
+                            </span> -->
+                            <span class="text-secondary" title="国内重要的高端智能装备制造和智能制造解决方案服务企业；子公司苏州德迈科成功推出智能穿梭车、多层堆垛机、伺服电机、高速并联机器人、MES/WMS软件等智能产品以及机器人包装装备等智能装备，能够为制造业客户提供一站式的智能制造解决方案">
+                                国内重要的高端智能装备制造和智能制造解决方案服务企业；子公司苏州德迈科成功推出智能穿梭车、多层堆垛机、伺服电机、高速并联机器人、MES/WMS软件等智能产品以及机器人包装装备等智能装备，能够为制造业客户提供一站式的智能制造解决方案
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border-t">
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=KXL&amp;type=&amp;formula=OBV&amp;nid=0.002026" loading="lazy">
+                        </div>
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=rc&amp;type=&amp;nid=0.002026" loading="lazy">
+                        </div>
+                    </div>
+                </div>
+            
+                <div data-stock-card class="border rounded relative overflow-hidden">
+                    
+                    
+                    
+                    <div class="p-2 space-y-1">
+                        <p>
+                            <a class="underline text-primary font-medium" href="https://quote.eastmoney.com/sh603871.html?jump_to_web=true" target="_blank">603871</a>
+                            <a class="underline text-primary font-medium " href="/stock/detail/SH603871">嘉友国际</a>
+                            <span data-percent class=" text-error ">7.76%</span> 
+                            <span data-amount class=" bg-warning-content ">5.6亿</span>
+                            
+                            <span>/</span>
+                            <span data-market-cap class=" text-error bg-error-content ">181.9亿</span>
+                            
+                        </p>
+
+                        
+                        
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">板数</span>
+        <span>
+            0板
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封板</span>
+        <span>13:10</span>
+    </p>
+    <span>
+        <span class="text-secondary text-sm">L1</span>
+        <span class="
+        
+        ">-176.6万</span>
+    </span>
+    
+    <p>
+        <span class="text-secondary text-sm">偏离:</span>
+        <span data-ema-gap class="">
+            61.9
+        </span>
+    </p>
+    
+</div>
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">换手</span>
+        <span class="
+        
+        ">2.95</span>
+    </p>
+    
+    <p>
+        <span class="text-secondary text-sm">量比</span>
+        <span data-volume-ratio class="">
+            4.01
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封值比:</span>
+        <span>
+            
+                -0.0
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封成比:</span>
+        <span class="">
+            
+                -0.3
+            
+        </span>
+    </p>
+</div>
+
+
+                        
+                        
+
+<div class="flex gap-3">
+    
+    <p>
+        <span class="text-secondary text-sm">ROE</span>
+        <span data-roe class=" text-error ">17.6</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">毛利</span>
+        <span class="">23.7</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">负债</span>
+        <span>33.5</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">利润</span>
+        <span data-net-profit class=" text-error ">11.2亿</span>
+    </p>
+    
+</div>
+
+
+
+                        
+                        
+
+
+
+
+
+<div class="flex gap-2 text-sm">
+    <span class="text-secondary">资金:</span>
+    
+    <span data-capital class=" text-info ">
+        -237.1万
+    </span>
+    
+    
+    <span class=" text-error ">
+        2330.6万
+    </span>
+    
+    
+    <span class=" text-error ">
+        2295.6万
+    </span>
+    
+    
+    <span class=" text-error ">
+        2190.3万
+    </span>
+    
+</div>
+
+
+
+
+                    <div class="text-sm line-clamp-2">
+                            
+                            
+                            <span class="font-bold
+                            
+                            " title="煤炭">
+                                [煤炭]
+                            </span>
+                            
+                            <!-- <span class="text-secondary" title="跨境多式联运综合物流服务以及在此业务基础上拓展的供应链贸易服务、陆港项目服务。">
+                                跨境多式联运综合物流服务以及在此业务基础上拓展的供应链贸易服务、陆港项目服务。
+                            </span> -->
+                            <span class="text-secondary" title="中蒙跨境多式联运龙头；公司核心经营的甘其毛都口岸，2026年一季度煤炭进口量1240万吨，同比增长46%">
+                                中蒙跨境多式联运龙头；公司核心经营的甘其毛都口岸，2026年一季度煤炭进口量1240万吨，同比增长46%
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border-t">
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=KXL&amp;type=&amp;formula=OBV&amp;nid=1.603871" loading="lazy">
+                        </div>
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=rc&amp;type=&amp;nid=1.603871" loading="lazy">
+                        </div>
+                    </div>
+                </div>
+            
+                <div data-stock-card class="border rounded relative overflow-hidden">
+                    
+                    
+                    
+                    <div class="p-2 space-y-1">
+                        <p>
+                            <a class="underline text-primary font-medium" href="https://quote.eastmoney.com/sh603093.html?jump_to_web=true" target="_blank">603093</a>
+                            <a class="underline text-primary font-medium " href="/stock/detail/SH603093">南华期货</a>
+                            <span data-percent class=" text-error ">6.41%</span> 
+                            <span data-amount class=" bg-warning-content ">6.2亿</span>
+                            
+                            <span>/</span>
+                            <span data-market-cap class=" text-error bg-error-content ">101.7亿</span>
+                            
+                        </p>
+
+                        
+                        
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">板数</span>
+        <span>
+            0板
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封板</span>
+        <span>10:44</span>
+    </p>
+    <span>
+        <span class="text-secondary text-sm">L1</span>
+        <span class="
+        
+        ">66.5万</span>
+    </span>
+    
+    <p>
+        <span class="text-secondary text-sm">偏离:</span>
+        <span data-ema-gap class="">
+            -10.8
+        </span>
+    </p>
+    
+</div>
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">换手</span>
+        <span class="
+        
+        ">5.71</span>
+    </p>
+    
+    <p>
+        <span class="text-secondary text-sm">量比</span>
+        <span data-volume-ratio class="">
+            4.54
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封值比:</span>
+        <span>
+            
+                0.0
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封成比:</span>
+        <span class="">
+            
+                0.1
+            
+        </span>
+    </p>
+</div>
+
+
+                        
+                        
+
+<div class="flex gap-3">
+    
+    <p>
+        <span class="text-secondary text-sm">ROE</span>
+        <span data-roe class=" text-error ">10.1</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">毛利</span>
+        <span class=" text-error ">49.5</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">负债</span>
+        <span>92.4</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">利润</span>
+        <span data-net-profit class=" text-error ">5.9亿</span>
+    </p>
+    
+</div>
+
+
+
+                        
+                        
+
+
+
+
+
+<div class="flex gap-2 text-sm">
+    <span class="text-secondary">资金:</span>
+    
+    <span data-capital class=" text-info ">
+        -1156.2万
+    </span>
+    
+    
+    <span class=" text-error ">
+        67.2万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -1919.7万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -3888.4万
+    </span>
+    
+</div>
+
+
+
+
+                    <div class="text-sm line-clamp-2">
+                            
+                            
+                            <span class="font-bold
+                            
+                            " title="大金融">
+                                [大金融]
+                            </span>
+                            
+                            <!-- <span class="text-secondary" title="期货经纪业务、财富管理业务、风险管理业务、境外金融服务业务及期货投资咨询业务等。">
+                                期货经纪业务、财富管理业务、风险管理业务、境外金融服务业务及期货投资咨询业务等。
+                            </span> -->
+                            <span class="text-secondary" title="国内最有竞争力的期货公司之一">
+                                国内最有竞争力的期货公司之一
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border-t">
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=KXL&amp;type=&amp;formula=OBV&amp;nid=1.603093" loading="lazy">
+                        </div>
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=rc&amp;type=&amp;nid=1.603093" loading="lazy">
+                        </div>
+                    </div>
+                </div>
+            
+                <div data-stock-card class="border rounded relative overflow-hidden">
+                    
+                    
+                    <div class="absolute right-0 top-0 z-0 bg-error-content text-error rounded-bl px-1.5">
+                        <a href="/stock/detail/SH603955" target="_blank"
+                        class="text-[11px] font-medium">榜1</a>
+                    </div>
+                    
+                    
+                    <div class="p-2 space-y-1">
+                        <p>
+                            <a class="underline text-primary font-medium" href="https://quote.eastmoney.com/sh603955.html?jump_to_web=true" target="_blank">603955</a>
+                            <a class="underline text-primary font-medium " href="/stock/detail/SH603955">大千生态</a>
+                            <span data-percent class=" text-error ">5.42%</span> 
+                            <span data-amount class=" bg-warning-content ">1.2亿</span>
+                            
+                            <span>/</span>
+                            <span data-market-cap class="">27.8亿</span>
+                            
+                        </p>
+
+                        
+                        
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">板数</span>
+        <span>
+            0板
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封板</span>
+        <span>09:32</span>
+    </p>
+    <span>
+        <span class="text-secondary text-sm">L1</span>
+        <span class="
+        
+        ">3.8万</span>
+    </span>
+    
+    <p>
+        <span class="text-secondary text-sm">偏离:</span>
+        <span data-ema-gap class="">
+            57.4
+        </span>
+    </p>
+    
+</div>
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">换手</span>
+        <span class="
+        
+        ">4.3</span>
+    </p>
+    
+    <p>
+        <span class="text-secondary text-sm">量比</span>
+        <span data-volume-ratio class="">
+            2.42
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封值比:</span>
+        <span>
+            
+                0.0
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封成比:</span>
+        <span class="">
+            
+                0.0
+            
+        </span>
+    </p>
+</div>
+
+
+                        
+                        
+
+<div class="flex gap-3">
+    
+    <p>
+        <span class="text-secondary text-sm">ROE</span>
+        <span data-roe class="">-2.8</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">毛利</span>
+        <span class="">14.3</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">负债</span>
+        <span>35.0</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">利润</span>
+        <span data-net-profit class=" text-info ">-4034.3万</span>
+    </p>
+    
+</div>
+
+
+
+                        
+                        
+
+
+
+
+
+<div class="flex gap-2 text-sm">
+    <span class="text-secondary">资金:</span>
+    
+    <span data-capital class=" text-info ">
+        -8090万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -653.1万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -50.5万
+    </span>
+    
+    
+    <span class=" text-error ">
+        1亿
+    </span>
+    
+</div>
+
+
+
+
+                    <div class="text-sm line-clamp-2">
+                            
+                            
+                            <span class="font-bold
+                            
+                            " title="大消费">
+                                [大消费]
+                            </span>
+                            
+                            <!-- <span class="text-secondary" title="生态景观规划设计、工程建设、项目运营，苗木种植及销售等生态园林业务，同时布局与主营业务有较强协同效应的生态修复、文旅运营等新兴业务。">
+                                生态景观规划设计、工程建设、项目运营，苗木种植及销售等生态园林业务，同时布局与主营业务有较强协同效应的生态修复、文旅运营等新兴业务。
+                            </span> -->
+                            <span class="text-secondary" title="公司宠物业务已覆盖零售及服务、智能硬件、互动体验等场景，形成“消费+服务+产品”的全业务链布局">
+                                公司宠物业务已覆盖零售及服务、智能硬件、互动体验等场景，形成“消费+服务+产品”的全业务链布局
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border-t">
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=KXL&amp;type=&amp;formula=OBV&amp;nid=1.603955" loading="lazy">
+                        </div>
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=rc&amp;type=&amp;nid=1.603955" loading="lazy">
+                        </div>
+                    </div>
+                </div>
+            
+                <div data-stock-card class="border rounded relative overflow-hidden">
+                    
+                    
+                    
+                    <div class="p-2 space-y-1">
+                        <p>
+                            <a class="underline text-primary font-medium" href="https://quote.eastmoney.com/sh600508.html?jump_to_web=true" target="_blank">600508</a>
+                            <a class="underline text-primary font-medium " href="/stock/detail/SH600508">上海能源</a>
+                            <span data-percent class=" text-error ">5.34%</span> 
+                            <span data-amount class=" bg-warning-content ">12.2亿</span>
+                            
+                            <span>/</span>
+                            <span data-market-cap class=" text-error bg-error-content ">104.7亿</span>
+                            
+                        </p>
+
+                        
+                        
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">板数</span>
+        <span>
+            0板
+            
+            (3/2)
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封板</span>
+        <span>13:20</span>
+    </p>
+    <span>
+        <span class="text-secondary text-sm">L1</span>
+        <span class="
+        
+        ">-227.5万</span>
+    </span>
+    
+    <p>
+        <span class="text-secondary text-sm">偏离:</span>
+        <span data-ema-gap class=" text-error ">
+            100.3
+        </span>
+    </p>
+    
+</div>
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">换手</span>
+        <span class="
+        
+        ">10.85</span>
+    </p>
+    
+    <p>
+        <span class="text-secondary text-sm">量比</span>
+        <span data-volume-ratio class=" text-error ">
+            6.87
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封值比:</span>
+        <span>
+            
+                -0.0
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封成比:</span>
+        <span class="">
+            
+                -0.2
+            
+        </span>
+    </p>
+</div>
+
+
+                        
+                        
+
+<div class="flex gap-3">
+    
+    <p>
+        <span class="text-secondary text-sm">ROE</span>
+        <span data-roe class="">2.6</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">毛利</span>
+        <span class="">17.1</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">负债</span>
+        <span>42.3</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">利润</span>
+        <span data-net-profit class=" text-error ">3.4亿</span>
+    </p>
+    
+</div>
+
+
+
+                        
+                        
+
+
+
+
+
+<div class="flex gap-2 text-sm">
+    <span class="text-secondary">资金:</span>
+    
+    <span data-capital class=" text-info ">
+        -130.4万
+    </span>
+    
+    
+    <span class=" text-error ">
+        1496.2万
+    </span>
+    
+    
+    <span class=" text-error ">
+        1711.5万
+    </span>
+    
+    
+    <span class=" text-error ">
+        904.6万
+    </span>
+    
+</div>
+
+
+
+
+                    <div class="text-sm line-clamp-2">
+                            
+                            
+                            <span class="font-bold
+                            
+                            " title="煤炭">
+                                [煤炭]
+                            </span>
+                            
+                            <!-- <span class="text-secondary" title="煤炭开采、洗选加工、煤炭销售、铁路运输（限管辖内的煤矿专用铁路）、发电、铝及铝合金的压延加工生产及销售等业务。">
+                                煤炭开采、洗选加工、煤炭销售、铁路运输（限管辖内的煤矿专用铁路）、发电、铝及铝合金的压延加工生产及销售等业务。
+                            </span> -->
+                            <span class="text-secondary" title="实控人为中煤集团，在江苏徐州生产基地拥有三对煤炭生产矿井，年核定生产能力805万吨，煤炭品种为1/3焦煤、气煤和肥煤，是优质炼焦配煤和动力煤">
+                                实控人为中煤集团，在江苏徐州生产基地拥有三对煤炭生产矿井，年核定生产能力805万吨，煤炭品种为1/3焦煤、气煤和肥煤，是优质炼焦配煤和动力煤
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border-t">
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=KXL&amp;type=&amp;formula=OBV&amp;nid=1.600508" loading="lazy">
+                        </div>
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=rc&amp;type=&amp;nid=1.600508" loading="lazy">
+                        </div>
+                    </div>
+                </div>
+            
+                <div data-stock-card class="border rounded relative overflow-hidden">
+                    
+                    
+                    <div class="absolute right-0 top-0 z-0 bg-error-content text-error rounded-bl px-1.5">
+                        <a href="/stock/detail/SH603286" target="_blank"
+                        class="text-[11px] font-medium">榜1</a>
+                    </div>
+                    
+                    
+                    <div class="p-2 space-y-1">
+                        <p>
+                            <a class="underline text-primary font-medium" href="https://quote.eastmoney.com/sh603286.html?jump_to_web=true" target="_blank">603286</a>
+                            <a class="underline text-primary font-medium " href="/stock/detail/SH603286">日盈电子</a>
+                            <span data-percent class=" text-error ">5.29%</span> 
+                            <span data-amount class=" bg-warning-content ">3.5亿</span>
+                            
+                            <span>/</span>
+                            <span data-market-cap class="">48.6亿</span>
+                            
+                        </p>
+
+                        
+                        
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">板数</span>
+        <span>
+            0板
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封板</span>
+        <span>09:34</span>
+    </p>
+    <span>
+        <span class="text-secondary text-sm">L1</span>
+        <span class="
+        
+        ">12.2万</span>
+    </span>
+    
+    <p>
+        <span class="text-secondary text-sm">偏离:</span>
+        <span data-ema-gap class="">
+            21.3
+        </span>
+    </p>
+    
+</div>
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">换手</span>
+        <span class="
+        
+        ">6.74</span>
+    </p>
+    
+    <p>
+        <span class="text-secondary text-sm">量比</span>
+        <span data-volume-ratio class="">
+            2.25
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封值比:</span>
+        <span>
+            
+                0.0
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封成比:</span>
+        <span class="">
+            
+                0.0
+            
+        </span>
+    </p>
+</div>
+
+
+                        
+                        
+
+<div class="flex gap-3">
+    
+    <p>
+        <span class="text-secondary text-sm">ROE</span>
+        <span data-roe class="">0.2</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">毛利</span>
+        <span class="">15.9</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">负债</span>
+        <span>56.7</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">利润</span>
+        <span data-net-profit class="">143.7万</span>
+    </p>
+    
+</div>
+
+
+
+                        
+                        
+
+
+
+
+
+<div class="flex gap-2 text-sm">
+    <span class="text-secondary">资金:</span>
+    
+    <span data-capital class=" text-info ">
+        -2298.9万
+    </span>
+    
+    
+    <span class=" text-error ">
+        1.2亿
+    </span>
+    
+    
+    <span class=" text-error ">
+        1.1亿
+    </span>
+    
+    
+    <span class=" text-error ">
+        5746.2万
+    </span>
+    
+</div>
+
+
+
+
+                    <div class="text-sm line-clamp-2">
+                            
+                            
+                            <span class="font-bold
+                            
+                            " title="机器人">
+                                [机器人]
+                            </span>
+                            
+                            <!-- <span class="text-secondary" title="汽车洗涤系统产品、汽车精密注塑件及小线束、汽车电子传感器等汽车零部件及摩托车线束等摩托车零部件的研发、生产和销售。">
+                                汽车洗涤系统产品、汽车精密注塑件及小线束、汽车电子传感器等汽车零部件及摩托车线束等摩托车零部件的研发、生产和销售。
+                            </span> -->
+                            <span class="text-secondary" title="公司压阻式的电子皮肤样品已研发成功，在人形机器人新领域，公司以布局柔性触觉传感电子皮肤新产品为契机，结合发展战略及市场需求加快布局柔性线束等其他人形机器人产品">
+                                公司压阻式的电子皮肤样品已研发成功，在人形机器人新领域，公司以布局柔性触觉传感电子皮肤新产品为契机，结合发展战略及市场需求加快布局柔性线束等其他人形机器人产品
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border-t">
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=KXL&amp;type=&amp;formula=OBV&amp;nid=1.603286" loading="lazy">
+                        </div>
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=rc&amp;type=&amp;nid=1.603286" loading="lazy">
+                        </div>
+                    </div>
+                </div>
+            
+                <div data-stock-card class="border rounded relative overflow-hidden">
+                    
+                    
+                    
+                    <div class="p-2 space-y-1">
+                        <p>
+                            <a class="underline text-primary font-medium" href="https://quote.eastmoney.com/sh600165.html?jump_to_web=true" target="_blank">600165</a>
+                            <a class="underline text-primary font-medium " href="/stock/detail/SH600165">宁科生物</a>
+                            <span data-percent class=" text-error ">4.28%</span> 
+                            <span data-amount class=" bg-warning-content ">1.8亿</span>
+                            
+                            <span>/</span>
+                            <span data-market-cap class="">24.2亿</span>
+                            
+                        </p>
+
+                        
+                        
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">板数</span>
+        <span>
+            0板
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封板</span>
+        <span>09:32</span>
+    </p>
+    <span>
+        <span class="text-secondary text-sm">L1</span>
+        <span class="
+        
+        ">24.2万</span>
+    </span>
+    
+    <p>
+        <span class="text-secondary text-sm">偏离:</span>
+        <span data-ema-gap class="">
+            62.8
+        </span>
+    </p>
+    
+</div>
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">换手</span>
+        <span class="
+        
+        ">7.14</span>
+    </p>
+    
+    <p>
+        <span class="text-secondary text-sm">量比</span>
+        <span data-volume-ratio class="">
+            1.83
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封值比:</span>
+        <span>
+            
+                0.0
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封成比:</span>
+        <span class="">
+            
+                0.1
+            
+        </span>
+    </p>
+</div>
+
+
+                        
+                        
+
+<div class="flex gap-3">
+    
+    
+    <p>
+        <span class="text-secondary text-sm">毛利</span>
+        <span class="">-6.0</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">负债</span>
+        <span>48.6</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">利润</span>
+        <span data-net-profit class=" text-info ">-1.3亿</span>
+    </p>
+    
+</div>
+
+
+
+                        
+                        
+
+
+
+
+
+<div class="flex gap-2 text-sm">
+    <span class="text-secondary">资金:</span>
+    
+    <span data-capital class=" text-info ">
+        -629.8万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -1876万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -2403.2万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -3130万
+    </span>
+    
+</div>
+
+
+
+
+                    <div class="text-sm line-clamp-2">
+                            
+                            
+                            <span class="font-bold
+                            
+                            " title="ST股">
+                                [ST股]
+                            </span>
+                            
+                            <!-- <span class="text-secondary" title="长链二元酸的生产及销售，煤质活性炭生产及销售。">
+                                长链二元酸的生产及销售，煤质活性炭生产及销售。
+                            </span> -->
+                            <span class="text-secondary" title="公司申请撤销其他风险警示">
+                                公司申请撤销其他风险警示
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border-t">
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=KXL&amp;type=&amp;formula=OBV&amp;nid=1.600165" loading="lazy">
+                        </div>
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=rc&amp;type=&amp;nid=1.600165" loading="lazy">
+                        </div>
+                    </div>
+                </div>
+            
+                <div data-stock-card class="border rounded relative overflow-hidden">
+                    
+                    
+                    
+                    <div class="p-2 space-y-1">
+                        <p>
+                            <a class="underline text-primary font-medium" href="https://quote.eastmoney.com/sz000721.html?jump_to_web=true" target="_blank">000721</a>
+                            <a class="underline text-primary font-medium " href="/stock/detail/SZ000721">西安饮食</a>
+                            <span data-percent class=" text-error ">4.19%</span> 
+                            <span data-amount class=" bg-warning-content ">3.3亿</span>
+                            
+                            <span>/</span>
+                            <span data-market-cap class="">34.6亿</span>
+                            
+                        </p>
+
+                        
+                        
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">板数</span>
+        <span>
+            0板
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封板</span>
+        <span>10:03</span>
+    </p>
+    <span>
+        <span class="text-secondary text-sm">L1</span>
+        <span class="
+        
+        ">21.5万</span>
+    </span>
+    
+    <p>
+        <span class="text-secondary text-sm">偏离:</span>
+        <span data-ema-gap class="">
+            38.6
+        </span>
+    </p>
+    
+</div>
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">换手</span>
+        <span class="
+        
+        ">9.08</span>
+    </p>
+    
+    <p>
+        <span class="text-secondary text-sm">量比</span>
+        <span data-volume-ratio class="">
+            4.06
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封值比:</span>
+        <span>
+            
+                0.0
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封成比:</span>
+        <span class="">
+            
+                0.1
+            
+        </span>
+    </p>
+</div>
+
+
+                        
+                        
+
+<div class="flex gap-3">
+    
+    <p>
+        <span class="text-secondary text-sm">ROE</span>
+        <span data-roe class="">-43.5</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">毛利</span>
+        <span class="">0.9</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">负债</span>
+        <span>90.8</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">利润</span>
+        <span data-net-profit class=" text-info ">-5581.5万</span>
+    </p>
+    
+</div>
+
+
+
+                        
+                        
+
+
+
+
+
+<div class="flex gap-2 text-sm">
+    <span class="text-secondary">资金:</span>
+    
+    <span data-capital class=" text-error ">
+        332.3万
+    </span>
+    
+    
+    <span class=" text-error ">
+        521.3万
+    </span>
+    
+    
+    <span class=" text-error ">
+        808.1万
+    </span>
+    
+    
+    <span class=" text-error ">
+        185.6万
+    </span>
+    
+</div>
+
+
+
+
+                    <div class="text-sm line-clamp-2">
+                            
+                            
+                            <span class="font-bold
+                            
+                            " title="大消费">
+                                [大消费]
+                            </span>
+                            
+                            <!-- <span class="text-secondary" title="餐饮服务及工业化食品加工及销售。">
+                                餐饮服务及工业化食品加工及销售。
+                            </span> -->
+                            <span class="text-secondary" title="公司大股东为西安曲江新区国有资产管理委员会，拥有西安饭庄、德发长酒店、西安烤鸭店、大香港酒楼、西安永宁兴业酒店有限责任公司等20家分公司、17家子公司，目前已开业2家社区餐饮便民店">
+                                公司大股东为西安曲江新区国有资产管理委员会，拥有西安饭庄、德发长酒店、西安烤鸭店、大香港酒楼、西安永宁兴业酒店有限责任公司等20家分公司、17家子公司，目前已开业2家社区餐饮便民店
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border-t">
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=KXL&amp;type=&amp;formula=OBV&amp;nid=0.000721" loading="lazy">
+                        </div>
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=rc&amp;type=&amp;nid=0.000721" loading="lazy">
+                        </div>
+                    </div>
+                </div>
+            
+                <div data-stock-card class="border rounded relative overflow-hidden">
+                    
+                    
+                    
+                    <div class="p-2 space-y-1">
+                        <p>
+                            <a class="underline text-primary font-medium" href="https://quote.eastmoney.com/sz002686.html?jump_to_web=true" target="_blank">002686</a>
+                            <a class="underline text-primary font-medium " href="/stock/detail/SZ002686">亿利达</a>
+                            <span data-percent class=" text-error ">3.52%</span> 
+                            <span data-amount class=" bg-warning-content ">6.9亿</span>
+                            
+                            <span>/</span>
+                            <span data-market-cap class="">38.3亿</span>
+                            
+                        </p>
+
+                        
+                        
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">板数</span>
+        <span>
+            0板
+            
+            (4/2)
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封板</span>
+        <span>09:36</span>
+    </p>
+    <span>
+        <span class="text-secondary text-sm">L1</span>
+        <span class="
+        
+        ">66.4万</span>
+    </span>
+    
+    <p>
+        <span class="text-secondary text-sm">偏离:</span>
+        <span data-ema-gap class="">
+            50.3
+        </span>
+    </p>
+    
+</div>
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">换手</span>
+        <span class="
+        
+        ">17.93</span>
+    </p>
+    
+    <p>
+        <span class="text-secondary text-sm">量比</span>
+        <span data-volume-ratio class="">
+            4.09
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封值比:</span>
+        <span>
+            
+                0.0
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封成比:</span>
+        <span class="">
+            
+                0.1
+            
+        </span>
+    </p>
+</div>
+
+
+                        
+                        
+
+<div class="flex gap-3">
+    
+    <p>
+        <span class="text-secondary text-sm">ROE</span>
+        <span data-roe class="">0.2</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">毛利</span>
+        <span class="">22.0</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">负债</span>
+        <span>36.8</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">利润</span>
+        <span data-net-profit class="">251.5万</span>
+    </p>
+    
+</div>
+
+
+
+                        
+                        
+
+
+
+
+
+<div class="flex gap-2 text-sm">
+    <span class="text-secondary">资金:</span>
+    
+    <span data-capital class=" text-info ">
+        -124.4万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -363.7万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -755.3万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -2406.2万
+    </span>
+    
+</div>
+
+
+
+
+                    <div class="text-sm line-clamp-2">
+                            
+                            
+                            <span class="font-bold
+                             text-error 
+                            " title="云计算数据中心|股权转让">
+                                [云计算数据中心 | 股权转让]
+                            </span>
+                            
+                            <!-- <span class="text-secondary" title="中央空调风机、建筑通风机及中央空调其他配件的设计、制造与销售。">
+                                中央空调风机、建筑通风机及中央空调其他配件的设计、制造与销售。
+                            </span> -->
+                            <span class="text-secondary" title="1、公司控股股东变更为润桐控股，实际控制人变更为桐乡市财政局；
+2、公司的产品可以应用数据中心冷却系统，风机产品已经在华为、阿里、腾讯、移动等企业的数据中心中配套应用">
+                                1、公司控股股东变更为润桐控股，实际控制人变更为桐乡市财政局；
+2、公司的产品可以应用数据中心冷却系统，风机产品已经在华为、阿里、腾讯、移动等企业的数据中心中配套应用
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border-t">
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=KXL&amp;type=&amp;formula=OBV&amp;nid=0.002686" loading="lazy">
+                        </div>
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=rc&amp;type=&amp;nid=0.002686" loading="lazy">
+                        </div>
+                    </div>
+                </div>
+            
+                <div data-stock-card class="border rounded relative overflow-hidden">
+                    
+                    
+                    
+                    <div class="p-2 space-y-1">
+                        <p>
+                            <a class="underline text-primary font-medium" href="https://quote.eastmoney.com/sz002445.html?jump_to_web=true" target="_blank">002445</a>
+                            <a class="underline text-primary font-medium " href="/stock/detail/SZ002445">中南文化</a>
+                            <span data-percent class=" text-info ">-2.96%</span> 
+                            <span data-amount class=" bg-warning-content ">15.3亿</span>
+                            
+                            <span>/</span>
+                            <span data-market-cap class="">96.5亿</span>
+                            
+                        </p>
+
+                        
+                        
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">板数</span>
+        <span>
+            0板
+            
+            (3/2)
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封板</span>
+        <span>09:25</span>
+    </p>
+    <span>
+        <span class="text-secondary text-sm">L1</span>
+        <span class="
+        
+        ">88.9万</span>
+    </span>
+    
+    <p>
+        <span class="text-secondary text-sm">偏离:</span>
+        <span data-ema-gap class="">
+            27.3
+        </span>
+    </p>
+    
+</div>
+<div class="flex gap-3">
+    <p>
+        <span class="text-secondary text-sm">换手</span>
+        <span class="
+        
+        ">16.93</span>
+    </p>
+    
+    <p>
+        <span class="text-secondary text-sm">量比</span>
+        <span data-volume-ratio class=" text-error ">
+            7.75
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封值比:</span>
+        <span>
+            
+                0.0
+            
+        </span>
+    </p>
+    <p>
+        <span class="text-secondary text-sm">封成比:</span>
+        <span class="">
+            
+                0.1
+            
+        </span>
+    </p>
+</div>
+
+
+                        
+                        
+
+<div class="flex gap-3">
+    
+    <p>
+        <span class="text-secondary text-sm">ROE</span>
+        <span data-roe class="">1.6</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">毛利</span>
+        <span class="">14.4</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">负债</span>
+        <span>22.4</span>
+    </p>
+    
+    
+    <p>
+        <span class="text-secondary text-sm">利润</span>
+        <span data-net-profit class="">3530.6万</span>
+    </p>
+    
+</div>
+
+
+
+                        
+                        
+
+
+
+
+
+<div class="flex gap-2 text-sm">
+    <span class="text-secondary">资金:</span>
+    
+    <span data-capital class=" text-error ">
+        29.9万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -172.8万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -1281.9万
+    </span>
+    
+    
+    <span class=" text-info ">
+        -899.4万
+    </span>
+    
+</div>
+
+
+
+
+                    <div class="text-sm line-clamp-2">
+                            
+                            
+                            <span class="font-bold
+                            
+                            " title="资产重组">
+                                [资产重组]
+                            </span>
+                            
+                            <!-- <span class="text-secondary" title="电视剧,电影项目的投资,策划,制作,发行,营销及其衍生品开发业务；版权开发,运营；游戏制作,发行；文化产业的股权投资。金属管件,法兰,管系,压力容器的生产和销售;光伏电站的开发、投资、建设及运营。">
+                                电视剧,电影项目的投资,策划,制作,发行,营销及其衍生品开发业务；版权开发,运营；游戏制作,发行；文化产业的股权投资。金属管件,法兰,管系,压力容器的生产和销售;光伏电站的开发、投资、建设及运营。
+                            </span> -->
+                            <span class="text-secondary" title="公司拟收购江阴热电及苏龙热电部分股权">
+                                公司拟收购江阴热电及苏龙热电部分股权
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="border-t">
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=KXL&amp;type=&amp;formula=OBV&amp;nid=0.002445" loading="lazy">
+                        </div>
+                        <div>
+                            <img src="https://webquotepic.eastmoney.com/GetPic.aspx?unitWidth=-5&amp;imageType=rc&amp;type=&amp;nid=0.002445" loading="lazy">
+                        </div>
+                    </div>
+                </div>
+            
+        </div>
+    </div>
+    
+
+</div>
+
+
+    <div class="border-t mt-8">
+        <div class="container mx-auto text-center py-4 leading-7">
+            <p class="text-secondary">数据来源于互联网，仅供学习与研究参考，不构成任何投资建议。</p>
+            <p>&copy; 2012-2025 <a href="/" class="link link-primary">芦苇复盘</a> | Powered By <a href="http://www.chenhuax.com" class="link link-secondary">陈华编程</a> |  <a href="/about" class="link link-secondary">关于我们</a></p>
+        </div>
+    </div>
+
+    <!-- 固定工具栏 -->
+    <div class="fixed top-64 right-5 z-50 flex flex-col gap-2">
+
+        <!-- 综合筛选按钮（涨幅、量比、资金） -->
+        <div class="dropdown [--placement:left-start]">
+            <button id="combined-filter-dropdown" type="button" class="dropdown-toggle btn bg-white btn-circle btn-text p-2" aria-haspopup="menu" aria-expanded="false" aria-label="综合筛选">
+                <span class="icon-[tabler--filter] size-4.5"></span>
+            </button>
+            <div class="dropdown-menu dropdown-open:opacity-100 hidden p-4 bg-white shadow-xl rounded-lg border mb-2 min-w-[240px]" role="menu" aria-orientation="vertical" aria-labelledby="combined-filter-dropdown">
+                <div class="space-y-4">
+                    <!-- 涨幅筛选 -->
+                    <div class="space-y-2">
+                        <div class="text-sm text-secondary mb-2">涨幅筛选</div>
+                        <div class="flex gap-1">
+                            <button onclick="filterByPercent('gt', 0); event.stopPropagation();" class="percent-filter-btn btn btn-sm flex-1" data-type="gt" data-value="0">
+                                &gt;0%
+                            </button>
+                            <button onclick="filterByPercent('gt', 1); event.stopPropagation();" class="percent-filter-btn btn btn-sm flex-1" data-type="gt" data-value="1">
+                                &gt;1%
+                            </button>
+                            <button onclick="filterByPercent('gt', 2); event.stopPropagation();" class="percent-filter-btn btn btn-sm flex-1" data-type="gt" data-value="2">
+                                &gt;2%
+                            </button>
+                            <button onclick="filterByPercent('gt', 3); event.stopPropagation();" class="percent-filter-btn btn btn-sm flex-1" data-type="gt" data-value="3">
+                                &gt;3%
+                            </button>
+                            <button onclick="filterByPercent('gt', 4); event.stopPropagation();" class="percent-filter-btn btn btn-sm flex-1" data-type="gt" data-value="4">
+                                &gt;4%
+                            </button>
+                            <button onclick="filterByPercent('gt', 5); event.stopPropagation();" class="percent-filter-btn btn btn-sm flex-1" data-type="gt" data-value="5">
+                                &gt;5%
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- 量比筛选 -->
+                    <div class="space-y-2">
+                        <div class="text-sm text-secondary mb-2">量比筛选</div>
+                        <div class="flex gap-1 flex-wrap">
+                            <button onclick="filterByVolumeRatio(1.5); event.stopPropagation();" class="volume-ratio-filter-btn btn btn-sm flex-1" data-value="1.5">
+                                &gt;1.5
+                            </button>
+                            <button onclick="filterByVolumeRatio(3); event.stopPropagation();" class="volume-ratio-filter-btn btn btn-sm flex-1" data-value="3">
+                                &gt;3
+                            </button>
+                            <button onclick="filterByVolumeRatio(5); event.stopPropagation();" class="volume-ratio-filter-btn btn btn-sm flex-1" data-value="5">
+                                &gt;5
+                            </button>
+                            <button onclick="filterByVolumeRatio(10); event.stopPropagation();" class="volume-ratio-filter-btn btn btn-sm flex-1" data-value="10">
+                                &gt;10
+                            </button>
+                            <button onclick="filterByVolumeRatio(15); event.stopPropagation();" class="volume-ratio-filter-btn btn btn-sm flex-1" data-value="15">
+                                &gt;15
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- 资金流向筛选 -->
+                    <div class="space-y-2">
+                        <div class="text-sm text-secondary mb-2">资金流向筛选</div>
+                        <div class="flex gap-1">
+                            <button onclick="filterByCapital(0); event.stopPropagation();" class="capital-filter-btn btn btn-sm flex-1" data-value="0">
+                                0
+                            </button>
+                            <button onclick="filterByCapital(10000000); event.stopPropagation();" class="capital-filter-btn btn btn-sm flex-1" data-value="10000000">
+                                1千万
+                            </button>
+                            <button onclick="filterByCapital(50000000); event.stopPropagation();" class="capital-filter-btn btn btn-sm flex-1" data-value="50000000">
+                                5千万
+                            </button>
+                            <button onclick="filterByCapital(80000000); event.stopPropagation();" class="capital-filter-btn btn btn-sm flex-1" data-value="80000000">
+                                8千万
+                            </button>
+                            <button onclick="filterByCapital(100000000); event.stopPropagation();" class="capital-filter-btn btn btn-sm flex-1" data-value="100000000">
+                                1亿
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- 偏离值筛选 -->
+                    <div class="space-y-2">
+                        <div class="text-sm text-secondary mb-2">偏离值筛选</div>
+                        <div class="flex gap-1">
+                            <button onclick="filterByEmaGap(-150, 'lt'); event.stopPropagation();" class="ema-gap-filter-btn btn btn-sm flex-1" data-value="-150" data-type="lt">
+                                &lt;-150
+                            </button>
+                            <button onclick="filterByEmaGap(80); event.stopPropagation();" class="ema-gap-filter-btn btn btn-sm flex-1" data-value="80">
+                                &gt;80
+                            </button>
+                            <button onclick="filterByEmaGap(90); event.stopPropagation();" class="ema-gap-filter-btn btn btn-sm flex-1" data-value="90">
+                                &gt;90
+                            </button>
+                            <button onclick="filterByEmaGap(95); event.stopPropagation();" class="ema-gap-filter-btn btn btn-sm flex-1" data-value="95">
+                                &gt;95
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- 一键筛选/清除 -->
+                    <div class="grid grid-cols-3 gap-2 pt-2 border-t">
+                        <button onclick="applyQuickFilter(); event.stopPropagation();" class="btn btn-sm btn-primary w-full">
+                            综合筛选
+                        </button>
+                        <button onclick="applyQuickFilterStrong(); event.stopPropagation();" class="btn btn-sm btn-primary w-full">
+                            量价筛选
+                        </button>
+                        <button onclick="resetFilters(); event.stopPropagation();" class="btn btn-sm w-full">
+                            一键清除
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 财务筛选按钮（ROE、净利） -->
+        <div class="dropdown [--placement:left-start]">
+            <button id="financial-filter-dropdown" type="button" class="dropdown-toggle btn bg-white btn-circle btn-text p-2" aria-haspopup="menu" aria-expanded="false" aria-label="财务筛选">
+                <span class="icon-[tabler--chart-line] size-4.5"></span>
+            </button>
+            <div class="dropdown-menu dropdown-open:opacity-100 hidden p-4 bg-white shadow-xl rounded-lg border mb-2 min-w-[240px]" role="menu" aria-orientation="vertical" aria-labelledby="financial-filter-dropdown">
+                <div class="space-y-4">
+                    <!-- ROE筛选 -->
+                    <div class="space-y-2">
+                        <div class="text-sm text-secondary mb-2">ROE筛选</div>
+                        <div class="flex gap-1">
+                            <button onclick="filterByRoe(5); event.stopPropagation();" class="roe-filter-btn btn btn-sm flex-1" data-value="5">
+                                &gt;5%
+                            </button>
+                            <button onclick="filterByRoe(10); event.stopPropagation();" class="roe-filter-btn btn btn-sm flex-1" data-value="10">
+                                &gt;10%
+                            </button>
+                            <button onclick="filterByRoe(15); event.stopPropagation();" class="roe-filter-btn btn btn-sm flex-1" data-value="15">
+                                &gt;15%
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- 净利筛选 -->
+                    <div class="space-y-2">
+                        <div class="text-sm text-secondary mb-2">净利筛选</div>
+                        <div class="flex gap-1">
+                            <button onclick="filterByNetProfit(20000000); event.stopPropagation();" class="net-profit-filter-btn btn btn-sm flex-1" data-value="20000000">
+                                &gt;2000万
+                            </button>
+                            <button onclick="filterByNetProfit(50000000); event.stopPropagation();" class="net-profit-filter-btn btn btn-sm flex-1" data-value="50000000">
+                                &gt;5000万
+                            </button>
+                            <button onclick="filterByNetProfit(100000000); event.stopPropagation();" class="net-profit-filter-btn btn btn-sm flex-1" data-value="100000000">
+                                &gt;1亿
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- 成交额筛选 -->
+                    <div class="space-y-2">
+                        <div class="text-sm text-secondary mb-2">成交额筛选</div>
+                        <div class="flex gap-1">
+                            <button onclick="filterByAmount(3); event.stopPropagation();" class="amount-filter-btn btn btn-sm flex-1" data-value="3">
+                                &gt;3亿
+                            </button>
+                            <button onclick="filterByAmount(10); event.stopPropagation();" class="amount-filter-btn btn btn-sm flex-1" data-value="10">
+                                &gt;10亿
+                            </button>
+                            <button onclick="filterByAmount(30); event.stopPropagation();" class="amount-filter-btn btn btn-sm flex-1" data-value="30">
+                                &gt;30亿
+                            </button>
+                            <button onclick="filterByAmount(50); event.stopPropagation();" class="amount-filter-btn btn btn-sm flex-1" data-value="50">
+                                &gt;50亿
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 市值筛选 -->
+                    <div class="space-y-2">
+                        <div class="text-sm text-secondary mb-2">市值筛选</div>
+                        <div class="flex gap-1">
+                            <button onclick="filterByMarketCap(30); event.stopPropagation();" class="market-cap-filter-btn btn btn-sm flex-1" data-value="30">
+                                &gt;30亿
+                            </button>
+                            <button onclick="filterByMarketCap(50); event.stopPropagation();" class="market-cap-filter-btn btn btn-sm flex-1" data-value="50">
+                                &gt;50亿
+                            </button>
+                            <button onclick="filterByMarketCap(100); event.stopPropagation();" class="market-cap-filter-btn btn btn-sm flex-1" data-value="100">
+                                &gt;100亿
+                            </button>
+                            <button onclick="filterByMarketCap(300); event.stopPropagation();" class="market-cap-filter-btn btn btn-sm flex-1" data-value="300">
+                                &gt;300亿
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 清除按钮 -->
+                    <div class="pt-2 border-t">
+                        <button onclick="resetFinancialFilters(); event.stopPropagation();" class="btn btn-sm w-full">
+                            清除财务筛选
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 图表宽度按钮 -->
+        <div class="dropdown [--placement:left]">
+            <button id="width-dropdown" type="button" class="dropdown-toggle btn bg-white btn-circle btn-text p-2" aria-haspopup="menu" aria-expanded="false" aria-label="图表宽度">
+                <span class="icon-[tabler--arrows-horizontal] size-4.5"></span>
+            </button>
+            <div class="dropdown-menu dropdown-open:opacity-100 hidden p-4 bg-white shadow-xl rounded-lg border mb-2" role="menu" aria-orientation="vertical" aria-labelledby="width-dropdown">
+                <div class="space-y-2">
+                    <div class="text-sm text-secondary mb-2">图表宽度</div>
+                    <div class="flex gap-1">
+                        <button onclick="updateUnitWidth('-1'); event.stopPropagation();" class="unitWidth-btn btn btn-sm flex-1" data-value="-1">-1</button>
+                        <button onclick="updateUnitWidth('-2'); event.stopPropagation();" class="unitWidth-btn btn btn-sm flex-1" data-value="-2">-2</button>
+                        <button onclick="updateUnitWidth('-3'); event.stopPropagation();" class="unitWidth-btn btn btn-sm flex-1" data-value="-3">-3</button>
+                        <button onclick="updateUnitWidth('-4'); event.stopPropagation();" class="unitWidth-btn btn btn-sm flex-1" data-value="-4">-4</button>
+                        <button onclick="updateUnitWidth('-5'); event.stopPropagation();" class="unitWidth-btn btn btn-sm flex-1 btn-primary" data-value="-5">-5</button>
+                    </div>
+                    <div class="pt-2 border-t">
+                        <div class="text-sm text-secondary mb-2">图表级别</div>
+                        <div class="flex gap-1">
+                            <button onclick="setChartType('daily'); event.stopPropagation();" id="daily-chart-btn" class="chart-type-btn btn btn-sm flex-1 btn-primary" data-type="daily">日线</button>
+                            <button onclick="setChartType('weekly'); event.stopPropagation();" id="weekly-chart-btn" class="chart-type-btn btn btn-sm flex-1" data-type="weekly">周线</button>
+                            <button onclick="resetChartSettings(); event.stopPropagation();" class="btn btn-sm flex-1">重置</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 回到顶部按钮 -->
+        <button onclick="scrollToTop()" class="btn bg-white btn-circle btn-text p-2" aria-label="回到顶部">
+            <span class="icon-[tabler--arrow-bar-up] size-4.5"></span>
+        </button>
+    </div>
+
+    <script src="/static/plugins/custom/siteNavDrawer.js"></script>
+    <script src="/static/plugins/flyonui/dropdown.js"></script>
+    <script src="/static/plugins/flyonui/tooltip.js"></script>
+    <script src="/static/plugins/flyonui/tabs.js"></script>
+    <!-- <script src="/static/plugins/flyonui/overlay.js"></script> -->
+    <!-- <script src="/static/plugins/flyonui.js"></script> -->
+    
+    <script src="/static/plugins/custom/common.js"></script>
+    <script src="/static/plugins/custom/filterVisibility.js"></script>
+    <script>
+        var _hmt = _hmt || [];
+        (function() {
+          var hm = document.createElement("script");
+          hm.src = "https://hm.baidu.com/hm.js"+"?0169cc755efe3c1008"+"32587d34e8429d";
+          var s = document.getElementsByTagName("script")[0]; 
+          s.parentNode.insertBefore(hm, s);
+        })();
+    </script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id:"KfJRgGosCZ4oKfGX",ck:"KfJRgGosCZ4oKfGX"})</script>
+</body>
+</html>
