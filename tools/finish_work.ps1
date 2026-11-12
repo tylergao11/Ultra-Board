@@ -15,6 +15,10 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "读取 Git 工作区状态失败。"
     }
+    $ruleChanges = @($status | Where-Object {
+        $path = if ($_.Length -gt 3) { $_.Substring(3) } else { "" }
+        $path -eq "AGENTS.md" -or $path.StartsWith("data/store/rules/")
+    })
     $dataOrRuleChanges = @($status | Where-Object {
         $path = if ($_.Length -gt 3) { $_.Substring(3) } else { "" }
         $path -eq "AGENTS.md" -or
@@ -22,6 +26,17 @@ try {
         $path -eq "一字首开买卖研究表.json" -or
         $path.StartsWith("data/")
     })
+
+    if ($ruleChanges.Count -gt 0) {
+        & $python.Source -B tools/research_cli.py sync-rules
+        if ($LASTEXITCODE -ne 0) {
+            throw "规则版本同步失败。"
+        }
+        & $python.Source -B tools/research_cli.py refresh-evidence
+        if ($LASTEXITCODE -ne 0) {
+            throw "规则证据登记失败。"
+        }
+    }
 
     if ($dataOrRuleChanges.Count -gt 0) {
         & $python.Source -B tools/research_cli.py maintain --keep-backups 3
