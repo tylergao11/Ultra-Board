@@ -7,6 +7,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+if ($PSVersionTable.PSVersion.Major -lt 6) {
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+}
 
 $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $storeDir = Join-Path $root "data/store"
