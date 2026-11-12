@@ -24,6 +24,8 @@ try {
         $path -eq "AGENTS.md" -or
         $path -eq "一字首开研究总表.json" -or
         $path -eq "一字首开买卖研究表.json" -or
+        $path -eq "tools/research_cli.py" -or
+        $path.StartsWith("tools/research/") -or
         $path.StartsWith("data/")
     })
 

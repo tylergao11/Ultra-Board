@@ -1651,6 +1651,12 @@ class ResearchStore:
         ).fetchone()
         if existing and existing["status"] == "complete":
             summary = json.loads(existing["summary_json"])
+            summary["rules"] = {
+                row["rule_type"]: int(row["id"])
+                for row in connection.execute(
+                    "SELECT id,rule_type FROM rule_sets WHERE status='current' ORDER BY rule_type"
+                )
+            }
             summary["reused_existing_batch"] = True
             connection.close()
             return summary
