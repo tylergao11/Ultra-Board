@@ -1,0 +1,50 @@
+{
+  "cutover_at": "2026-11-12T17:37:51+08:00",
+  "formal_database": {
+    "path": "data/store/research.sqlite",
+    "sha256": "d3aa431f2f275a928bb6fb7b23614485887ec546fdf5f1726640744f702e0a46",
+    "size_bytes": 402907136,
+    "schema_versions": [1, 2, 3, 4, 5],
+    "current_input_batch": "full-f2f10e58db3a9adb",
+    "logical_snapshot": "5c2ac5026a292bf45cd93e0da1578473619832126422b5617774f21ef168490a"
+  },
+  "formal_rules": {
+    "static_source": "data/store/rules/static_rules.json",
+    "static_version": "2026-11-12-e5f9eb0b0753",
+    "dynamic_source": "data/store/rules/dynamic_rules.json",
+    "dynamic_version": "2026-11-12-e524536971e2",
+    "workflow_source": "AGENTS.md",
+    "workflow_version": "2026-11-12-7c6bbe065740"
+  },
+  "current_generation": {
+    "generation_key": "20261112-172015-5c2ac5026a",
+    "manifest": "data/store/exports/20261112-172015-5c2ac5026a/manifest.json",
+    "database_snapshot": "5c2ac5026a292bf45cd93e0da1578473619832126422b5617774f21ef168490a"
+  },
+  "verification": {
+    "report": "data/store/migrations/verification-final/verification.json",
+    "passed": true,
+    "static_records": 1520,
+    "dynamic_records": 132,
+    "static_differences": 0,
+    "dynamic_differences": 0,
+    "field_mapping_missing": 0,
+    "foreign_key_errors": 0,
+    "idempotence_stable": true
+  },
+  "recovery": {
+    "manifest": "data/store/migrations/recovery/current/restore_manifest.json",
+    "database": "data/store/migrations/recovery/current/research-20261112-173640.sqlite",
+    "database_sha256": "4c79b2491d27b9b2e6fa393239a2092aefc17842ae3e26746bd459f50bc4b98d",
+    "files_archive": "data/store/migrations/recovery/current/cutover-files-20261112-173640.zip",
+    "archive_entries": 18,
+    "restore_drill": "data/store/migrations/verification/restore_drill.json",
+    "restore_drill_passed": true
+  },
+  "cleanup": "data/store/migrations/cleanup_manifest.json",
+  "daily_maintenance": {
+    "command": "python tools/research_cli.py maintain --keep-backups 3",
+    "validated_report": "data/store/maintenance/20261112-171933/maintenance_report.json",
+    "latest_raw_trade_date": "2026-11-11"
+  }
+}

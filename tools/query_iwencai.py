@@ -14,6 +14,9 @@ from concurrent.futures import ThreadPoolExecutor
 import requests
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 ENDPOINT = "https://www.iwencai.com/unifiedwap/unified-wap/v2/result/get-robot-data"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -101,12 +104,20 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--questions-file", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--register-db", action="store_true",
+                        help="register saved responses in the unified research database")
     args = parser.parse_args()
     items = json.loads(args.questions_file.read_text(encoding="utf-8"))
     args.output_dir.mkdir(parents=True, exist_ok=True)
     bundle, version = signing_bundle()
     with ThreadPoolExecutor(max_workers=min(4, max(1, len(items)))) as executor:
         results = list(executor.map(lambda item: query(item, args.output_dir, bundle, version), items))
+    if args.register_db:
+        from research.system import ResearchStore
+
+        store = ResearchStore(ROOT)
+        for result in results:
+            store.register_evidence_path(Path(result["file"]))
     print(json.dumps(results, ensure_ascii=True))
     if any(item["status_code"] != 0 or not item["data_rows"] for item in results):
         raise SystemExit(1)

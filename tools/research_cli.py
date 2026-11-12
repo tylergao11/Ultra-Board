@@ -1,0 +1,224 @@
+"""Unified command line entry for the Ultra-Board research database."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import shutil
+import sqlite3
+import sys
+import tempfile
+import zipfile
+
+from research.system import ResearchStore, json_text, now_text, sha256_bytes, sha256_file
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def store_for(args: argparse.Namespace) -> ResearchStore:
+    return ResearchStore(ROOT, Path(args.db) if getattr(args, "db", None) else None)
+
+
+def emit(value) -> None:
+    print(json_text(value, pretty=True))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Ultra-Board unified research store")
+    parser.add_argument("--db", help="SQLite path; defaults to data/store/research.sqlite")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    baseline = sub.add_parser("baseline", help="freeze and verify migration baseline")
+    baseline.add_argument("--output", default="data/store/migrations/baseline-20261112-initial")
+
+    sub.add_parser("migrate", help="run or reuse the complete migration")
+    sub.add_parser("sync-rules", help="synchronize current versioned rules without reimporting data")
+    sub.add_parser("summary", help="show database counts and active versions")
+    sub.add_parser("rules", help="show current versioned research rules")
+
+    stock = sub.add_parser("stock", help="query a stock file")
+    stock.add_argument("--code", required=True)
+
+    attributes = sub.add_parser("attributes", help="query point-in-time attributes")
+    attributes.add_argument("--code", required=True)
+    attributes.add_argument("--date", required=True)
+
+    pool = sub.add_parser("pool", help="query a dated stock pool")
+    pool.add_argument("--type", required=True)
+    pool.add_argument("--date", required=True)
+    pool.add_argument("--record-key")
+    pool.add_argument("--input-version", help="defaults to the current import batch; use 'all' for history")
+    pool.add_argument("--rule-version")
+
+    research = sub.add_parser("research", help="query a complete research record")
+    research.add_argument("--record-key", required=True)
+    research.add_argument("--plan", default="formal")
+
+    issues = sub.add_parser("issues", help="query preserved data gaps and impacts")
+    issues.add_argument("--from-date")
+    issues.add_argument("--to-date")
+
+    impact = sub.add_parser("impact", help="locate research affected by a stock, source, date or rule object")
+    impact.add_argument("--object", required=True)
+
+    write = sub.add_parser("write", help="transactionally submit a versioned research revision")
+    write.add_argument("--input", required=True, help="UTF-8 JSON request file")
+
+    export = sub.add_parser("export", help="generate compact tables, CSV and statistics")
+    export.add_argument("--output-root")
+    export.add_argument("--publish-root", action="store_true")
+
+    verify = sub.add_parser("verify", help="run full real-data verification")
+    verify.add_argument("--report-dir", default="data/store/migrations/verification")
+    verify.add_argument("--skip-idempotence", action="store_true")
+
+    reports = sub.add_parser("reports", help="write schema, rule and coverage reports")
+    reports.add_argument("--output", default="data/store/migrations/reports")
+
+    backup = sub.add_parser("backup", help="create a coherent database and cutover restore point")
+    backup.add_argument("--output", default="data/store/migrations/recovery/current")
+
+    drill = sub.add_parser("restore-drill", help="restore a backup into an isolated copy and verify it")
+    drill.add_argument("--backup", required=True)
+    drill.add_argument("--report", default="data/store/migrations/verification/restore_drill.json")
+
+    restore = sub.add_parser("restore", help="restore a database backup with a pre-restore safety copy")
+    restore.add_argument("--backup", required=True)
+    restore.add_argument("--target", default="data/store/research.sqlite")
+    restore.add_argument("--restore-files", action="store_true", help="also restore the matching cutover files archive")
+
+    evidence = sub.add_parser("register-evidence", help="register one newly saved source response")
+    evidence.add_argument("--path", required=True)
+    sub.add_parser("refresh-evidence", help="rebuild the current evidence inventory and mark historical paths")
+    maintain = sub.add_parser("maintain", help="process newly downloaded daily data, verify, publish and rotate backups")
+    maintain.add_argument("--keep-backups", type=int, default=3)
+
+    args = parser.parse_args()
+    store = store_for(args)
+    if args.command == "baseline":
+        emit(store.create_baseline(ROOT / args.output))
+    elif args.command == "migrate":
+        emit(store.migrate_all())
+    elif args.command == "sync-rules":
+        emit(store.sync_rules())
+    elif args.command == "summary":
+        connection = store.connect()
+        store.apply_migrations(connection)
+        tables = [
+            "evidence_files", "stocks", "stock_concepts", "plate_memberships", "daily_market",
+            "announcements", "launch_rounds", "first_open_events", "stock_pools", "pool_members",
+            "current_static_research", "current_dynamic_research", "issues",
+        ]
+        result = {
+            "database": str(store.db_path),
+            "database_size": store.db_path.stat().st_size if store.db_path.exists() else 0,
+            "tables": {name: connection.execute(f"SELECT COUNT(*) AS c FROM {name}").fetchone()["c"] for name in tables},
+            "current_batch": connection.execute("SELECT value FROM store_meta WHERE key='current_batch_key'").fetchone()["value"],
+            "rules": {row["rule_type"]: row["version"] for row in connection.execute("SELECT rule_type,version FROM rule_sets WHERE status='current'")},
+        }
+        connection.close()
+        emit(result)
+    elif args.command == "rules":
+        emit(store.current_rules())
+    elif args.command == "stock":
+        emit(store.query_stock(args.code))
+    elif args.command == "attributes":
+        emit(store.query_attributes(args.code, args.date))
+    elif args.command == "pool":
+        emit(store.query_pool(args.type, args.date, args.record_key, args.input_version, args.rule_version))
+    elif args.command == "research":
+        emit(store.query_research(args.record_key, args.plan))
+    elif args.command == "issues":
+        emit(store.query_issues(args.from_date, args.to_date))
+    elif args.command == "impact":
+        emit(store.query_impact(args.object))
+    elif args.command == "write":
+        emit(store.write_research(json.loads((ROOT / args.input).read_text(encoding="utf-8"))))
+    elif args.command == "export":
+        emit(store.export_all(ROOT / args.output_root if args.output_root else None, args.publish_root))
+    elif args.command == "verify":
+        emit(store.verify_full(ROOT / args.report_dir, not args.skip_idempotence))
+    elif args.command == "reports":
+        emit(store.write_contract_reports(ROOT / args.output))
+    elif args.command == "backup":
+        emit(store.create_restore_point(ROOT / args.output))
+    elif args.command == "restore-drill":
+        emit(store.restore_drill(ROOT / args.backup, ROOT / args.report))
+    elif args.command == "restore":
+        backup_path = (ROOT / args.backup).resolve()
+        target_path = (ROOT / args.target).resolve()
+        check = sqlite3.connect(backup_path)
+        integrity = check.execute("PRAGMA integrity_check").fetchone()[0]
+        check.close()
+        if integrity != "ok":
+            raise RuntimeError(f"backup integrity check failed: {integrity}")
+        restored_files: list[str] = []
+        pre_restore_files = None
+        if args.restore_files:
+            manifest_path = backup_path.parent / "restore_manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            archive_path = (ROOT / manifest["files"]["path"]).resolve()
+            if sha256_file(archive_path) != manifest["files"]["sha256"]:
+                raise RuntimeError("cutover files archive checksum mismatch")
+            expected = {item["path"]: item for item in manifest["files"].get("entries", [])}
+            with tempfile.TemporaryDirectory(prefix="ultra-board-file-restore-") as temp_dir:
+                staging = Path(temp_dir)
+                with zipfile.ZipFile(archive_path, "r") as archive:
+                    if set(archive.namelist()) != set(expected):
+                        raise RuntimeError("cutover files archive entry list mismatch")
+                    for name, item in expected.items():
+                        payload = archive.read(name)
+                        if len(payload) != item["size"] or sha256_bytes(payload) != item["sha256"]:
+                            raise RuntimeError(f"cutover archive entry checksum mismatch: {name}")
+                        destination = (staging / name).resolve()
+                        destination.relative_to(staging.resolve())
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        destination.write_bytes(payload)
+                pre_restore_files = backup_path.parent / f"pre-restore-files-{backup_path.stem}.zip"
+                with zipfile.ZipFile(pre_restore_files, "w", compression=zipfile.ZIP_DEFLATED) as safety_archive:
+                    for name in expected:
+                        current = (ROOT / name).resolve()
+                        current.relative_to(ROOT.resolve())
+                        if current.exists():
+                            safety_archive.write(current, name)
+                for name in expected:
+                    source_file = staging / name
+                    destination = (ROOT / name).resolve()
+                    destination.relative_to(ROOT.resolve())
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    staged_file = destination.with_name(f".{destination.name}.restoring")
+                    shutil.copy2(source_file, staged_file)
+                    os.replace(staged_file, destination)
+                    restored_files.append(name)
+        safety = target_path.with_suffix(target_path.suffix + ".pre-restore")
+        if target_path.exists():
+            shutil.copy2(target_path, safety)
+        temporary = target_path.with_suffix(target_path.suffix + ".restoring")
+        shutil.copy2(backup_path, temporary)
+        os.replace(temporary, target_path)
+        emit({
+            "restored_at": now_text(),
+            "backup": str(backup_path),
+            "backup_sha256": sha256_file(backup_path),
+            "target": str(target_path),
+            "pre_restore_copy": str(safety) if safety.exists() else None,
+            "restored_files": restored_files,
+            "pre_restore_files_archive": str(pre_restore_files) if pre_restore_files else None,
+        })
+    elif args.command == "register-evidence":
+        emit({"evidence_id": store.register_evidence_path(ROOT / args.path), "path": args.path})
+    elif args.command == "refresh-evidence":
+        emit(store.refresh_evidence_inventory())
+    elif args.command == "maintain":
+        emit(store.maintain_daily(args.keep_backups))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (KeyError, ValueError, RuntimeError, FileNotFoundError, sqlite3.Error) as exc:
+        print(json_text({"error": type(exc).__name__, "message": str(exc)}, pretty=True), file=sys.stderr)
+        raise SystemExit(1)

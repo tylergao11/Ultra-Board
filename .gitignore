@@ -12,6 +12,20 @@ data/kaipanla/device_id.txt
 data/kaipanla/backfill_state.json
 data/kaipanla/mismatches.json
 
+# SQLite 正式库通过 GitHub Release 发布，避免普通 Git 的 100 MiB 限制。
+# 本机滚动恢复副本由 maintain 管理，GitHub 上保留当前正式库快照。
+data/store/research.sqlite
+data/store/**/*.sqlite
+data/store/**/*.sqlite-*
+data/store/**/*.sqlite-journal
+data/store/**/*.sqlite-shm
+data/store/**/*.sqlite-wal
+data/store/recovery/
+data/store/migrations/recovery/
+data/store/local-backups/
+*.download
+*.part
+
 # 编辑器 / 系统
 .idea/
 .vscode/

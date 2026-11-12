@@ -1,0 +1,2652 @@
+{
+  "generated_at": "2026-11-12T17:36:02+08:00",
+  "issues": [
+    {
+      "detail": "2025-11-25: *ST苏吴 / 退市苏吴",
+      "id": 1,
+      "impact": "name display requires source review; stock code identity remains stable",
+      "issue_kind": "same_date_name_conflict",
+      "object_key": "1036",
+      "scope": "stock_identity",
+      "severity": "data_gap",
+      "status": "open"
+    },
+    {
+      "detail": "2025-05-29: *ST锦港 / 退市锦港",
+      "id": 2,
+      "impact": "name display requires source review; stock code identity remains stable",
+      "issue_kind": "same_date_name_conflict",
+      "object_key": "4704",
+      "scope": "stock_identity",
+      "severity": "data_gap",
+      "status": "open"
+    }
+  ],
+  "schema": {
+    "announcements": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "stock_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "stock_name",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "disclosure_time",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "related_trade_date",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "title",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "capital_matter_type",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "dflt_value": null,
+        "name": "pollution_result",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 8,
+        "dflt_value": null,
+        "name": "basis",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 9,
+        "dflt_value": null,
+        "name": "evidence_file_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 10,
+        "dflt_value": null,
+        "name": "source_record_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 11,
+        "dflt_value": "'{}'",
+        "name": "raw_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "archived_sections": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "source_file",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "section",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "archive_kind",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "raw_sha256",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "raw_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "concept_merges": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "source_label",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "unified_label",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "rule_set_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "scope",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "rationale",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "concepts": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "source_code",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "source_name",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "unified_name",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "daily_market": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "stock_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "trade_date",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "source_type",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": "'unadjusted'",
+        "name": "price_mode",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "open_milli",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "high_milli",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 7,
+        "dflt_value": null,
+        "name": "low_milli",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 8,
+        "dflt_value": null,
+        "name": "close_milli",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 9,
+        "dflt_value": null,
+        "name": "previous_close_milli",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 10,
+        "dflt_value": null,
+        "name": "limit_up_milli",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 11,
+        "dflt_value": null,
+        "name": "limit_down_milli",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 12,
+        "dflt_value": null,
+        "name": "board_height",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 13,
+        "dflt_value": null,
+        "name": "first_limit_time",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 14,
+        "dflt_value": null,
+        "name": "strict_one_word",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 15,
+        "dflt_value": null,
+        "name": "evidence_file_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 16,
+        "dflt_value": "'{}'",
+        "name": "raw_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "dynamic_research": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "first_open_event_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "plan_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "legacy_record_key",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "version",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "is_current",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "research_status",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "dflt_value": null,
+        "name": "confirmation_status",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 8,
+        "dflt_value": null,
+        "name": "auction_result",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 9,
+        "dflt_value": null,
+        "name": "auction_pct_micros",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 10,
+        "dflt_value": null,
+        "name": "pk_result",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 11,
+        "dflt_value": null,
+        "name": "buy_result",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 12,
+        "dflt_value": null,
+        "name": "buy_type",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 13,
+        "dflt_value": null,
+        "name": "buy_time",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 14,
+        "dflt_value": null,
+        "name": "buy_price_milli",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 15,
+        "dflt_value": null,
+        "name": "sell_time",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 16,
+        "dflt_value": null,
+        "name": "sell_price_milli",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 17,
+        "dflt_value": null,
+        "name": "return_pct_micros",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 18,
+        "dflt_value": null,
+        "name": "source_record_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 19,
+        "dflt_value": null,
+        "name": "evidence_snapshot_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 20,
+        "dflt_value": null,
+        "name": "raw_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 21,
+        "dflt_value": null,
+        "name": "rule_set_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      }
+    ],
+    "evidence_contents": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "sha256",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "size_bytes",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      }
+    ],
+    "evidence_files": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "path",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "content_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "category",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "source_date",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "captured_at",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "modified_at",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "dflt_value": "'indexed'",
+        "name": "parse_status",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 8,
+        "dflt_value": null,
+        "name": "parse_error",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "field_mappings": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "source_file",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "section",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "field_path",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "occurrences",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "value_types",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "target_object",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "dflt_value": null,
+        "name": "treatment",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 8,
+        "dflt_value": null,
+        "name": "example_json",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "first_open_events": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "launch_round_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "one_word_run_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "event_date",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "event_status",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "legacy_record_key",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": "'{}'",
+        "name": "raw_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "generation_batches": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "generation_key",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "created_at",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "database_sha256",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "input_batch_key",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "rule_versions_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "output_dir",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "dflt_value": null,
+        "name": "manifest_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "import_batches": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "batch_key",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "kind",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "started_at",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "completed_at",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "status",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "input_manifest_hash",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "dflt_value": "'{}'",
+        "name": "summary_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "intraday_events": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "stock_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "trade_date",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "event_type",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "event_time",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "time_precision",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": "'{}'",
+        "name": "value_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "dflt_value": null,
+        "name": "evidence_file_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      }
+    ],
+    "issues": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "scope",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "object_key",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "issue_kind",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "severity",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "detail",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "impact",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "dflt_value": "'open'",
+        "name": "status",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "launch_rounds": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "stock_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "legacy_record_key",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "first_board_date",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "focus_date",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "board_sequence_text",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "confirmed_main_theme",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "dflt_value": null,
+        "name": "confirmation_status",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 8,
+        "dflt_value": null,
+        "name": "source_record_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 9,
+        "dflt_value": null,
+        "name": "raw_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "legacy_key_map": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "legacy_record_key",
+        "notnull": 0,
+        "pk": 1,
+        "type": "TEXT"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "stock_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "launch_round_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "first_open_event_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "static_source_record_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "dynamic_source_record_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      }
+    ],
+    "market_source_facts": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "fact_type",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "source_kind",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "trade_date",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "stock_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "stock_code",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "stock_name",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "dflt_value": null,
+        "name": "sector_code",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 8,
+        "dflt_value": null,
+        "name": "sector_name",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 9,
+        "dflt_value": null,
+        "name": "topic",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 10,
+        "dflt_value": null,
+        "name": "topic_tags",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 11,
+        "dflt_value": null,
+        "name": "description",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 12,
+        "dflt_value": null,
+        "name": "board_height",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 13,
+        "dflt_value": null,
+        "name": "event_time",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 14,
+        "dflt_value": null,
+        "name": "event_datetime",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 15,
+        "dflt_value": null,
+        "name": "evidence_file_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 16,
+        "dflt_value": null,
+        "name": "raw_location",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 17,
+        "dflt_value": null,
+        "name": "raw_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "one_word_runs": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "launch_round_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "start_date",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "end_date",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "status",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": "'{}'",
+        "name": "raw_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "plate_memberships": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "plate_code",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "plate_name",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "trade_date",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "stock_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "stock_name",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "evidence_file_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      }
+    ],
+    "pool_members": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "pool_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "stock_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "board_height",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "member_status",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "query_direction",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "source_record_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 7,
+        "dflt_value": null,
+        "name": "evidence_file_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 8,
+        "dflt_value": "'{}'",
+        "name": "raw_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "research_checks": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "static_research_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "dynamic_research_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "check_type",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "subject_stock_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "outcome",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "basis",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "dflt_value": "'[]'",
+        "name": "source_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 8,
+        "dflt_value": "'{}'",
+        "name": "raw_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "research_plans": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "plan_code",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "version",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "name",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "status",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "definition_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "rule_set_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      }
+    ],
+    "revisions": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "object_type",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "object_key",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "version",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "change_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "confirmation_status",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "source_record_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 7,
+        "dflt_value": null,
+        "name": "created_at",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "rule_items": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "rule_set_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "section",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "sequence_no",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "text_value",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "raw_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "rule_sets": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "rule_type",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "version",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "status",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "source_path",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "source_sha256",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "effective_from",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "dflt_value": null,
+        "name": "created_at",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "schema_migrations": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "version",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "name",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "checksum",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "applied_at",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "source_records": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "batch_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "source_kind",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "source_path",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "section",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "record_key",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "stock_code",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "dflt_value": null,
+        "name": "effective_date",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 8,
+        "dflt_value": null,
+        "name": "raw_sha256",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 9,
+        "dflt_value": null,
+        "name": "raw_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "static_research": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "first_open_event_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "legacy_record_key",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "version",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "is_current",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "research_status",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "confirmation_status",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "dflt_value": null,
+        "name": "main_theme",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 8,
+        "dflt_value": null,
+        "name": "replenishment_result",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 9,
+        "dflt_value": null,
+        "name": "suppression_result",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 10,
+        "dflt_value": null,
+        "name": "announcement_pollution",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 11,
+        "dflt_value": null,
+        "name": "mapping_basis",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 12,
+        "dflt_value": null,
+        "name": "suppression_basis",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 13,
+        "dflt_value": null,
+        "name": "announcement_basis",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 14,
+        "dflt_value": null,
+        "name": "source_record_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 15,
+        "dflt_value": null,
+        "name": "rule_set_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 16,
+        "dflt_value": null,
+        "name": "evidence_snapshot_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 17,
+        "dflt_value": null,
+        "name": "raw_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "statistics": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "generation_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "plan_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "metric_key",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "metric_value",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "numerator",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "denominator",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 7,
+        "dflt_value": "'{}'",
+        "name": "raw_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "stock_concepts": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "stock_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "concept_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "observed_date",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "captured_date",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "applies_from",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "applies_to",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "dflt_value": null,
+        "name": "historical_status",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 8,
+        "dflt_value": null,
+        "name": "analysis",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 9,
+        "dflt_value": null,
+        "name": "evidence_file_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      }
+    ],
+    "stock_names": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "stock_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "name",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "valid_from",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "valid_to",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "source_record_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      }
+    ],
+    "stock_pools": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "pool_type",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "pool_date",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "rule_set_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "candidate_event_id",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "input_version",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "coverage_status",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 7,
+        "dflt_value": null,
+        "name": "source_kind",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "stocks": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "code",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "market",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "created_at",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "store_meta": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "key",
+        "notnull": 0,
+        "pk": 1,
+        "type": "TEXT"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "value",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "trade_outcomes": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "dynamic_research_id",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "bought",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "buy_day_sealed",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "next_day_board",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "next_day_low_open",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 6,
+        "dflt_value": null,
+        "name": "next_day_limit_down",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 7,
+        "dflt_value": null,
+        "name": "consecutive_boards",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 8,
+        "dflt_value": null,
+        "name": "sell_date",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 9,
+        "dflt_value": null,
+        "name": "return_pct_micros",
+        "notnull": 0,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 10,
+        "dflt_value": null,
+        "name": "raw_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "trading_days": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "trade_date",
+        "notnull": 0,
+        "pk": 1,
+        "type": "TEXT"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "is_trading_day",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "calendar_source",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": "0",
+        "name": "raw_market_coverage",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 4,
+        "dflt_value": "0",
+        "name": "price_coverage",
+        "notnull": 1,
+        "pk": 0,
+        "type": "INTEGER"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "note",
+        "notnull": 0,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ],
+    "write_requests": [
+      {
+        "cid": 0,
+        "dflt_value": null,
+        "name": "request_id",
+        "notnull": 0,
+        "pk": 1,
+        "type": "TEXT"
+      },
+      {
+        "cid": 1,
+        "dflt_value": null,
+        "name": "object_type",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 2,
+        "dflt_value": null,
+        "name": "object_key",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 3,
+        "dflt_value": null,
+        "name": "request_sha256",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 4,
+        "dflt_value": null,
+        "name": "result_json",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      },
+      {
+        "cid": 5,
+        "dflt_value": null,
+        "name": "created_at",
+        "notnull": 1,
+        "pk": 0,
+        "type": "TEXT"
+      }
+    ]
+  },
+  "table_counts": {
+    "announcements": 29,
+    "archived_sections": 7,
+    "concept_merges": 0,
+    "concepts": 713,
+    "daily_market": 205999,
+    "dynamic_research": 132,
+    "evidence_contents": 15661,
+    "evidence_files": 15663,
+    "field_mappings": 1224,
+    "first_open_events": 1520,
+    "generation_batches": 5,
+    "import_batches": 3,
+    "intraday_events": 44395,
+    "issues": 2,
+    "launch_rounds": 1520,
+    "legacy_key_map": 1520,
+    "market_source_facts": 73401,
+    "one_word_runs": 1520,
+    "plate_memberships": 1059797,
+    "pool_members": 154392,
+    "research_checks": 1517,
+    "research_plans": 2,
+    "revisions": 0,
+    "rule_items": 165,
+    "rule_sets": 7,
+    "schema_migrations": 5,
+    "source_records": 1681,
+    "static_research": 1520,
+    "statistics": 70,
+    "stock_concepts": 20739,
+    "stock_names": 6341,
+    "stock_pools": 15084,
+    "stocks": 5645,
+    "store_meta": 4,
+    "trade_outcomes": 132,
+    "trading_days": 1021,
+    "write_requests": 0
+  }
+}
