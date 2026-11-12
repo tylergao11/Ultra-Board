@@ -78,8 +78,12 @@ try {
     }
 
     $releaseExists = $true
-    & gh release view $Tag --repo $Repository *> $null
-    if ($LASTEXITCODE -ne 0) {
+    $savedErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    & gh release view $Tag --repo $Repository 2>$null | Out-Null
+    $releaseViewExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $savedErrorActionPreference
+    if ($releaseViewExitCode -ne 0) {
         $releaseExists = $false
     }
     $notes = @"
