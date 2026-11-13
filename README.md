@@ -2,13 +2,7 @@
 
 Ultra-Board 是本地股票研究、行情证据管理和复盘工具。项目将原始资料、研究规则、研究结论、股票池、行情事件和统计结果收拢到一套可追溯流程中。
 
-当前正式数据：
-
-- 股票：5645 只
-- 静态研究：1520 条
-- 动态交易研究：132 条
-- 公告记录：29 条
-- 原始行情覆盖：655 个交易日，最新落盘日以 `data/kaipanla/raw/` 为准
+当前数据数量用 `python tools/research_cli.py summary` 查询；最新行情日期以 `data/kaipanla/raw/` 实际落盘资料为准。
 
 ## 真相源
 
@@ -58,7 +52,9 @@ powershell -ExecutionPolicy Bypass -File tools/start_work.ps1
 powershell -ExecutionPolicy Bypass -File tools/finish_work.ps1 -Message "本次工作摘要"
 ```
 
-开始入口负责拉取 GitHub、保护本机现场并安装当前数据库；结束入口负责维护、核验、提交、推送和发布数据库。具体实现留在脚本中，agent 按 `AGENTS.md` 自动执行。
+开始入口负责拉取 GitHub、保护本机现场并安装当前数据库；连续工作结束时统一核验、提交、推送和发布数据库。同一次工作中的多个研究范围复用同步状态，agent 按 `AGENTS.md` 自动执行。
+
+日常研究按用户指定数量或清单，依次准备材料、研究题材、提交结果。默认静态研究，交易研究由买卖表任务负责。新增数据走增量入库；已有资料与草稿直接复用。具体命令见使用说明。
 
 ## 目录
 

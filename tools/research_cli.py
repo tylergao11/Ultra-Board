@@ -14,6 +14,7 @@ import zipfile
 
 from research.system import ResearchStore, json_text, now_text, sha256_bytes, sha256_file
 from research.batch import commit_batch, load_and_verify, prepare_batch
+from research.intake import fetch_attributes, ingest_paths
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,7 +39,13 @@ def main() -> None:
     sub.add_parser("migrate", help="run or reuse the complete migration")
     sub.add_parser("sync-rules", help="synchronize the current rule files without reimporting data")
     sub.add_parser("summary", help="show current database counts")
-    sub.add_parser("rules", help="show the current research rules")
+    rules = sub.add_parser("rules", help="show the current research rules")
+    rules.add_argument("--scope", choices=["static", "dynamic", "all"], default="static")
+    ingest = sub.add_parser("ingest", help="incrementally ingest saved files or directories; no full migration")
+    ingest.add_argument("--path", action="append", dest="paths")
+    fetch = sub.add_parser("fetch-attributes", help="save and incrementally ingest stock attributes")
+    fetch.add_argument("--code", action="append", required=True, dest="codes")
+    fetch.add_argument("--refresh", action="store_true", help="fetch a new same-day snapshot")
 
     stock = sub.add_parser("stock", help="query a stock file")
     stock.add_argument("--code", required=True)
@@ -69,7 +76,12 @@ def main() -> None:
 
     batch_prepare = sub.add_parser("batch-prepare", help="prepare one lightweight research batch and decision template")
     batch_prepare.add_argument("--output", required=True, help="output directory for facts.json and decisions.json")
-    batch_prepare.add_argument("--limit", type=int, default=10)
+    batch_prepare.add_argument("--limit", type=int)
+    batch_prepare.add_argument("--from-date")
+    batch_prepare.add_argument("--to-date")
+    batch_prepare.add_argument("--scope", choices=["static", "both"], default="static")
+    batch_prepare.add_argument("--fetch-missing", action="store_true", default=True, help="fetch missing stock attributes (default)")
+    batch_prepare.add_argument("--offline", action="store_false", dest="fetch_missing", help="prepare from saved facts and list missing attributes")
     batch_prepare.add_argument("--year", type=int)
     batch_prepare.add_argument("--record-key", action="append", dest="record_keys")
     batch_prepare.add_argument("--hydrate-current", action="store_true", help="fill the template from current conclusions for audit or replay")
@@ -138,7 +150,18 @@ def main() -> None:
         connection.close()
         emit(result)
     elif args.command == "rules":
-        emit(store.current_rules())
+        current = store.current_rules()
+        emit(current if args.scope == "all" else {key: value for key, value in current.items() if key == args.scope})
+    elif args.command == "ingest":
+        result = ingest_paths(store, args.paths)
+        emit(result)
+        if result["errors"]:
+            raise SystemExit(1)
+    elif args.command == "fetch-attributes":
+        result = fetch_attributes(store, args.codes, args.refresh)
+        emit(result)
+        if result["errors"] or (result["intake"] and result["intake"]["errors"]):
+            raise SystemExit(1)
     elif args.command == "stock":
         emit(store.query_stock(args.code))
     elif args.command == "attributes":
@@ -153,6 +176,7 @@ def main() -> None:
         emit(store.query_impact(args.object))
     elif args.command == "write":
         payload = json.loads((ROOT / args.input).read_text(encoding="utf-8"))
+        store.sync_rules()
         if isinstance(payload, list):
             emit([store.write_research(item) for item in payload])
         else:
@@ -165,6 +189,10 @@ def main() -> None:
             year=args.year,
             record_keys=args.record_keys,
             hydrate_current=args.hydrate_current,
+            scope=args.scope,
+            from_date=args.from_date,
+            to_date=args.to_date,
+            fetch_missing=args.fetch_missing,
         ))
     elif args.command == "batch-commit":
         emit(commit_batch(

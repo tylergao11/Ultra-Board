@@ -405,6 +405,8 @@ class ResearchStore:
         row_id = conn.execute(
             "SELECT id FROM evidence_files WHERE path=? AND content_id=?", (relative, content_id)
         ).fetchone()["id"]
+        conn.execute("UPDATE evidence_files SET parse_status='superseded_path_version' WHERE path=? AND id<>?", (relative, row_id))
+        conn.execute("UPDATE evidence_files SET parse_status='indexed',parse_error=NULL,modified_at=? WHERE id=?", (modified, row_id))
         if own:
             conn.commit()
             conn.close()
@@ -712,6 +714,13 @@ class ResearchStore:
         candidate_event_id: int | None = None,
         coverage_status: str = "complete_from_source",
     ) -> int:
+        existing = connection.execute(
+            """SELECT id FROM stock_pools WHERE pool_type=? AND pool_date=? AND rule_set_id IS ?
+               AND candidate_event_id IS ? AND input_version=? AND source_kind=? ORDER BY id LIMIT 1""",
+            (pool_type, pool_date, rule_set_id, candidate_event_id, input_version, source_kind),
+        ).fetchone()
+        if existing:
+            return int(existing["id"])
         connection.execute(
             """INSERT OR IGNORE INTO stock_pools
                (pool_type,pool_date,rule_set_id,candidate_event_id,input_version,coverage_status,source_kind)
@@ -981,12 +990,16 @@ class ResearchStore:
         connection: sqlite3.Connection,
         static_rule_id: int,
         batch_key: str,
+        paths: list[Path] | None = None,
+        commit: bool = True,
     ) -> dict[str, int]:
         counts = {"dates": 0, "rows": 0, "strict_one_word": 0, "high_standard": 0}
-        for path in sorted((self.root / "data/kaipanla/raw").glob("20??-??-??/zt_pool.json")):
+        for path in paths if paths is not None else sorted((self.root / "data/kaipanla/raw").glob("20??-??-??/zt_pool.json")):
             try:
                 document = json.loads(path.read_text(encoding="utf-8"))
             except Exception as exc:
+                if not commit:
+                    raise
                 self._mark_parse_error(connection, path, exc)
                 continue
             date = document.get("date") or path.parent.name
@@ -1046,10 +1059,11 @@ class ResearchStore:
                     counts["high_standard"] += 1
                 counts["rows"] += 1
             counts["dates"] += 1
-            if counts["dates"] % 50 == 0:
+            if commit and counts["dates"] % 50 == 0:
                 connection.commit()
-        self._import_calendar_file(connection)
-        connection.commit()
+        if commit:
+            self._import_calendar_file(connection)
+            connection.commit()
         return counts
 
     def import_market_source_facts(
@@ -1057,6 +1071,8 @@ class ResearchStore:
         connection: sqlite3.Connection,
         static_rule_id: int,
         batch_key: str,
+        dates: set[str] | None = None,
+        commit: bool = True,
     ) -> dict[str, int]:
         counts: dict[str, int] = {"facts": 0, "days": 0, "broken_high": 0, "parse_errors": 0}
         raw_root = self.root / "data/kaipanla/raw"
@@ -1064,6 +1080,8 @@ class ResearchStore:
             path for path in raw_root.glob("20??-??-??") if path.is_dir()
         )
         for day in day_directories:
+            if dates is not None and day.name not in dates:
+                continue
             try:
                 for fact in iter_day_source_facts(day, source_root=self.root):
                     code = valid_code(fact.get("stock_code"))
@@ -1100,6 +1118,8 @@ class ResearchStore:
                     counts["facts"] += 1
                 counts["days"] += 1
             except Exception as exc:
+                if not commit:
+                    raise
                 connection.execute(
                     """INSERT OR IGNORE INTO issues(scope,object_key,issue_kind,severity,detail,impact)
                        VALUES(?,?,?,?,?,?)""",
@@ -1113,11 +1133,13 @@ class ResearchStore:
                     ),
                 )
                 counts["parse_errors"] += 1
-            if counts["days"] % 50 == 0:
+            if commit and counts["days"] % 50 == 0:
                 connection.commit()
         for index in range(1, len(day_directories)):
             previous = day_directories[index - 1]
             current = day_directories[index]
+            if dates is not None and current.name not in dates:
+                continue
             current_pool_path = current / "zt_pool.json"
             if not current_pool_path.exists():
                 continue
@@ -1160,6 +1182,8 @@ class ResearchStore:
                     )
                     counts["broken_high"] += 1
             except Exception as exc:
+                if not commit:
+                    raise
                 connection.execute(
                     """INSERT OR IGNORE INTO issues(scope,object_key,issue_kind,severity,detail,impact)
                        VALUES(?,?,?,?,?,?)""",
@@ -1172,7 +1196,8 @@ class ResearchStore:
                         "broken-high membership for this date requires source review",
                     ),
                 )
-        connection.commit()
+        if commit:
+            connection.commit()
         return counts
 
     def _import_calendar_file(self, connection: sqlite3.Connection) -> None:
@@ -1216,11 +1241,14 @@ class ResearchStore:
             ("evidence_parse", relative, "parse_error", "data_gap", str(exc), "facts from this file remain indexed as raw evidence"),
         )
 
-    def import_concepts(self, connection: sqlite3.Connection) -> dict[str, int]:
+    def import_concepts(self, connection: sqlite3.Connection, paths: list[Path] | None = None,
+                        commit: bool = True) -> dict[str, int]:
         counts = {"files": 0, "relations": 0, "parse_errors": 0}
-        for path in sorted((self.root / "data/kaipanla/concepts_current").rglob("*.json")):
+        for path in paths if paths is not None else sorted((self.root / "data/kaipanla/concepts_current").rglob("*.json")):
             try:
                 document = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(document.get("concepts"), list):
+                    raise ValueError("concepts must be an array")
                 code = valid_code(document.get("code") or path.stem)
                 if code is None:
                     raise ValueError("stock code missing")
@@ -1267,18 +1295,24 @@ class ResearchStore:
                     counts["relations"] += 1
                 counts["files"] += 1
             except Exception as exc:
+                if not commit:
+                    raise
                 self._mark_parse_error(connection, path, exc)
                 counts["parse_errors"] += 1
-            if counts["files"] % 100 == 0:
+            if commit and counts["files"] % 100 == 0:
                 connection.commit()
-        connection.commit()
+        if commit:
+            connection.commit()
         return counts
 
-    def import_plate_members(self, connection: sqlite3.Connection) -> dict[str, int]:
+    def import_plate_members(self, connection: sqlite3.Connection, paths: list[Path] | None = None,
+                             commit: bool = True) -> dict[str, int]:
         counts = {"files": 0, "memberships": 0, "parse_errors": 0}
-        for path in sorted((self.root / "data/kaipanla/plate_members").rglob("*.json")):
+        for path in paths if paths is not None else sorted((self.root / "data/kaipanla/plate_members").rglob("*.json")):
             try:
                 document = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(document.get("members"), list):
+                    raise ValueError("members must be an array")
                 date = str(document.get("date") or path.parent.name)
                 plate_code = str(document.get("plate_id") or path.stem)
                 plate_name = document.get("plate_name") or document.get("name")
@@ -1297,16 +1331,20 @@ class ResearchStore:
                     counts["memberships"] += 1
                 counts["files"] += 1
             except Exception as exc:
+                if not commit:
+                    raise
                 self._mark_parse_error(connection, path, exc)
                 counts["parse_errors"] += 1
-            if counts["files"] % 50 == 0:
+            if commit and counts["files"] % 50 == 0:
                 connection.commit()
-        connection.commit()
+        if commit:
+            connection.commit()
         return counts
 
-    def import_price_checks(self, connection: sqlite3.Connection) -> dict[str, int]:
+    def import_price_checks(self, connection: sqlite3.Connection, paths: list[Path] | None = None,
+                            commit: bool = True) -> dict[str, int]:
         counts = {"files": 0, "daily_rows": 0, "parse_errors": 0}
-        for path in sorted((self.root / "data/price_checks").rglob("*.json")):
+        for path in paths if paths is not None else sorted((self.root / "data/price_checks").rglob("*.json")):
             code = valid_code(path.stem)
             if code is None:
                 continue
@@ -1350,11 +1388,14 @@ class ResearchStore:
                     counts["daily_rows"] += 1
                 counts["files"] += 1
             except Exception as exc:
+                if not commit:
+                    raise
                 self._mark_parse_error(connection, path, exc)
                 counts["parse_errors"] += 1
-            if counts["files"] % 200 == 0:
+            if commit and counts["files"] % 200 == 0:
                 connection.commit()
-        connection.commit()
+        if commit:
+            connection.commit()
         return counts
 
     def import_ths_kline(self, connection: sqlite3.Connection) -> dict[str, int]:
@@ -2015,19 +2056,12 @@ class ResearchStore:
         }
 
     def current_rules(self) -> dict[str, Any]:
-        connection = self.connect()
         result: dict[str, Any] = {}
-        for rule in connection.execute("SELECT * FROM rule_sets WHERE status='current' ORDER BY rule_type"):
-            result[rule["rule_type"]] = {
-                "source": rule["source_path"],
-                "sections": {},
-            }
-            for item in connection.execute(
-                "SELECT section,sequence_no,raw_json FROM rule_items WHERE rule_set_id=? ORDER BY section,sequence_no",
-                (rule["id"],),
-            ):
-                result[rule["rule_type"]]["sections"].setdefault(item["section"], []).append(json.loads(item["raw_json"]))
-        connection.close()
+        for kind in ("static", "dynamic"):
+            path = self.root / f"data/store/rules/{kind}_rules.json"
+            result[kind] = {"source": path.relative_to(self.root).as_posix(),
+                            "sections": json.loads(path.read_text(encoding="utf-8"))["rules"]}
+        result["workflow"] = {"source": "AGENTS.md", "sections": {"workflow": (self.root / "AGENTS.md").read_text(encoding="utf-8")}}
         return result
 
     def write_research(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -2048,10 +2082,6 @@ class ResearchStore:
             if existing["request_sha256"] != request_hash:
                 connection.close()
                 raise RuntimeError("request_id already used with different content")
-            result = json.loads(existing["result_json"])
-            result["deduplicated"] = True
-            connection.close()
-            return result
         table = "static_research" if kind == "static" else "dynamic_research"
         if rule_version:
             rule = connection.execute(
@@ -2079,6 +2109,12 @@ class ResearchStore:
                 (record_key, plan_code),
             ).fetchone()
         create_dynamic = kind == "dynamic" and current is None
+        if (existing and current and json.loads(existing["result_json"]).get("version") == current["version"]
+                and int(current["rule_set_id"]) == int(rule["id"])):
+            result = json.loads(existing["result_json"])
+            result["deduplicated"] = True
+            connection.close()
+            return result
         if current is None and not create_dynamic:
             connection.close()
             raise KeyError(record_key)
@@ -2143,6 +2179,24 @@ class ResearchStore:
             connection.close()
             raise ValueError("evidence must be an array when provided")
         raw = json.loads(current["raw_json"])
+        if (not create_dynamic and all(raw.get(key) == value for key, value in updates.items())
+                and (evidence is None or json.loads(current["evidence_snapshot_json"]) == evidence)
+                and int(current["rule_set_id"]) == int(rule["id"])
+                and current["research_status"] == request.get("research_status", "formal_research")
+                and current["confirmation_status"] == request.get("confirmation_status", "pending_user_confirmation")):
+            saved_checks = [dict(row) for row in connection.execute(
+                "SELECT check_type,subject_stock_id,outcome,basis,source_json,raw_json FROM research_checks WHERE "
+                + ("static_research_id" if kind == "static" else "dynamic_research_id") + "=? ORDER BY id", (current["id"],)
+            )]
+            desired_checks = [{"check_type": item["check_type"], "outcome": item.get("outcome"),
+                               "subject_stock_id": item.get("subject_stock_id"),
+                               "basis": item.get("basis"), "source_json": json_text(item.get("sources", [])),
+                               "raw_json": json_text(item.get("raw", item))} for item in checks or []]
+            if any(item.get("subject_code") for item in checks or []):
+                desired_checks = []  # Resolve code-based subject changes through the normal write path.
+            if checks is None or saved_checks == desired_checks:
+                connection.close()
+                return {"record_key": record_key, "kind": kind, "version": current["version"], "deduplicated": True}
         for key, value in updates.items():
             raw[key] = value
         new_version = int(current["version"]) + 1
@@ -2291,19 +2345,30 @@ class ResearchStore:
                 "affected_exports": [STATIC_FILE if kind == "static" else DYNAMIC_FILE],
             }
             connection.execute(
-                "INSERT INTO write_requests(request_id,object_type,object_key,request_sha256,result_json,created_at) VALUES(?,?,?,?,?,?)",
+                "INSERT OR REPLACE INTO write_requests(request_id,object_type,object_key,request_sha256,result_json,created_at) VALUES(?,?,?,?,?,?)",
                 (request_id, kind, record_key, request_hash, json_text(result), now_text()),
             )
         connection.close()
         return result
 
-    def export_all(self, output_root: Path | None = None, publish_root: bool = False) -> dict[str, Any]:
+    def export_snapshot_hash(self, connection: sqlite3.Connection) -> str:
+        """Hash display inputs only; full-store hashing belongs to backup/verification."""
+        digest = hashlib.sha256()
+        for table in ("current_static_research", "current_dynamic_research", "stock_current_names",
+                      "first_open_events", "launch_rounds", "research_plans", "rule_sets", "trade_outcomes"):
+            digest.update(table.encode("ascii"))
+            for row in connection.execute(f"SELECT * FROM {table} ORDER BY 1"):
+                digest.update(json_text(list(row)).encode("utf-8"))
+        return digest.hexdigest()
+
+    def export_all(self, output_root: Path | None = None, publish_root: bool = False,
+                   refresh_statistics: bool = True) -> dict[str, Any]:
         connection = self.connect()
         batch_key = connection.execute(
             "SELECT value FROM store_meta WHERE key='current_batch_key'"
         ).fetchone()["value"]
-        snapshot = self.logical_snapshot_hash(connection)
-        generation_key = f"{datetime.now(SHANGHAI).strftime('%Y%m%d-%H%M%S')}-{snapshot[:10]}"
+        snapshot = self.export_snapshot_hash(connection)
+        generation_key = f"{datetime.now(SHANGHAI).strftime('%Y%m%d-%H%M%S-%f')}-{snapshot[:10]}"
         base = output_root or self.root / "data/store/exports"
         output_dir = base / generation_key
         output_dir.mkdir(parents=True, exist_ok=False)
@@ -2362,11 +2427,25 @@ class ResearchStore:
                 "研究状态": row["research_status"],
                 "确认状态": row["confirmation_status"],
             })
-        calculated = self._calculate_statistics(connection)
+        calculated = None
+        statistics_source = None
+        if refresh_statistics:
+            calculated = self._calculate_statistics(connection)
+        else:
+            pointer_path = self.root / "data/store/exports/current.json"
+            if pointer_path.exists():
+                pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+                previous_statistics = (self.root / pointer["manifest"]).parent / "研究统计.json"
+                if previous_statistics.exists():
+                    previous_document = json.loads(previous_statistics.read_text(encoding="utf-8"))
+                    calculated = previous_document.get("研究库计算与存档差异")
+                    statistics_source = previous_document.get("沿用统计来源") or previous_document.get("生成信息")
         metadata = {
             "generation_key": generation_key,
             "generated_at": now_text(),
             "database_snapshot": snapshot,
+            "snapshot_scope": "display_inputs",
+            "statistics_refreshed": refresh_statistics,
             "input_batch_key": batch_key,
             "rule_versions": {
                 row["rule_type"]: row["version"]
@@ -2376,6 +2455,9 @@ class ResearchStore:
         static_document = {"生成信息": metadata, "记录数": len(static_rows), "一字首开股票与数据": static_rows}
         dynamic_document = {"生成信息": metadata, "记录数": len(dynamic_rows), "买卖研究记录": dynamic_rows}
         statistics_document = {"生成信息": metadata, "研究库计算与存档差异": calculated}
+        if not refresh_statistics:
+            statistics_document["沿用统计来源"] = statistics_source
+            statistics_document["说明"] = "本次仅更新静态研究；交易统计沿用既有结果，由交易研究任务更新。"
         files: list[Path] = []
         for filename, value in (
             (STATIC_FILE, static_document),
@@ -2414,7 +2496,7 @@ class ResearchStore:
         generation_id = connection.execute(
             "SELECT id FROM generation_batches WHERE generation_key=?", (generation_key,)
         ).fetchone()["id"]
-        for plan_result in calculated.get("formal_plans", []) + calculated.get("comparison_plans", []):
+        for plan_result in ((calculated or {}).get("formal_plans", []) + (calculated or {}).get("comparison_plans", [])) if refresh_statistics else []:
             plan_id = plan_result["plan"]["id"]
             for key, value in plan_result.get("metrics", {}).items():
                 connection.execute(
@@ -2464,21 +2546,21 @@ class ResearchStore:
         timestamp = datetime.now(SHANGHAI).strftime("%Y%m%d-%H%M%S")
         report_dir = self.root / "data/store/maintenance" / timestamp
         report_dir.mkdir(parents=True, exist_ok=False)
-        migration = self.migrate_all()
+        from .intake import ingest_paths
+        ingestion = ingest_paths(self)
         connection = self.connect()
         verification_started = time.perf_counter()
-        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
         foreign_key_errors = len(connection.execute("PRAGMA foreign_key_check").fetchall())
         verification = {
-            "passed": integrity == "ok" and foreign_key_errors == 0,
-            "integrity_check": integrity,
+            "passed": foreign_key_errors == 0 and not ingestion["errors"],
             "foreign_key_errors": foreign_key_errors,
             "elapsed_seconds": round(time.perf_counter() - verification_started, 3),
         }
         if not verification["passed"]:
             connection.close()
+            (report_dir / "maintenance_report.json").write_text(json_text({"ingestion": ingestion, "verification": verification}, pretty=True) + "\n", encoding="utf-8")
             raise RuntimeError(f"daily database check failed: {report_dir}")
-        snapshot = self.logical_snapshot_hash(connection)
+        snapshot = self.export_snapshot_hash(connection)
         connection.close()
         current_pointer = self.root / "data/store/exports/current.json"
         current_manifest = None
@@ -2488,7 +2570,7 @@ class ResearchStore:
             if manifest_path.exists():
                 current_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         changed = current_manifest is None or current_manifest.get("database_snapshot") != snapshot
-        export = self.export_all(publish_root=True) if changed else {
+        export = self.export_all(publish_root=True, refresh_statistics=False) if changed else {
             "generation_key": current_manifest["generation_key"],
             "manifest": current_manifest,
             "published": True,
@@ -2496,7 +2578,7 @@ class ResearchStore:
         }
         backup = None
         removed_backups: list[str] = []
-        if changed:
+        if changed or ingestion["updated"]:
             backup_root = (self.root / "data/store/recovery/daily").resolve()
             backup_root.mkdir(parents=True, exist_ok=True)
             backup_root.relative_to((self.root / "data/store/recovery").resolve())
@@ -2516,10 +2598,10 @@ class ResearchStore:
             "performed_at": now_text(),
             "latest_raw_trade_date": latest_raw_dates[-1] if latest_raw_dates else None,
             "raw_trade_date_directories": len(latest_raw_dates),
-            "migration": migration,
+            "ingestion": ingestion,
             "verification": {
                 "passed": verification["passed"],
-                "integrity_check": verification["integrity_check"],
+                "scope": "incremental intake and foreign keys",
                 "foreign_key_errors": verification["foreign_key_errors"],
                 "elapsed_seconds": verification["elapsed_seconds"],
             },

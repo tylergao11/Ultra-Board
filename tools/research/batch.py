@@ -1,4 +1,4 @@
-"""Lightweight ten-record research batch preparation, commit and verification."""
+"""Prepare and resume a user-selected research scope; static research by default."""
 
 from __future__ import annotations
 
@@ -44,23 +44,25 @@ def _stock_identity(connection, stock_id: int) -> dict[str, Any]:
 
 def _latest_attributes(connection, stock_id: int) -> dict[str, Any]:
     latest = connection.execute(
-        "SELECT MAX(observed_date) AS value FROM stock_concepts WHERE stock_id=?",
+        """SELECT sc.observed_date AS value,sc.evidence_file_id FROM stock_concepts sc
+           JOIN evidence_files e ON e.id=sc.evidence_file_id WHERE sc.stock_id=? AND e.parse_status='indexed'
+           ORDER BY sc.observed_date DESC,e.modified_at DESC,e.id DESC LIMIT 1""",
         (stock_id,),
-    ).fetchone()["value"]
+    ).fetchone()
     if not latest:
         return {"effective_date": None, "tags": [], "sources": [], "snapshot_status": "missing"}
     rows = connection.execute(
         """SELECT c.unified_name,c.source_name,e.path,sc.historical_status,sc.captured_date
            FROM stock_concepts sc JOIN concepts c ON c.id=sc.concept_id
            LEFT JOIN evidence_files e ON e.id=sc.evidence_file_id
-           WHERE sc.stock_id=? AND sc.observed_date=?
+           WHERE sc.stock_id=? AND sc.evidence_file_id=?
            ORDER BY c.unified_name,c.source_name""",
-        (stock_id, latest),
+        (stock_id, latest["evidence_file_id"]),
     ).fetchall()
     tags = sorted({row["unified_name"] or row["source_name"] for row in rows})
     sources = sorted({row["path"] for row in rows if row["path"]})
     return {
-        "effective_date": latest,
+        "effective_date": latest["value"],
         "captured_dates": sorted({row["captured_date"] for row in rows if row["captured_date"]}),
         "tags": tags,
         "sources": sources,
@@ -73,12 +75,18 @@ def _daily_row(connection, stock_id: int, trade_date: str) -> dict[str, Any] | N
         """SELECT d.*,e.path AS evidence_path FROM daily_market d
            LEFT JOIN evidence_files e ON e.id=d.evidence_file_id
            WHERE d.stock_id=? AND d.trade_date=?
-           ORDER BY CASE d.source_type WHEN 'kaipanla_limit_pool' THEN 0 ELSE 1 END,d.id LIMIT 1""",
+           ORDER BY CASE d.source_type WHEN 'kaipanla_limit_pool' THEN 0 ELSE 1 END,d.id DESC LIMIT 1""",
         (stock_id, trade_date),
     ).fetchone()
     if not row:
         return None
     raw = json.loads(row["raw_json"])
+    context = [dict(item) for item in connection.execute(
+        """SELECT DISTINCT m.source_kind,m.topic,m.topic_tags,m.description,m.event_time,e.path AS source
+           FROM market_source_facts m LEFT JOIN evidence_files e ON e.id=m.evidence_file_id
+           WHERE m.stock_id=? AND m.trade_date=? ORDER BY m.source_kind,m.event_time""",
+        (stock_id, trade_date),
+    )]
     return {
         "date": trade_date,
         "source_type": row["source_type"],
@@ -89,7 +97,8 @@ def _daily_row(connection, stock_id: int, trade_date: str) -> dict[str, Any] | N
         "limit_up": row["limit_up_milli"] / 1000 if row["limit_up_milli"] is not None else None,
         "theme": raw.get("theme"),
         "theme_tags": raw.get("theme_tags_text"),
-        "raw": raw,
+        "description": raw.get("reason") or raw.get("description") or raw.get("theme_reason"),
+        "context": context,
         "source": row["evidence_path"],
     }
 
@@ -112,12 +121,32 @@ def _previous_date(dates: list[str], value: str | None) -> str | None:
 
 def _confirmed_theme(connection, stock_id: int, trade_date: str) -> str | None:
     row = connection.execute(
-        """SELECT confirmed_main_theme FROM launch_rounds
-           WHERE stock_id=? AND confirmed_main_theme IS NOT NULL AND first_board_date<=?
-           ORDER BY first_board_date DESC,focus_date DESC LIMIT 1""",
+        """SELECT r.main_theme FROM launch_rounds l
+           JOIN first_open_events f ON f.launch_round_id=l.id
+           JOIN current_static_research r ON r.first_open_event_id=f.id
+           WHERE l.stock_id=? AND l.first_board_date<=?
+           ORDER BY l.first_board_date DESC,l.focus_date DESC LIMIT 1""",
         (stock_id, trade_date),
     ).fetchone()
-    return row["confirmed_main_theme"] if row else None
+    return row["main_theme"] if row else None
+
+
+def _first_two(connection, stock_id: int, end: str, start: str | None = None) -> list[dict[str, Any]]:
+    if start is None:
+        row = connection.execute(
+            """SELECT MAX(trade_date) AS day FROM daily_market
+               WHERE stock_id=? AND source_type='kaipanla_limit_pool' AND board_height=1 AND trade_date<=?""",
+            (stock_id, end),
+        ).fetchone()
+        start = row["day"]
+    if not start:
+        return []
+    days = connection.execute(
+        """SELECT DISTINCT trade_date FROM daily_market WHERE stock_id=?
+           AND source_type='kaipanla_limit_pool' AND trade_date BETWEEN ? AND ?
+           AND board_height IN (1,2) ORDER BY trade_date LIMIT 2""", (stock_id, start, end),
+    )
+    return [_daily_row(connection, stock_id, row["trade_date"]) for row in days]
 
 
 def _global_pool(connection, pool_type: str, pool_date: str, batch_key: str) -> list[dict[str, Any]]:
@@ -163,6 +192,7 @@ def _high_pool(connection, dates: list[str], pool_date: str, batch_key: str) -> 
         item["theme_hint"] = daily.get("theme") if daily else None
         item["theme_tags_hint"] = daily.get("theme_tags") if daily else None
         item["confirmed_main_theme"] = _confirmed_theme(connection, item["stock_id"], pool_date)
+        item["first_two"] = _first_two(connection, item["stock_id"], pool_date)
     return {"date": pool_date, "members": members, "previous_trade_date": previous}
 
 
@@ -247,7 +277,8 @@ def _competitor_candidates(connection, dates: list[str], stock_id: int, focus_da
     return {"date": previous, "candidate_height": height, "members": members}
 
 
-def _select_records(connection, limit: int, year: int | None, record_keys: list[str] | None) -> list[Any]:
+def _select_records(connection, limit: int | None, year: int | None, record_keys: list[str] | None,
+                    from_date: str | None = None, to_date: str | None = None) -> list[Any]:
     base = """SELECT r.*,f.event_date,f.event_status,l.stock_id,l.first_board_date,l.focus_date,l.board_sequence_text,
                      s.code,l.id AS launch_round_id,f.id AS event_id
               FROM current_static_research r JOIN first_open_events f ON f.id=r.first_open_event_id
@@ -260,36 +291,38 @@ def _select_records(connection, limit: int, year: int | None, record_keys: list[
                 raise KeyError(key)
             rows.append(row)
         return rows
-    cursor_row = connection.execute("SELECT value FROM store_meta WHERE key='research_cursor'").fetchone()
-    cursor = json.loads(cursor_row["value"]) if cursor_row else None
     conditions = ["r.research_status='unresearched'"]
     params: list[Any] = []
     if year is not None:
         conditions.append("l.focus_date LIKE ?")
         params.append(f"{year:04d}-%")
-    if cursor and (year is None or int(cursor.get("year", 0)) == year):
-        conditions.append("(l.focus_date>? OR (l.focus_date=? AND r.legacy_record_key>?))")
-        params.extend([cursor["focus_date"], cursor["focus_date"], cursor["record_key"]])
+    if from_date:
+        conditions.append("l.focus_date>=?")
+        params.append(from_date)
+    if to_date:
+        conditions.append("l.focus_date<=?")
+        params.append(to_date)
     query = base + " WHERE " + " AND ".join(conditions) + " ORDER BY l.focus_date,r.legacy_record_key LIMIT ?"
-    params.append(limit)
+    params.append(limit if limit is not None else -1)
     return connection.execute(query, params).fetchall()
 
 
-def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any) -> dict[str, Any]:
+def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
+                  scope: str = "static", shared: dict | None = None) -> dict[str, Any]:
+    shared = shared if shared is not None else {}
+    def attributes(stock_id):
+        key = ("attributes", stock_id)
+        if key not in shared:
+            shared[key] = _latest_attributes(connection, stock_id)
+        return shared[key]
     stock_id = int(row["stock_id"])
     code = row["code"]
-    first_two = []
-    for date in dates:
-        if row["first_board_date"] and row["first_board_date"] <= date <= row["focus_date"]:
-            daily = _daily_row(connection, stock_id, date)
-            if daily and daily.get("board_height") in {1, 2}:
-                first_two.append(daily)
-        if len(first_two) == 2:
-            break
+    end_date = row["event_date"] or row["focus_date"]
+    first_two = _first_two(connection, stock_id, end_date, row["first_board_date"])
     strict_days = []
     scope_dates = {row["first_board_date"], row["focus_date"]}
     for date in dates:
-        if row["first_board_date"] and row["first_board_date"] <= date <= row["focus_date"]:
+        if row["first_board_date"] and row["first_board_date"] <= date <= end_date:
             candidate = _daily_row(connection, stock_id, date)
             if not candidate or not candidate.get("strict_one_word"):
                 continue
@@ -298,7 +331,7 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any)
             for member in _global_pool(connection, "strict_one_word", date, batch_key):
                 if (member.get("board_height") or 0) <= (candidate.get("board_height") or 0):
                     continue
-                member["attributes"] = _latest_attributes(connection, member["stock_id"])
+                member["attributes"] = attributes(member["stock_id"])
                 higher.append(member)
             strict_days.append({
                 "date": date,
@@ -310,12 +343,14 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any)
         """SELECT d.* FROM current_dynamic_research d JOIN research_plans p ON p.id=d.plan_id
            WHERE d.legacy_record_key=? AND p.plan_code='formal'""",
         (row["legacy_record_key"],),
-    ).fetchone()
-    transaction_path = store.root / "data/price_checks/tdx_transactions" / code / f"{row['event_date']}.json"
-    market = _sina_market(store.root, code, row["event_date"])
-    market["kaipanla"] = _daily_row(connection, stock_id, row["event_date"]) if row["event_date"] else None
-    market["transaction_source"] = transaction_path.relative_to(store.root).as_posix() if transaction_path.exists() else None
-    return {
+    ).fetchone() if scope == "both" else None
+    high_key = ("high_pool", row["first_board_date"])
+    if high_key not in shared:
+        shared[high_key] = _high_pool(connection, dates, row["first_board_date"], batch_key)
+    for date in scope_dates:
+        if date and ("raw_scope", date) not in shared:
+            shared[("raw_scope", date)] = _raw_scope(store.root, date)
+    result = {
         "record_key": row["legacy_record_key"],
         "identity": {
             "stock_id": stock_id,
@@ -331,25 +366,40 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any)
             "static_confirmation": row["confirmation_status"],
             "dynamic": dynamic["research_status"] if dynamic else None,
         },
-        "attributes": _latest_attributes(connection, stock_id),
+        "attributes": attributes(stock_id),
         "first_two": first_two,
-        "high_pool": _high_pool(connection, dates, row["first_board_date"], batch_key),
+        "high_pool": shared[high_key],
         "strict_one_word_days": strict_days,
-        "scope_audit": [_raw_scope(store.root, date) for date in sorted(date for date in scope_dates if date)],
-        "announcement_sources": _announcement_sources(store.root, dates, code, row["first_board_date"], row["focus_date"]),
-        "first_open_market": market,
+        "scope_audit": [shared[("raw_scope", date)] for date in sorted(date for date in scope_dates if date)],
+        "announcement_sources": _announcement_sources(store.root, dates, code, row["first_board_date"], end_date),
+        "announcement_missing_dates": [date for date in dates
+            if (_previous_date(dates, row["first_board_date"]) or row["first_board_date"] or end_date) <= date <= end_date
+            and not (store.root / "data/kaipanla/raw" / date / "historical_messages.json").exists()],
+        "announcement_facts": [dict(item) for item in connection.execute(
+            """SELECT DISTINCT m.trade_date,m.source_kind,m.topic,m.description,e.path AS source
+               FROM market_source_facts m LEFT JOIN evidence_files e ON e.id=m.evidence_file_id
+               WHERE m.stock_id=? AND m.trade_date BETWEEN ? AND ? ORDER BY m.trade_date,m.source_kind""",
+            (stock_id, _previous_date(dates, row["first_board_date"]) or row["first_board_date"], end_date),
+        )],
         "potential_competitor_candidates": _competitor_candidates(
             connection, dates, stock_id, row["focus_date"], row["event_date"]
         ),
         "current_static_raw": json.loads(row["raw_json"]),
-        "current_dynamic_raw": json.loads(dynamic["raw_json"]) if dynamic else None,
     }
+    if scope == "both":
+        transaction_path = store.root / "data/price_checks/tdx_transactions" / code / f"{row['event_date']}.json"
+        market = _sina_market(store.root, code, row["event_date"])
+        market["kaipanla"] = _daily_row(connection, stock_id, row["event_date"]) if row["event_date"] else None
+        market["transaction_source"] = transaction_path.relative_to(store.root).as_posix() if transaction_path.exists() else None
+        result["first_open_market"] = market
+        result["current_dynamic_raw"] = json.loads(dynamic["raw_json"]) if dynamic else None
+    return result
 
 
-def _decision_template(fact: dict[str, Any], hydrate_current: bool) -> dict[str, Any]:
+def _decision_template(fact: dict[str, Any], hydrate_current: bool, scope: str = "static") -> dict[str, Any]:
     raw = fact["current_static_raw"] if hydrate_current else {}
-    dynamic = fact["current_dynamic_raw"] if hydrate_current and fact["current_dynamic_raw"] else {}
-    return {
+    dynamic = fact.get("current_dynamic_raw") if hydrate_current and fact.get("current_dynamic_raw") else {}
+    result = {
         "record_key": fact["record_key"],
         "static": {
             "main_theme": raw.get("唯一主炒作属性"),
@@ -374,57 +424,169 @@ def _decision_template(fact: dict[str, Any], hydrate_current: bool) -> dict[str,
             "additional_evidence": [],
         },
     }
+    if scope == "static":
+        result.pop("dynamic")
+    return result
 
 
 def prepare_batch(
     store,
     output_dir: Path,
-    limit: int = 10,
+    limit: int | None = None,
     year: int | None = None,
     record_keys: list[str] | None = None,
     hydrate_current: bool = False,
+    scope: str = "static",
+    from_date: str | None = None,
+    to_date: str | None = None,
+    fetch_missing: bool = True,
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    if limit < 1 or limit > 10:
-        raise ValueError("batch limit must be between 1 and 10")
-    if record_keys and len(record_keys) > 10:
-        raise ValueError("an explicit batch may contain at most 10 record keys")
+    if limit is not None and limit < 1:
+        raise ValueError("limit must be positive")
+    if scope not in {"static", "both"}:
+        raise ValueError("scope must be static or both")
+    old_facts = _read_json(output_dir / "facts.json") if (output_dir / "facts.json").exists() else None
+    if old_facts and not record_keys:
+        selection = old_facts.get("selection", {})
+        for key, value in (("limit", limit), ("year", year), ("from_date", from_date), ("to_date", to_date)):
+            if value is not None and selection.get(key) != value:
+                raise ValueError("selection changed; use another output directory")
+        record_keys = [row["record_key"] for row in old_facts["records"]]
+    if not record_keys and limit is None and not from_date and not to_date:
+        raise ValueError("specify --limit, --record-key or a date range; there is no fixed batch size")
+    if record_keys and len(record_keys) != len(set(record_keys)):
+        raise ValueError("record keys must be unique")
+    for value in (from_date, to_date):
+        if value:
+            datetime.strptime(value, "%Y-%m-%d")
+    if from_date and to_date and from_date > to_date:
+        raise ValueError("from-date exceeds to-date")
     connection = store.connect()
     store.apply_migrations(connection)
     batch_key = connection.execute("SELECT value FROM store_meta WHERE key='current_batch_key'").fetchone()["value"]
     dates = _trading_dates(connection)
-    selected = _select_records(connection, limit, year, record_keys)
+    selected = _select_records(connection, limit, year, record_keys, from_date, to_date)
     if not selected:
         connection.close()
         raise RuntimeError("no research records matched the batch selector")
-    facts_records = [_record_facts(store, connection, dates, batch_key, row) for row in selected]
+    shared = {}
+    facts_records = [_record_facts(store, connection, dates, batch_key, row, scope, shared) for row in selected]
     connection.close()
     key_digest = hashlib.sha256("\n".join(fact["record_key"] for fact in facts_records).encode("utf-8")).hexdigest()[:8]
     batch_id = f"research-{facts_records[0]['identity']['focus_date']}-{facts_records[-1]['identity']['focus_date']}-{len(facts_records)}-{key_digest}"
     facts = {
         "schema_version": BATCH_SCHEMA_VERSION,
         "batch_id": batch_id,
+        "scope": scope,
         "prepared_at": datetime.now(SHANGHAI).isoformat(timespec="seconds"),
-        "selection": {"limit": limit, "year": year, "explicit_record_keys": record_keys or []},
+        "selection": old_facts["selection"] if old_facts else {"limit": limit, "year": year, "from_date": from_date, "to_date": to_date, "explicit_record_keys": record_keys or []},
         "records": facts_records,
     }
     decisions = {
         "schema_version": BATCH_SCHEMA_VERSION,
         "batch_id": batch_id,
-        "records": [_decision_template(fact, hydrate_current) for fact in facts_records],
+        "scope": scope,
+        "records": [_decision_template(fact, hydrate_current, scope) for fact in facts_records],
     }
+    if old_facts and (old_facts["batch_id"] != batch_id or old_facts.get("scope", "both") != scope):
+        raise ValueError("this output directory belongs to another selection or scope; choose another directory")
+    if (output_dir / "decisions.json").exists():
+        old_decisions = _read_json(output_dir / "decisions.json")
+        if old_decisions.get("batch_id") != batch_id or old_decisions.get("scope", "both") != scope:
+            raise ValueError("existing decisions belong to another selection or scope")
+        decisions = old_decisions
+    fetch_result = None
+    if fetch_missing:
+        from .intake import fetch_attributes
+        passing = {row["record_key"] for row in decisions["records"]
+                   if row["static"].get("replenishment_result") == "非补涨"
+                   and str(row["static"].get("suppression_result") or "").startswith("无")
+                   and row["static"].get("announcement_pollution") is False}
+        missing_codes = sorted({item["code"] for item in _missing_facts(facts_records)
+                                if item["kind"] == "attributes" and
+                                (not item.get("required_when") or item["record_key"] in passing)})
+        fetch_result = fetch_attributes(store, missing_codes)
+        if fetch_result["saved"]:
+            connection = store.connect()
+            shared = {}
+            facts_records = [_record_facts(store, connection, dates, batch_key, row, scope, shared) for row in selected]
+            connection.close()
+            facts["records"] = facts_records
+    facts["missing"] = _missing_facts(facts_records)
     output_dir.mkdir(parents=True, exist_ok=True)
     _write_json(output_dir / "facts.json", facts)
     _write_json(output_dir / "decisions.json", decisions)
+    brief = _brief(facts)
+    _write_json(output_dir / "brief.json", brief)
     return {
         "batch_id": batch_id,
         "record_count": len(facts_records),
         "record_keys": [fact["record_key"] for fact in facts_records],
         "facts": str(output_dir / "facts.json"),
         "decisions": str(output_dir / "decisions.json"),
+        "brief": str(output_dir / "brief.json"),
+        "scope": scope,
+        "missing": facts["missing"],
+        "fetch": fetch_result,
+        "resumed": old_facts is not None,
         "hydrate_current": hydrate_current,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }
+
+
+def _missing_facts(records: list[dict]) -> list[dict]:
+    missing = []
+    for fact in records:
+        key = fact["record_key"]
+        objects = [(fact["identity"], fact["attributes"], "candidate")]
+        for day in fact["strict_one_word_days"]:
+            objects.extend((item, item["attributes"], f"suppression:{day['date']}") for item in day["higher_members"])
+        # Competitor attributes are required only after the static gates pass.
+        for member in fact["potential_competitor_candidates"]["members"]:
+            if member["attributes"]["snapshot_status"] == "missing":
+                missing.append({"record_key": key, "kind": "attributes", "code": member["code"],
+                                "purpose": "competitor", "required_when": "static_pass"})
+        for identity, attrs, purpose in objects:
+            if attrs["snapshot_status"] == "missing":
+                missing.append({"record_key": key, "kind": "attributes", "code": identity["code"], "purpose": purpose})
+        if len(fact["first_two"]) < 2:
+            missing.append({"record_key": key, "kind": "first_two", "code": fact["identity"]["code"]})
+        for item in fact["high_pool"]["members"]:
+            if not item.get("confirmed_main_theme") and len(item["first_two"]) < 2:
+                missing.append({"record_key": key, "kind": "high_first_two", "code": item["code"]})
+        for item in fact["scope_audit"]:
+            if item["status"] == "source_missing":
+                missing.append({"record_key": key, "kind": "daily_pool", "date": item["date"]})
+        if not fact["announcement_sources"] or fact.get("announcement_missing_dates"):
+            missing.append({"record_key": key, "kind": "announcements", "code": fact["identity"]["code"]})
+    return missing
+
+
+def _brief(facts: dict) -> dict:
+    """Share repeated evidence once, omit historic payloads from the AI reading view."""
+    shared: dict[str, Any] = {}
+    def ref(value):
+        key = hashlib.sha256(_json(value).encode("utf-8")).hexdigest()[:12]
+        shared[key] = value
+        return {"evidence_ref": key}
+    records = []
+    for fact in facts["records"]:
+        item = {key: value for key, value in fact.items()
+                if key not in {"current_static_raw", "current_dynamic_raw", "scope_audit"}}
+        item["attributes"] = ref(fact["attributes"])
+        item["first_two"] = [ref(day) for day in fact["first_two"]]
+        item["high_pool"] = ref(dict(fact["high_pool"], members=[
+            dict(member, first_two=[ref(day) for day in member["first_two"]])
+            for member in fact["high_pool"]["members"]]))
+        item["strict_one_word_days"] = [dict(day, higher_members=[
+            dict(member, attributes=ref(member["attributes"])) for member in day["higher_members"]
+        ]) for day in fact["strict_one_word_days"]]
+        item["potential_competitor_candidates"] = ref(dict(fact["potential_competitor_candidates"], members=[
+            dict(member, attributes=ref(member["attributes"])) for member in fact["potential_competitor_candidates"]["members"]]))
+        records.append(item)
+    return {"batch_id": facts["batch_id"], "scope": facts["scope"], "records": records,
+            "shared_evidence": shared, "missing": facts["missing"]}
 
 
 def _source_values(value: Any) -> set[str]:
@@ -447,6 +609,8 @@ def _load_pair(facts_path: Path, decisions_path: Path) -> tuple[dict[str, Any], 
         raise ValueError("unsupported batch schema version")
     if facts.get("batch_id") != decisions.get("batch_id"):
         raise ValueError("facts and decisions batch_id mismatch")
+    if facts.get("scope", "both") != decisions.get("scope", "both"):
+        raise ValueError("facts and decisions scope mismatch")
     fact_keys = [row["record_key"] for row in facts.get("records", [])]
     decision_keys = [row["record_key"] for row in decisions.get("records", [])]
     if not fact_keys or fact_keys != decision_keys or len(set(fact_keys)) != len(fact_keys):
@@ -454,9 +618,9 @@ def _load_pair(facts_path: Path, decisions_path: Path) -> tuple[dict[str, Any], 
     return facts, decisions
 
 
-def _validate_decision(fact: dict[str, Any], decision: dict[str, Any]) -> bool:
+def _validate_decision(fact: dict[str, Any], decision: dict[str, Any], scope: str = "both") -> bool:
     static = decision.get("static") or {}
-    required = ["main_theme", "main_theme_basis", "replenishment_result", "mapping_basis", "suppression_result", "suppression_basis"]
+    required = ["main_theme", "main_theme_basis", "replenishment_result", "mapping_basis", "suppression_result", "suppression_basis", "announcement_basis"]
     missing = [key for key in required if not static.get(key)]
     if missing or not isinstance(static.get("announcement_pollution"), bool):
         raise ValueError(f"{fact['record_key']} static decision incomplete: {missing or ['announcement_pollution']}")
@@ -471,7 +635,7 @@ def _validate_decision(fact: dict[str, Any], decision: dict[str, Any]) -> bool:
     )
     if passed and not isinstance(static.get("competitors"), list):
         raise ValueError(f"{fact['record_key']} passing record requires competitors array")
-    if passed:
+    if passed and scope == "both":
         dynamic = decision.get("dynamic") or {}
         missing_dynamic = [key for key in ["auction", "pk_checks", "pk_result", "buy_point", "outcome"] if dynamic.get(key) is None]
         if missing_dynamic:
@@ -524,9 +688,14 @@ def _dynamic_updates(passed: bool, static: dict[str, Any], dynamic: dict[str, An
 def _requests_for_batch(facts: dict[str, Any], decisions: dict[str, Any]) -> list[dict[str, Any]]:
     requests: list[dict[str, Any]] = []
     for fact, decision in zip(facts["records"], decisions["records"]):
-        passed = _validate_decision(fact, decision)
+        passed = _validate_decision(fact, decision, facts.get("scope", "both"))
         static = decision["static"]
-        evidence = sorted(_source_values(fact) | set(static.get("additional_evidence") or []))
+        missing = _missing_facts([fact])
+        blocking = [item for item in missing if item["kind"] in {"attributes", "daily_pool"}
+                    and (not item.get("required_when") or passed)]
+        if blocking:
+            raise ValueError(f"{fact['record_key']} missing source facts: {_json(blocking)}; fill them or set defer_reason")
+        evidence = sorted(_source_values({key: value for key, value in fact.items() if not key.startswith("current_")}) | set(static.get("additional_evidence") or []))
         scope_summary = {
             "dates": [item["date"] for item in fact["scope_audit"]],
             "excluded_bse_count": sum(len(item["excluded_bse"]) for item in fact["scope_audit"]),
@@ -569,6 +738,8 @@ def _requests_for_batch(facts: dict[str, Any], decisions: dict[str, Any]) -> lis
             "record_key": fact["record_key"], "kind": "static", "research_status": "formal_source_record",
             "confirmation_status": "pending_user_confirmation", "evidence": evidence, "updates": updates, "checks": checks,
         })
+        if facts.get("scope", "both") == "static":
+            continue
         if passed:
             dynamic = decision["dynamic"]
             dynamic_updates = _dynamic_updates(True, static, dynamic)
@@ -589,6 +760,9 @@ def _requests_for_batch(facts: dict[str, Any], decisions: dict[str, Any]) -> lis
             "confirmation_status": "pending_user_confirmation", "evidence": dynamic_evidence,
             "updates": dynamic_updates, "checks": dynamic_checks,
         })
+    for request in requests:
+        request["request_id"] = _request_id(facts["batch_id"], request["kind"], request["record_key"],
+                                             {key: value for key, value in request.items() if key != "request_id"})
     return requests
 
 
@@ -605,7 +779,7 @@ def verify_batch(
     records = []
     for fact, decision in zip(facts["records"], decisions["records"]):
         try:
-            passed = _validate_decision(fact, decision)
+            passed = _validate_decision(fact, decision, facts.get("scope", "both"))
         except ValueError as exc:
             findings.append(str(exc))
             passed = False
@@ -644,6 +818,11 @@ def verify_batch(
         required_checks = {"高标事实池","唯一主炒","补涨判断","一字压制核验明细","公告污染"}
         if not required_checks.issubset(check_types):
             findings.append(f"{fact['record_key']} static checks incomplete")
+        if facts.get("scope", "both") == "static":
+            records.append({"record_key": fact["record_key"], "static_pass": passed})
+            if passed and "首开潜在竞争对手事实清单" not in raw:
+                findings.append(f"{fact['record_key']} passing record lacks competitor list")
+            continue
         if not dynamic:
             findings.append(f"{fact['record_key']} dynamic research missing")
         else:
@@ -697,16 +876,32 @@ def commit_batch(
 ) -> dict[str, Any]:
     started = time.perf_counter()
     facts, decisions = _load_pair(facts_path, decisions_path)
+    store.sync_rules()
+    deferred = [{"record_key": row["record_key"], "reason": row["defer_reason"]}
+                for row in decisions["records"] if row.get("defer_reason")]
+    deferred_keys = {row["record_key"] for row in deferred}
+    facts = dict(facts, records=[row for row in facts["records"] if row["record_key"] not in deferred_keys])
+    decisions = dict(decisions, records=[row for row in decisions["records"] if row["record_key"] not in deferred_keys])
+    if not facts["records"]:
+        return {"batch_id": facts["batch_id"], "write_count": 0, "deferred": deferred}
     requests = _requests_for_batch(facts, decisions)
+    write_started = time.perf_counter()
     results = [store.write_research(request) for request in requests]
+    write_seconds = round(time.perf_counter() - write_started, 3)
     verification = verify_batch(store, facts, decisions, set_cursor=True)
     if not verification["passed"]:
         raise RuntimeError(f"batch verification failed: {verification['findings']}")
-    export = store.export_all(publish_root=True) if publish else None
+    export_started = time.perf_counter()
+    export = store.export_all(publish_root=True, refresh_statistics=facts.get("scope", "both") == "both") if publish and any(not row.get("deduplicated") for row in results) else None
     return {
         "batch_id": facts["batch_id"],
         "record_count": len(facts["records"]),
         "write_count": len(results),
+        "deferred": deferred,
+        "scope": facts.get("scope", "both"),
+        "deduplicated": sum(bool(row.get("deduplicated")) for row in results),
+        "timing_seconds": {"write": write_seconds, "verify": verification["elapsed_seconds"],
+                           "export": round(time.perf_counter() - export_started, 3)},
         "verification": verification,
         "export": export,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
@@ -715,4 +910,9 @@ def commit_batch(
 
 def load_and_verify(store, facts_path: Path, decisions_path: Path, set_cursor: bool = False) -> dict[str, Any]:
     facts, decisions = _load_pair(facts_path, decisions_path)
+    keys = {row["record_key"] for row in decisions["records"] if row.get("defer_reason")}
+    facts = dict(facts, records=[row for row in facts["records"] if row["record_key"] not in keys])
+    decisions = dict(decisions, records=[row for row in decisions["records"] if row["record_key"] not in keys])
+    if not facts["records"]:
+        return {"passed": True, "record_count": 0, "deferred_count": len(keys), "cursor_updated": False}
     return verify_batch(store, facts, decisions, set_cursor=set_cursor)

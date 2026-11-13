@@ -24,9 +24,14 @@ try {
         if ($LASTEXITCODE -ne 0) {
             throw "当前规则同步失败。"
         }
-        & $python.Source -B tools/research_cli.py refresh-evidence
-        if ($LASTEXITCODE -ne 0) {
-            throw "规则证据登记失败。"
+        foreach ($change in $ruleChanges) {
+            $path = $change.Substring(3)
+            if (Test-Path -LiteralPath $path -PathType Leaf) {
+                & $python.Source -B tools/research_cli.py register-evidence --path $path
+                if ($LASTEXITCODE -ne 0) {
+                    throw "规则证据登记失败：$path"
+                }
+            }
         }
     }
 
