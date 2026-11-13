@@ -19,13 +19,6 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
 }
 
 $python = Get-Command python -ErrorAction Stop
-$summaryText = & $python.Source -B (Join-Path $root "tools/research_cli.py") summary | Out-String
-if ($LASTEXITCODE -ne 0) {
-    throw "正式数据库摘要检查失败。"
-}
-$summary = $summaryText | ConvertFrom-Json
-$hash = (Get-FileHash -LiteralPath $databasePath -Algorithm SHA256).Hash.ToLowerInvariant()
-$size = (Get-Item -LiteralPath $databasePath).Length
 $logicalSnapshot = $null
 $generationKey = $null
 if (Test-Path -LiteralPath $currentPointerPath) {
@@ -38,11 +31,18 @@ if (Test-Path -LiteralPath $currentPointerPath) {
     }
 }
 
-$tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("ultra-board-release-" + [guid]::NewGuid().ToString("N"))
-[System.IO.Directory]::CreateDirectory($tempDir) | Out-Null
+$temporary = & $python.Source -B (Join-Path $root "tools/research_cli.py") temp-new --purpose publish --owner-pid $PID --file research.sqlite --file research.sqlite.sha256 --file database_release_manifest.json | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw "创建发布临时目录失败。" }
+$tempDir = $temporary.path
 $addedToken = $false
 
 try {
+    $databasePath = Join-Path $tempDir "research.sqlite"
+    $summary = & $python.Source -B (Join-Path $root "tools/research_cli.py") db-snapshot --output $databasePath | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0) { throw "生成数据库一致快照失败。" }
+    $hash = $summary.sha256
+    $size = $summary.size_bytes
+    $logicalSnapshot = $summary.logical_snapshot
     $checksumPath = Join-Path $tempDir "research.sqlite.sha256"
     [System.IO.File]::WriteAllText($checksumPath, "$hash  research.sqlite`n", [System.Text.UTF8Encoding]::new($false))
     $releaseManifestPath = Join-Path $tempDir "database_release_manifest.json"
@@ -138,7 +138,5 @@ finally {
     if ($addedToken) {
         Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue
     }
-    if (Test-Path -LiteralPath $tempDir) {
-        [System.IO.Directory]::Delete($tempDir, $true)
-    }
+    & $python.Source -B (Join-Path $root "tools/research_cli.py") temp-clean --id $temporary.id --owner-pid $PID
 }

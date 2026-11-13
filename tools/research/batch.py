@@ -8,11 +8,28 @@ import json
 from pathlib import Path
 import time
 from typing import Any
-from zoneinfo import ZoneInfo
+from .system import SHANGHAI
+from .scratch import MARKER
 
 
-SHANGHAI = ZoneInfo("Asia/Shanghai")
 BATCH_SCHEMA_VERSION = 1
+
+
+def _batch_directory(store, directory):
+    directory = directory.resolve()
+    research = (store.root / "data/research").resolve()
+    if directory.is_relative_to(research):
+        return directory
+    base = (store.root / "data/store/tmp").resolve()
+    relative = directory.relative_to(base)
+    if not relative.parts:
+        raise ValueError("请选择已登记的临时批次目录")
+    workspace = base / relative.parts[0]
+    marker = json.loads((workspace / MARKER).read_text(encoding="utf-8"))
+    required = {(directory/name).relative_to(workspace).as_posix() for name in ("batch.json","facts.json","brief.json","decisions.json")}
+    if marker.get("owner")!="Ultra-Board" or marker.get("id")!=workspace.name or not required.issubset(marker["files"]):
+        raise ValueError("批次临时材料须先登记归属及文件清单")
+    return directory
 
 
 def _json(value: Any) -> str:
@@ -25,7 +42,12 @@ def _read_json(path: Path) -> Any:
 
 def _write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary = path.with_name("." + path.name + ".tmp")
+    try:
+        temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _name(connection, stock_id: int) -> str | None:
@@ -74,19 +96,43 @@ def _daily_row(connection, stock_id: int, trade_date: str) -> dict[str, Any] | N
     row = connection.execute(
         """SELECT d.*,e.path AS evidence_path FROM daily_market d
            LEFT JOIN evidence_files e ON e.id=d.evidence_file_id
-           WHERE d.stock_id=? AND d.trade_date=?
-           ORDER BY CASE d.source_type WHEN 'kaipanla_limit_pool' THEN 0 ELSE 1 END,d.id DESC LIMIT 1""",
+           WHERE d.stock_id=? AND d.trade_date=? AND d.source_type='kaipanla_limit_pool'
+           ORDER BY d.id DESC LIMIT 1""",
         (stock_id, trade_date),
     ).fetchone()
-    if not row:
-        return None
-    raw = json.loads(row["raw_json"])
     context = [dict(item) for item in connection.execute(
         """SELECT DISTINCT m.source_kind,m.topic,m.topic_tags,m.description,m.event_time,e.path AS source
            FROM market_source_facts m LEFT JOIN evidence_files e ON e.id=m.evidence_file_id
            WHERE m.stock_id=? AND m.trade_date=? ORDER BY m.source_kind,m.event_time""",
         (stock_id, trade_date),
     )]
+    if not row:
+        fallback = connection.execute(
+            """SELECT m.*,e.path AS evidence_path FROM market_source_facts m
+               LEFT JOIN evidence_files e ON e.id=m.evidence_file_id
+               WHERE m.stock_id=? AND m.trade_date=?
+                 AND m.source_kind='kaipanla_historical_messages' AND m.board_height IS NOT NULL
+               ORDER BY m.id LIMIT 1""",
+            (stock_id, trade_date),
+        ).fetchone()
+        if not fallback:
+            return None
+        event_time = fallback["event_time"]
+        return {
+            "date": trade_date,
+            "source_type": "kaipanla_historical_messages",
+            "board_height": fallback["board_height"],
+            "strict_one_word": bool(event_time and event_time <= "09:25:59"),
+            "first_limit_time": event_time,
+            "close": None,
+            "limit_up": None,
+            "theme": fallback["topic"],
+            "theme_tags": fallback["topic_tags"],
+            "description": fallback["description"],
+            "context": context,
+            "source": fallback["evidence_path"],
+        }
+    raw = json.loads(row["raw_json"])
     return {
         "date": trade_date,
         "source_type": row["source_type"],
@@ -120,65 +166,114 @@ def _previous_date(dates: list[str], value: str | None) -> str | None:
 
 
 def _confirmed_theme(connection, stock_id: int, trade_date: str) -> str | None:
+    start = _actual_first_board_date(connection, stock_id, trade_date)
+    if connection.execute("SELECT 1 FROM sqlite_master WHERE name='research_theme_inputs'").fetchone():
+        saved = connection.execute("SELECT main_theme FROM research_theme_inputs WHERE stock_id=? AND first_board_date=?",
+                                   (stock_id,start)).fetchone()
+        if saved:
+            return saved[0]
     row = connection.execute(
         """SELECT r.main_theme FROM launch_rounds l
            JOIN first_open_events f ON f.launch_round_id=l.id
            JOIN current_static_research r ON r.first_open_event_id=f.id
-           WHERE l.stock_id=? AND l.focus_date<=?
+           WHERE l.stock_id=? AND l.first_board_date=?
            ORDER BY l.focus_date DESC LIMIT 1""",
-        (stock_id, trade_date),
+        (stock_id, start),
     ).fetchone()
     return row["main_theme"] if row else None
 
 
+def _actual_board_sequence(connection, stock_id: int, start: str, end: str) -> list[tuple[str, int]]:
+    rows = connection.execute(
+        """SELECT trade_date,board_height,priority FROM (
+             SELECT trade_date,board_height,0 AS priority FROM daily_market
+              WHERE stock_id=? AND source_type='kaipanla_limit_pool' AND trade_date BETWEEN ? AND ?
+                AND board_height IS NOT NULL
+             UNION ALL
+             SELECT trade_date,board_height,1 AS priority FROM market_source_facts
+              WHERE stock_id=? AND source_kind='kaipanla_historical_messages' AND trade_date BETWEEN ? AND ?
+                AND board_height IS NOT NULL
+           ) ORDER BY trade_date,priority""",
+        (stock_id, start, end, stock_id, start, end),
+    ).fetchall()
+    result = []
+    seen = set()
+    for row in rows:
+        if row["trade_date"] in seen:
+            continue
+        seen.add(row["trade_date"])
+        result.append((row["trade_date"], row["board_height"]))
+    return result
+
+
+def _actual_first_board_date(connection, stock_id: int, end: str) -> str | None:
+    row = connection.execute(
+        """SELECT MAX(trade_date) FROM (
+             SELECT trade_date FROM daily_market WHERE stock_id=? AND source_type='kaipanla_limit_pool'
+              AND board_height=1 AND trade_date<=?
+             UNION ALL
+             SELECT trade_date FROM market_source_facts WHERE stock_id=?
+              AND source_kind='kaipanla_historical_messages' AND board_height=1 AND trade_date<=?
+           )""",
+        (stock_id, end, stock_id, end),
+    ).fetchone()
+    return row[0]
+
+
+def _actual_next_first_board_date(connection, stock_id: int, start: str) -> str | None:
+    row = connection.execute(
+        """SELECT MIN(trade_date) FROM (
+             SELECT trade_date FROM daily_market WHERE stock_id=? AND source_type='kaipanla_limit_pool'
+              AND board_height=1 AND trade_date>?
+             UNION ALL
+             SELECT trade_date FROM market_source_facts WHERE stock_id=?
+              AND source_kind='kaipanla_historical_messages' AND board_height=1 AND trade_date>?
+           )""",
+        (stock_id, start, stock_id, start),
+    ).fetchone()
+    return row[0]
+
+
 def _first_two(connection, stock_id: int, end: str, start: str | None = None) -> list[dict[str, Any]]:
     if start is None:
-        row = connection.execute(
-            """SELECT MAX(trade_date) AS day FROM daily_market
-               WHERE stock_id=? AND source_type='kaipanla_limit_pool' AND board_height=1 AND trade_date<=?""",
-            (stock_id, end),
-        ).fetchone()
-        start = row["day"]
+        start = _actual_first_board_date(connection, stock_id, end)
     if not start:
         return []
-    days = connection.execute(
-        """SELECT DISTINCT trade_date FROM daily_market WHERE stock_id=?
-           AND source_type='kaipanla_limit_pool' AND trade_date BETWEEN ? AND ?
-           AND board_height IN (1,2) ORDER BY trade_date LIMIT 2""", (stock_id, start, end),
-    )
-    return [_daily_row(connection, stock_id, row["trade_date"]) for row in days]
+    days = [day for day,height in _actual_board_sequence(connection, stock_id, start, end) if height in (1,2)][:2]
+    return [_daily_row(connection, stock_id, day) for day in days]
 
 
-def _global_pool(connection, pool_type: str, pool_date: str, batch_key: str) -> list[dict[str, Any]]:
+def _global_pool(connection, pool_type: str, pool_date: str, batch_key: str, minimum: int = 4) -> list[dict[str, Any]]:
+    condition = "d.strict_one_word=1" if pool_type == "strict_one_word" else "d.board_height>=?"
+    params = [pool_date] if pool_type == "strict_one_word" else [pool_date,minimum]
     rows = connection.execute(
-        """SELECT pm.stock_id,pm.board_height,pm.member_status,pm.query_direction,e.path AS evidence_path
-           FROM stock_pools p JOIN pool_members pm ON pm.pool_id=p.id
-           LEFT JOIN evidence_files e ON e.id=pm.evidence_file_id
-           WHERE p.pool_type=? AND p.pool_date=? AND p.input_version=? AND p.candidate_event_id IS NULL
-           ORDER BY pm.board_height DESC,pm.stock_id""",
-        (pool_type, pool_date, batch_key),
+        """SELECT d.stock_id,d.board_height,e.path AS evidence_path FROM daily_market d
+           LEFT JOIN evidence_files e ON e.id=d.evidence_file_id
+           WHERE d.trade_date=? AND d.source_type='kaipanla_limit_pool' AND """ + condition +
+        " ORDER BY d.board_height DESC,d.stock_id", params,
     ).fetchall()
     result = []
     for row in rows:
         item = _stock_identity(connection, row["stock_id"])
         item.update({
             "board_height": row["board_height"],
-            "status": row["member_status"],
-            "query_direction": row["query_direction"],
+            "status": f"{row['board_height']}板晋级",
+            "query_direction": "全部更高一字" if pool_type == "strict_one_word" else "高标主炒向候选完整属性",
             "source": row["evidence_path"],
         })
         result.append(item)
     return result
 
 
-def _high_pool(connection, dates: list[str], pool_date: str, batch_key: str) -> dict[str, Any]:
-    advanced = _global_pool(connection, "high_standard", pool_date, batch_key)
+def _high_pool(connection, dates: list[str], pool_date: str, batch_key: str, parameters=None) -> dict[str, Any]:
+    parameters = parameters or {}
+    advanced = _global_pool(connection, "high_standard", pool_date, batch_key, parameters.get("前序最低连续板数",4))
     previous = _previous_date(dates, pool_date)
-    previous_high = _global_pool(connection, "high_standard", previous, batch_key) if previous else []
-    current_codes = {item["code"] for item in advanced}
+    previous_high = _global_pool(connection, "high_standard", previous, batch_key, parameters.get("当日断板前最低连续板数",4)) if previous else []
+    current_ids = {r[0] for r in connection.execute("SELECT stock_id FROM daily_market WHERE trade_date=? AND source_type='kaipanla_limit_pool'", (pool_date,))}
     broken = []
     for item in previous_high:
-        if item["code"] in current_codes or (item.get("board_height") or 0) < 4:
+        if item["stock_id"] in current_ids:
             continue
         broken_item = dict(item)
         broken_item["status"] = f"{item['board_height']}板断板"
@@ -291,7 +386,7 @@ def _select_records(connection, limit: int | None, year: int | None, record_keys
                 raise KeyError(key)
             rows.append(row)
         return rows
-    conditions = ["r.research_status='unresearched'"]
+    conditions = ["r.research_status IN ('unresearched','needs_input')"]
     params: list[Any] = []
     if year is not None:
         conditions.append("l.focus_date LIKE ?")
@@ -318,7 +413,9 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
     stock_id = int(row["stock_id"])
     code = row["code"]
     end_date = row["event_date"] or row["focus_date"]
-    first_two = _first_two(connection, stock_id, end_date)
+    first_two = _first_two(connection, stock_id, row["focus_date"])
+    if first_two:
+        first_two = _first_two(connection, stock_id, end_date, first_two[0]["date"])
     first_board_date = first_two[0]["date"] if first_two else (row["first_board_date"] or row["focus_date"])
     strict_days = []
     scope_dates = {first_board_date, row["focus_date"]}
@@ -347,7 +444,9 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
     ).fetchone() if scope == "both" else None
     high_key = ("high_pool", first_board_date)
     if high_key not in shared:
-        shared[high_key] = _high_pool(connection, dates, first_board_date, batch_key)
+        if "parameters" not in shared:
+            shared["parameters"] = _read_json(store.root / "data/store/rules/static_rules.json")["rules"]["补涨时间参数"]
+        shared[high_key] = _high_pool(connection, dates, first_board_date, batch_key, shared["parameters"])
     for date in scope_dates:
         if date and ("raw_scope", date) not in shared:
             shared[("raw_scope", date)] = _raw_scope(store.root, date)
@@ -397,36 +496,13 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
     return result
 
 
-def _decision_template(fact: dict[str, Any], hydrate_current: bool, scope: str = "static") -> dict[str, Any]:
-    raw = fact["current_static_raw"] if hydrate_current else {}
-    dynamic = fact.get("current_dynamic_raw") if hydrate_current and fact.get("current_dynamic_raw") else {}
-    result = {
-        "record_key": fact["record_key"],
-        "static": {
-            "main_theme": raw.get("唯一主炒作属性"),
-            "main_theme_basis": raw.get("唯一主炒依据"),
-            "replenishment_result": raw.get("补涨判断"),
-            "mapping_basis": raw.get("映射依据"),
-            "suppression_result": raw.get("压制判断"),
-            "suppression_basis": raw.get("压制依据"),
-            "suppression_details": raw.get("一字压制核验明细"),
-            "announcement_pollution": raw.get("公告污染"),
-            "announcement_basis": raw.get("公告污染依据"),
-            "competitors": raw.get("首开潜在竞争对手事实清单"),
-            "additional_evidence": [],
-        },
-        "dynamic": {
-            "auction": dynamic.get("竞价筛选"),
-            "pk_checks": dynamic.get("同题材PK核验明细"),
-            "pk_result": dynamic.get("同题材PK结果"),
-            "buy_point": dynamic.get("首开买点"),
-            "market": dynamic.get("首开行情"),
-            "outcome": dynamic.get("买入后结果"),
-            "additional_evidence": [],
-        },
-    }
-    if scope == "static":
-        result.pop("dynamic")
+def _decision_template(fact: dict[str, Any], scope: str = "static") -> dict[str, Any]:
+    result = {"record_key":fact["record_key"],"static":{
+        "main_theme":None,"main_theme_basis":None,
+        "announcement_pollution":None,"announcement_basis":None,"additional_evidence":[]}}
+    if scope == "both":
+        result["dynamic"] = {"auction":None,"pk_checks":None,"pk_result":None,
+                             "buy_point":None,"market":None,"outcome":None,"additional_evidence":[]}
     return result
 
 
@@ -436,24 +512,20 @@ def prepare_batch(
     limit: int | None = None,
     year: int | None = None,
     record_keys: list[str] | None = None,
-    hydrate_current: bool = False,
     scope: str = "static",
     from_date: str | None = None,
     to_date: str | None = None,
     fetch_missing: bool = True,
 ) -> dict[str, Any]:
     started = time.perf_counter()
+    _batch_directory(store,output_dir)
     if limit is not None and limit < 1:
         raise ValueError("limit must be positive")
     if scope not in {"static", "both"}:
         raise ValueError("scope must be static or both")
-    old_facts = _read_json(output_dir / "facts.json") if (output_dir / "facts.json").exists() else None
-    if old_facts and not record_keys:
-        selection = old_facts.get("selection", {})
-        for key, value in (("limit", limit), ("year", year), ("from_date", from_date), ("to_date", to_date)):
-            if value is not None and selection.get(key) != value:
-                raise ValueError("selection changed; use another output directory")
-        record_keys = [row["record_key"] for row in old_facts["records"]]
+    old_decisions = _read_json(output_dir / "decisions.json") if (output_dir / "decisions.json").exists() else None
+    if old_decisions and not record_keys:
+        record_keys = [row["record_key"] for row in old_decisions["records"]]
     if not record_keys and limit is None and not from_date and not to_date:
         raise ValueError("specify --limit, --record-key or a date range; there is no fixed batch size")
     if record_keys and len(record_keys) != len(set(record_keys)):
@@ -481,19 +553,16 @@ def prepare_batch(
         "batch_id": batch_id,
         "scope": scope,
         "prepared_at": datetime.now(SHANGHAI).isoformat(timespec="seconds"),
-        "selection": old_facts["selection"] if old_facts else {"limit": limit, "year": year, "from_date": from_date, "to_date": to_date, "explicit_record_keys": record_keys or []},
+        "selection": {"limit": limit, "year": year, "from_date": from_date, "to_date": to_date, "explicit_record_keys": record_keys or []},
         "records": facts_records,
     }
     decisions = {
         "schema_version": BATCH_SCHEMA_VERSION,
         "batch_id": batch_id,
         "scope": scope,
-        "records": [_decision_template(fact, hydrate_current, scope) for fact in facts_records],
+        "records": [_decision_template(fact, scope) for fact in facts_records],
     }
-    if old_facts and (old_facts["batch_id"] != batch_id or old_facts.get("scope", "both") != scope):
-        raise ValueError("this output directory belongs to another selection or scope; choose another directory")
-    if (output_dir / "decisions.json").exists():
-        old_decisions = _read_json(output_dir / "decisions.json")
+    if old_decisions:
         if old_decisions.get("batch_id") != batch_id or old_decisions.get("scope", "both") != scope:
             raise ValueError("existing decisions belong to another selection or scope")
         decisions = old_decisions
@@ -514,11 +583,15 @@ def prepare_batch(
             connection.close()
             facts["records"] = facts_records
     facts["missing"] = _missing_facts(facts_records)
+    from .derive import judgement_slots
+    decisions["high_themes"] = judgement_slots(store, facts_records, decisions.get("high_themes", []))
     output_dir.mkdir(parents=True, exist_ok=True)
     _write_json(output_dir / "facts.json", facts)
     _write_json(output_dir / "decisions.json", decisions)
     brief = _brief(facts)
     _write_json(output_dir / "brief.json", brief)
+    if not old_decisions or not (output_dir / "batch.json").exists():
+        _write_json(output_dir / "batch.json", {"scope":scope,"record_keys":[f["record_key"] for f in facts_records]})
     return {
         "batch_id": batch_id,
         "record_count": len(facts_records),
@@ -529,8 +602,7 @@ def prepare_batch(
         "scope": scope,
         "missing": facts["missing"],
         "fetch": fetch_result,
-        "resumed": old_facts is not None,
-        "hydrate_current": hydrate_current,
+        "resumed": old_decisions is not None,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }
 
@@ -602,19 +674,25 @@ def _source_values(value: Any) -> set[str]:
     return result
 
 
-def _load_pair(facts_path: Path, decisions_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    facts = _read_json(facts_path)
+def _load_pending(store, decisions_path):
     decisions = _read_json(decisions_path)
-    if facts.get("schema_version") != BATCH_SCHEMA_VERSION or decisions.get("schema_version") != BATCH_SCHEMA_VERSION:
+    if decisions.get("schema_version") != BATCH_SCHEMA_VERSION:
         raise ValueError("unsupported batch schema version")
-    if facts.get("batch_id") != decisions.get("batch_id"):
-        raise ValueError("facts and decisions batch_id mismatch")
-    if facts.get("scope", "both") != decisions.get("scope", "both"):
-        raise ValueError("facts and decisions scope mismatch")
-    fact_keys = [row["record_key"] for row in facts.get("records", [])]
-    decision_keys = [row["record_key"] for row in decisions.get("records", [])]
-    if not fact_keys or fact_keys != decision_keys or len(set(fact_keys)) != len(fact_keys):
-        raise ValueError("facts and decisions must contain the same ordered unique records")
+    keys = [row["record_key"] for row in decisions["records"]]
+    manifest = _read_json(decisions_path.parent / "batch.json")
+    if not keys or len(set(keys)) != len(keys) or not set(keys).issubset(manifest["record_keys"]):
+        raise ValueError("待办记录须为当前批次中的唯一记录键")
+    connection = store.connect()
+    try:
+        dates = _trading_dates(connection)
+        batch_key = connection.execute("SELECT value FROM store_meta WHERE key='current_batch_key'").fetchone()[0]
+        shared = {}
+        records = [_record_facts(store,connection,dates,batch_key,row,decisions["scope"],shared)
+                   for row in _select_records(connection,None,None,keys)]
+    finally:
+        connection.close()
+    facts = {"schema_version":BATCH_SCHEMA_VERSION,"scope":decisions["scope"],"batch_id":decisions["batch_id"],
+             "records":records,"missing":_missing_facts(records)}
     return facts, decisions
 
 
@@ -683,231 +761,181 @@ def _dynamic_updates(passed: bool, static: dict[str, Any], dynamic: dict[str, An
     }
 
 
-def _requests_for_batch(facts: dict[str, Any], decisions: dict[str, Any]) -> list[dict[str, Any]]:
-    requests: list[dict[str, Any]] = []
-    for fact, decision in zip(facts["records"], decisions["records"]):
-        passed = _validate_decision(fact, decision, facts.get("scope", "both"))
-        static = decision["static"]
-        missing = _missing_facts([fact])
-        blocking = [item for item in missing if item["kind"] in {"attributes", "daily_pool"}
-                    and (not item.get("required_when") or passed)]
-        if blocking:
-            raise ValueError(f"{fact['record_key']} missing source facts: {_json(blocking)}; fill them or set defer_reason")
-        evidence = sorted(_source_values({key: value for key, value in fact.items() if not key.startswith("current_")}) | set(static.get("additional_evidence") or []))
-        scope_summary = {
-            "dates": [item["date"] for item in fact["scope_audit"]],
-            "excluded_bse_count": sum(len(item["excluded_bse"]) for item in fact["scope_audit"]),
-            "st_row_count": sum(len(item["st_rows"]) for item in fact["scope_audit"]),
-            "status": "checked",
-        }
-        updates = {
-            "开盘啦完整属性集": fact["attributes"]["tags"],
-            "开盘啦完整属性来源": fact["attributes"]["sources"],
-            "属性时点说明": f"使用{fact['attributes']['effective_date']}最晚完整属性快照；历史当日直接证据优先，特殊归并由判断依据单列。",
-            "首二原始证据": fact["first_two"],
-            "高标事实池": fact["high_pool"]["members"],
-            "高标与一字范围核验": scope_summary,
-            "唯一主炒作属性": static["main_theme"],
-            "唯一主炒依据": static["main_theme_basis"],
-            "补涨判断": static["replenishment_result"],
-            "映射依据": static["mapping_basis"],
-            "一字压制核验明细": static.get("suppression_details") or fact["strict_one_word_days"],
-            "压制判断": static["suppression_result"],
-            "压制依据": static["suppression_basis"],
-            "公告污染": static["announcement_pollution"],
-            "公告污染依据": static["announcement_basis"],
-            "公告污染来源": fact["announcement_sources"],
-            "静态三项结论": "通过" if passed else "不通过",
-            "静态筛选口径": "非补涨 + 无一字压制；公告污染独立记录",
-        }
-        if static["announcement_pollution"]:
-            updates["公告真实属性"] = static["main_theme"]
-        if passed:
-            updates["首开潜在竞争对手事实清单"] = static["competitors"]
-            updates["首开潜在竞争对手候选全集"] = fact["potential_competitor_candidates"]
-        checks = [
-            {"check_type":"高标事实池","outcome":"完整","basis":"高标、北交所和ST范围已自动准备并人工裁决。","sources":sorted(_source_values(fact["high_pool"]) | _source_values(fact["scope_audit"])),"raw":fact["high_pool"]["members"]},
-            {"check_type":"唯一主炒","outcome":static["main_theme"],"basis":static["main_theme_basis"],"sources":sorted(_source_values(fact["first_two"]))},
-            {"check_type":"补涨判断","outcome":static["replenishment_result"],"basis":static["mapping_basis"],"sources":fact["attributes"]["sources"]},
-            {"check_type":"一字压制核验明细","outcome":static["suppression_result"],"basis":static["suppression_basis"],"sources":sorted(_source_values(fact["strict_one_word_days"])),"raw":updates["一字压制核验明细"]},
-            {"check_type":"公告污染","outcome":str(static["announcement_pollution"]).lower(),"basis":static["announcement_basis"],"sources":fact["announcement_sources"]},
-        ]
-        if passed:
-            checks.append({"check_type":"首开潜在竞争对手事实清单","outcome":"完整","basis":"按前日同身位及更高身位全集逐只裁决。","sources":sorted(_source_values(fact["potential_competitor_candidates"])),"raw":static["competitors"]})
-        remove_fields = []
-        if not passed:
-            remove_fields.extend(["首开潜在竞争对手事实清单", "首开潜在竞争对手候选全集"])
-        if not static["announcement_pollution"]:
-            remove_fields.append("公告真实属性")
-        requests.append({
-            "request_id": _request_id(facts["batch_id"], "static", fact["record_key"], updates),
-            "record_key": fact["record_key"], "kind": "static", "research_status": "formal_source_record",
-            "confirmation_status": "pending_user_confirmation", "evidence": evidence, "updates": updates,
-            "remove_fields": remove_fields, "checks": checks,
-        })
-        if facts.get("scope", "both") == "static":
-            continue
-        if passed:
-            dynamic = decision["dynamic"]
-            dynamic_updates = _dynamic_updates(True, static, dynamic)
-            dynamic_checks = [
-                {"check_type":"买入筛选","outcome":"通过","basis":"非补涨、无一字压制；公告污染独立记录。","sources":[]},
-                {"check_type":"竞价筛选","outcome":dynamic["auction"].get("结果"),"basis":dynamic["auction"].get("依据"),"sources":sorted(_source_values(fact["first_open_market"]))},
-                {"check_type":"theme_pk","outcome":dynamic["pk_result"],"basis":"按静态竞争清单执行。","sources":sorted(_source_values(fact["potential_competitor_candidates"])),"raw":dynamic["pk_checks"]},
-                {"check_type":"买点","outcome":dynamic["buy_point"].get("结果"),"basis":dynamic["buy_point"].get("事实"),"sources":dynamic["buy_point"].get("来源",[])},
-            ]
-        else:
-            dynamic_updates = _dynamic_updates(False, static, {})
-            reason = dynamic_updates["买入筛选"]["依据"]
-            dynamic_checks = [{"check_type":"买入筛选","outcome":"淘汰","basis":reason,"sources":[]}]
-        dynamic_evidence = sorted(set(evidence) | set((decision.get("dynamic") or {}).get("additional_evidence") or []))
-        requests.append({
-            "request_id": _request_id(facts["batch_id"], "dynamic", fact["record_key"], dynamic_updates),
-            "record_key": fact["record_key"], "kind": "dynamic", "research_status": "source_record",
-            "confirmation_status": "pending_user_confirmation", "evidence": dynamic_evidence,
-            "updates": dynamic_updates, "checks": dynamic_checks,
-        })
-    for request in requests:
-        request["request_id"] = _request_id(facts["batch_id"], request["kind"], request["record_key"],
-                                             {key: value for key, value in request.items() if key != "request_id"})
-    return requests
-
-
-def verify_batch(
-    store,
-    facts: dict[str, Any],
-    decisions: dict[str, Any],
-    set_cursor: bool = False,
-) -> dict[str, Any]:
-    started = time.perf_counter()
-    connection = store.connect()
-    store.apply_migrations(connection)
-    findings: list[str] = []
-    records = []
-    for fact, decision in zip(facts["records"], decisions["records"]):
-        try:
-            passed = _validate_decision(fact, decision, facts.get("scope", "both"))
-        except ValueError as exc:
-            findings.append(str(exc))
-            passed = False
-        static = connection.execute(
-            "SELECT * FROM current_static_research WHERE legacy_record_key=?", (fact["record_key"],)
-        ).fetchone()
-        dynamic = connection.execute(
-            """SELECT d.* FROM current_dynamic_research d JOIN research_plans p ON p.id=d.plan_id
-               WHERE d.legacy_record_key=? AND p.plan_code='formal'""", (fact["record_key"],)
-        ).fetchone()
-        if not static or static["research_status"] == "unresearched":
-            findings.append(f"{fact['record_key']} static research missing")
-            continue
-        launch = connection.execute(
-            """SELECT l.first_board_date FROM first_open_events f
-               JOIN launch_rounds l ON l.id=f.launch_round_id
-               WHERE f.id=?""",
-            (static["first_open_event_id"],),
-        ).fetchone()
-        if not launch or launch["first_board_date"] != fact["identity"]["first_board_date"]:
-            findings.append(f"{fact['record_key']} actual first-board date mismatch")
-        raw = json.loads(static["raw_json"])
-        expected_static = {
-            "唯一主炒作属性": decision["static"].get("main_theme"),
-            "唯一主炒依据": decision["static"].get("main_theme_basis"),
-            "补涨判断": decision["static"].get("replenishment_result"),
-            "映射依据": decision["static"].get("mapping_basis"),
-            "压制判断": decision["static"].get("suppression_result"),
-            "压制依据": decision["static"].get("suppression_basis"),
-            "公告污染": decision["static"].get("announcement_pollution"),
-            "公告污染依据": decision["static"].get("announcement_basis"),
-        }
-        for key, value in expected_static.items():
-            if raw.get(key) != value:
-                findings.append(f"{fact['record_key']} static value mismatch: {key}")
-        if decision["static"].get("announcement_pollution") and raw.get("公告真实属性") != decision["static"].get("main_theme"):
-            findings.append(f"{fact['record_key']} announcement industry theme missing")
-        for key in ["开盘啦完整属性集","高标事实池","唯一主炒作属性","补涨判断","压制判断","公告污染","公告污染来源"]:
-            if key not in raw:
-                findings.append(f"{fact['record_key']} missing static field: {key}")
-        check_types = {
-            row["check_type"] for row in connection.execute(
-                "SELECT check_type FROM research_checks WHERE static_research_id=?", (static["id"],)
-            )
-        }
-        required_checks = {"高标事实池","唯一主炒","补涨判断","一字压制核验明细","公告污染"}
-        if not required_checks.issubset(check_types):
-            findings.append(f"{fact['record_key']} static checks incomplete")
-        if facts.get("scope", "both") == "static":
-            records.append({"record_key": fact["record_key"], "static_pass": passed})
-            if passed and "首开潜在竞争对手事实清单" not in raw:
-                findings.append(f"{fact['record_key']} passing record lacks competitor list")
-            continue
-        if not dynamic:
-            findings.append(f"{fact['record_key']} dynamic research missing")
-        else:
-            dynamic_raw = json.loads(dynamic["raw_json"])
-            expected_dynamic = _dynamic_updates(passed, decision["static"], decision.get("dynamic") or {})
-            for key, value in expected_dynamic.items():
-                actual = dynamic_raw.get(key)
-                if key == "买入筛选" and isinstance(actual, dict) and isinstance(value, dict):
-                    conclusion_keys = ("非补涨", "无一字压制", "结果")
-                    matches = all(actual.get(item) == value.get(item) for item in conclusion_keys)
-                    if value.get("结果") == "淘汰" and not actual.get("依据"):
-                        matches = False
-                else:
-                    matches = actual == value
-                if not matches:
-                    findings.append(f"{fact['record_key']} dynamic value mismatch: {key}")
-            for key in ["买入筛选","竞价筛选","同题材PK结果","首开买点","买入后结果"]:
-                if key not in dynamic_raw:
-                    findings.append(f"{fact['record_key']} missing dynamic field: {key}")
-            outcome = dynamic_raw.get("买入后结果") or {}
-            if outcome.get("是否买入") is True and (dynamic["buy_price_milli"] is None or dynamic["sell_time"] is None):
-                findings.append(f"{fact['record_key']} bought outcome lacks price or sell date")
-        if passed and "首开潜在竞争对手事实清单" not in raw:
-            findings.append(f"{fact['record_key']} passing record lacks competitor list")
-        if not passed and ("首开潜在竞争对手事实清单" in raw or "首开潜在竞争对手候选全集" in raw):
-            findings.append(f"{fact['record_key']} stale competitor fields remain")
-        if not decision["static"].get("announcement_pollution") and "公告真实属性" in raw:
-            findings.append(f"{fact['record_key']} stale announcement industry theme remains")
-        records.append({
-            "record_key": fact["record_key"],
-            "static_pass": passed,
-        })
-    if not findings and set_cursor:
-        last = max(facts["records"], key=lambda row: (row["identity"]["focus_date"], row["record_key"]))
-        cursor = {"year":int(last["identity"]["focus_date"][:4]),"focus_date":last["identity"]["focus_date"],"record_key":last["record_key"],"batch_id":facts["batch_id"]}
-        connection.execute("INSERT OR REPLACE INTO store_meta(key,value) VALUES('research_cursor',?)", (_json(cursor),))
-        connection.commit()
-    connection.close()
-    return {
-        "passed": not findings,
-        "batch_id": facts["batch_id"],
-        "record_count": len(records),
-        "records": records,
-        "findings": findings,
-        "cursor_updated": bool(set_cursor and not findings),
-        "elapsed_seconds": round(time.perf_counter() - started, 3),
+def static_request(fact, static):
+    passed = _validate_decision(fact,{"static":static},"static")
+    missing = _missing_facts([fact])
+    blocking = [item for item in missing if item["kind"] in {"attributes", "daily_pool"}
+                and (not item.get("required_when") or passed)]
+    if blocking:
+        raise ValueError(f"{fact['record_key']} missing source facts: {_json(blocking)}; fill them or set defer_reason")
+    evidence = sorted(_source_values({key: value for key, value in fact.items() if not key.startswith("current_")}) | set(static.get("additional_evidence") or []))
+    scope_summary = {
+        "dates": [item["date"] for item in fact["scope_audit"]],
+        "excluded_bse_count": sum(len(item["excluded_bse"]) for item in fact["scope_audit"]),
+        "st_row_count": sum(len(item["st_rows"]) for item in fact["scope_audit"]),
+        "status": "checked",
     }
+    updates = {
+        "开盘啦完整属性集": fact["attributes"]["tags"],
+        "开盘啦完整属性来源": fact["attributes"]["sources"],
+        "属性时点说明": f"使用{fact['attributes']['effective_date']}最晚完整属性快照；历史当日直接证据优先，特殊归并由判断依据单列。",
+        "首二原始证据": fact["first_two"],
+        "高标事实池": fact["high_pool"]["members"],
+        "高标与一字范围核验": scope_summary,
+        "唯一主炒作属性": static["main_theme"],
+        "唯一主炒依据": static["main_theme_basis"],
+        "补涨判断": static["replenishment_result"],
+        "映射依据": static["mapping_basis"],
+        "一字压制核验明细": static.get("suppression_details") or fact["strict_one_word_days"],
+        "压制判断": static["suppression_result"],
+        "压制依据": static["suppression_basis"],
+        "公告污染": static["announcement_pollution"],
+        "公告污染依据": static["announcement_basis"],
+        "公告污染来源": fact["announcement_sources"],
+        "静态筛选结论": "通过" if passed else "不通过",
+        "静态筛选口径": "非补涨 + 无一字压制；公告污染独立记录",
+    }
+    if static["announcement_pollution"]:
+        updates["公告真实属性"] = static["main_theme"]
+    if passed:
+        updates["首开潜在竞争对手事实清单"] = static["competitors"]
+        updates["首开潜在竞争对手候选全集"] = fact["potential_competitor_candidates"]
+    checks = [
+        {"check_type":"高标事实池","outcome":"完整","basis":"高标、北交所和ST范围已自动准备并人工裁决。","sources":sorted(_source_values(fact["high_pool"]) | _source_values(fact["scope_audit"])),"raw":fact["high_pool"]["members"]},
+        {"check_type":"唯一主炒","outcome":static["main_theme"],"basis":static["main_theme_basis"],"sources":sorted(_source_values(fact["first_two"]))},
+        {"check_type":"补涨判断","outcome":static["replenishment_result"],"basis":static["mapping_basis"],"sources":fact["attributes"]["sources"]},
+        {"check_type":"一字压制核验明细","outcome":static["suppression_result"],"basis":static["suppression_basis"],"sources":sorted(_source_values(fact["strict_one_word_days"])),"raw":updates["一字压制核验明细"]},
+        {"check_type":"公告污染","outcome":str(static["announcement_pollution"]).lower(),"basis":static["announcement_basis"],"sources":fact["announcement_sources"]},
+    ]
+    if passed:
+        checks.append({"check_type":"首开潜在竞争对手事实清单","outcome":"完整","basis":"按前日同身位及更高身位全集逐只裁决。","sources":sorted(_source_values(fact["potential_competitor_candidates"])),"raw":static["competitors"]})
+    remove_fields = []
+    if not passed:
+        remove_fields.extend(["首开潜在竞争对手事实清单", "首开潜在竞争对手候选全集"])
+    if not static["announcement_pollution"]:
+        remove_fields.append("公告真实属性")
+    request = {
+        "request_id": "derived-static",
+        "record_key": fact["record_key"], "kind": "static", "research_status": "formal_source_record",
+        "confirmation_status": "pending_user_confirmation", "evidence": evidence, "updates": updates,
+        "remove_fields": remove_fields, "checks": checks,
+    }
+    return request
 
 
-def _sync_actual_first_board_dates(store, facts: dict[str, Any]) -> int:
+def dynamic_request(fact, decision, batch_id):
+    static = decision["static"]
+    passed = _validate_decision(fact,decision,"both")
+    evidence = sorted(_source_values(fact))
+    if passed:
+        dynamic = decision["dynamic"]
+        dynamic_updates = _dynamic_updates(True, static, dynamic)
+        dynamic_checks = [
+            {"check_type":"买入筛选","outcome":"通过","basis":"非补涨、无一字压制；公告污染独立记录。","sources":[]},
+            {"check_type":"竞价筛选","outcome":dynamic["auction"].get("结果"),"basis":dynamic["auction"].get("依据"),"sources":sorted(_source_values(fact["first_open_market"]))},
+            {"check_type":"theme_pk","outcome":dynamic["pk_result"],"basis":"按静态竞争清单执行。","sources":sorted(_source_values(fact["potential_competitor_candidates"])),"raw":dynamic["pk_checks"]},
+            {"check_type":"买点","outcome":dynamic["buy_point"].get("结果"),"basis":dynamic["buy_point"].get("事实"),"sources":dynamic["buy_point"].get("来源",[])},
+        ]
+    else:
+        dynamic_updates = _dynamic_updates(False, static, {})
+        reason = dynamic_updates["买入筛选"]["依据"]
+        dynamic_checks = [{"check_type":"买入筛选","outcome":"淘汰","basis":reason,"sources":[]}]
+    dynamic_evidence = sorted(set(evidence) | set((decision.get("dynamic") or {}).get("additional_evidence") or []))
+    request = {
+        "request_id": _request_id(batch_id, "dynamic", fact["record_key"], dynamic_updates),
+        "record_key": fact["record_key"], "kind": "dynamic", "research_status": "source_record",
+        "confirmation_status": "pending_user_confirmation", "evidence": dynamic_evidence,
+        "updates": dynamic_updates, "checks": dynamic_checks,
+    }
+    request["request_id"] = _request_id(batch_id,"dynamic",fact["record_key"],request)
+    return request
+
+
+def verify_dynamic(store, facts, decisions, connection=None):
+    started = time.perf_counter()
+    owned = connection is None
+    connection = connection or store.connect()
+    findings = []
+    try:
+        for fact,decision in zip(facts["records"],decisions["records"]):
+            try:
+                passed = _validate_decision(fact,decision,"both")
+                expected = _dynamic_updates(passed,decision["static"],decision.get("dynamic") or {})
+            except ValueError as exc:
+                findings.append(str(exc))
+                continue
+            row = connection.execute("""SELECT d.* FROM current_dynamic_research d
+                JOIN research_plans p ON p.id=d.plan_id WHERE d.legacy_record_key=? AND p.plan_code='formal'""",
+                (fact["record_key"],)).fetchone()
+            if not row:
+                findings.append(fact["record_key"]+" 缺少交易记录")
+                continue
+            raw = json.loads(row["raw_json"])
+            for name,value in expected.items():
+                if raw.get(name) != value:
+                    findings.append(fact["record_key"]+" 交易字段不一致："+name)
+            if (raw.get("买入后结果") or {}).get("是否买入") is True and (row["buy_price_milli"] is None or row["sell_time"] is None):
+                findings.append(fact["record_key"]+" 买入结果缺少价格或卖出日期")
+    finally:
+        if owned:
+            connection.close()
+    return {"passed":not findings,"record_count":len(facts["records"]),"findings":findings,
+            "elapsed_seconds":round(time.perf_counter()-started,4)}
+
+
+
+
+def clear_submitted_inputs(store, directory, facts, decisions, completed):
+    directory = _batch_directory(store,directory)
+    if not (directory / "batch.json").exists():
+        _write_json(directory / "batch.json", {"scope":facts["scope"],"record_keys":[f["record_key"] for f in facts["records"]]})
+    pending = [r for r in decisions["records"] if r["record_key"] not in completed]
+    if not pending:
+        for name in ("decisions.json","facts.json","brief.json"):
+            (directory / name).unlink(missing_ok=True)
+        _forget_submission(store,directory)
+        return
     connection = store.connect()
-    store.apply_migrations(connection)
-    changed = 0
-    with store.immediate(connection):
-        for fact in facts["records"]:
-            actual = fact["identity"]["first_board_date"]
-            row = connection.execute(
-                """SELECT l.id,l.first_board_date FROM current_static_research r
-                   JOIN first_open_events f ON f.id=r.first_open_event_id
-                   JOIN launch_rounds l ON l.id=f.launch_round_id
-                   WHERE r.legacy_record_key=?""",
-                (fact["record_key"],),
-            ).fetchone()
-            if row and row["first_board_date"] != actual:
-                connection.execute("UPDATE launch_rounds SET first_board_date=? WHERE id=?", (actual, row["id"]))
-                changed += 1
-    connection.close()
-    return changed
+    current = {}
+    try:
+        for item in pending:
+            raw = json.loads(connection.execute("SELECT raw_json FROM current_static_research WHERE legacy_record_key=?",(item["record_key"],)).fetchone()[0])
+            current[item["record_key"]] = raw
+            if not item.get("defer_reason"):
+                for key,field in {"main_theme":"唯一主炒作属性","main_theme_basis":"唯一主炒依据",
+                                  "announcement_pollution":"公告污染","announcement_basis":"公告污染依据"}.items():
+                    if item["static"].get(key) == raw.get(field):
+                        item["static"][key] = None
+    finally:
+        connection.close()
+    pending_keys = {r["record_key"] for r in pending}
+    facts = dict(facts,records=[f for f in facts["records"] if f["record_key"] in pending_keys])
+    for fact in facts["records"]:
+        fact["current_static_raw"] = current[fact["record_key"]]
+    digest = hashlib.sha256("\n".join(f["record_key"] for f in facts["records"]).encode()).hexdigest()[:8]
+    identity = f"research-{facts['records'][0]['identity']['focus_date']}-{facts['records'][-1]['identity']['focus_date']}-{len(pending)}-{digest}"
+    facts["batch_id"] = identity
+    decisions = dict(decisions,batch_id=identity,records=pending,
+                     high_themes=[h for h in decisions.get("high_themes",[]) if not h.get("main_theme")])
+    _write_json(directory / "decisions.json",decisions)
+    _write_json(directory / "facts.json",facts)
+    _write_json(directory / "brief.json",_brief(facts))
+    _forget_submission(store,directory)
+
+
+def submission_key(store, path, kind="batch"):
+    path = path.resolve()
+    identity = path.relative_to(store.root).as_posix() if path.is_relative_to(store.root) else str(path)
+    return "submitted_"+kind+":"+hashlib.sha256(identity.encode()).hexdigest()
+
+
+def _forget_submission(store,directory):
+    connection = store.connect()
+    try:
+        connection.execute("DELETE FROM store_meta WHERE key=?",(submission_key(store,directory),))
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def commit_batch(
@@ -917,7 +945,63 @@ def commit_batch(
     publish: bool = True,
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    facts, decisions = _load_pair(facts_path, decisions_path)
+    _batch_directory(store,facts_path.parent)
+    receipt = None
+    if decisions_path.exists():
+        digest = hashlib.sha256(decisions_path.read_bytes()).hexdigest()
+        receipt = {"key":submission_key(store,decisions_path.parent),"sha256":digest}
+        connection = store.connect()
+        saved = connection.execute("SELECT value FROM store_meta WHERE key=?",(receipt["key"],)).fetchone()
+        connection.close()
+        saved = json.loads(saved[0]) if saved else None
+        if saved and saved["sha256"]==digest:
+            facts, decisions = _load_pending(store,decisions_path)
+            if saved["phase"]=="complete":
+                clear_submitted_inputs(store,facts_path.parent,facts,decisions,set(saved["record_keys"]))
+            else:
+                for item in decisions["records"]:
+                    if item["record_key"] in saved["record_keys"]:
+                        item["static"] = _decision_template({"record_key":item["record_key"]})["static"]
+                decisions["high_themes"] = []
+                _write_json(decisions_path,decisions)
+                _forget_submission(store,facts_path.parent)
+            if decisions_path.exists():
+                receipt["sha256"] = hashlib.sha256(decisions_path.read_bytes()).hexdigest()
+    if not decisions_path.exists():
+        from .derive import recompute
+        manifest = _read_json(facts_path.parent / "batch.json")
+        result = recompute(store,manifest["record_keys"],publish=False)
+        if publish:
+            result["export"] = store.publish_pending(refresh_statistics=manifest["scope"]=="both")
+        clear_submitted_inputs(store,facts_path.parent,{"scope":manifest["scope"],"records":[]},{"records":[]},set())
+        result["already_submitted"] = True
+        return result
+    facts, decisions = _load_pending(store, decisions_path)
+    batch_facts, batch_decisions = facts, decisions
+    from .derive import commit_judgements
+    if facts.get("scope") == "static":
+        result = commit_judgements(store, facts, decisions, publish=publish,receipt=receipt)
+        clear_submitted_inputs(store,facts_path.parent,facts,decisions,{r["record_key"] for r in result.get("records",[])})
+        return result
+    # A combined task uses the same static input/derivation path. Dynamic writes
+    # consume its current results and never write a second static conclusion.
+    static_result = commit_judgements(store,facts,decisions,publish=False,receipt=receipt)
+    clear_submitted_inputs(store,facts_path.parent,facts,decisions,set())
+    unavailable = {r["record_key"] for r in static_result.get("blocked",[]) + static_result.get("deferred",[])}
+    decisions = dict(decisions,records=[r for r in decisions["records"] if r["record_key"] not in unavailable])
+    connection = store.connect()
+    shared = {}
+    dates = _trading_dates(connection)
+    batch_key = connection.execute("SELECT value FROM store_meta WHERE key='current_batch_key'").fetchone()[0]
+    fresh = []
+    for decision in decisions["records"]:
+        row = _select_records(connection,None,None,[decision["record_key"]])[0]
+        fact = _record_facts(store,connection,dates,batch_key,row,"both",shared)
+        raw = fact["current_static_raw"]
+        decision["static"] = _current_static_decision(raw)
+        fresh.append(fact)
+    connection.close()
+    facts = dict(facts,records=fresh)
     store.sync_rules()
     deferred = [{"record_key": row["record_key"], "reason": row["defer_reason"]}
                 for row in decisions["records"] if row.get("defer_reason")]
@@ -925,24 +1009,35 @@ def commit_batch(
     facts = dict(facts, records=[row for row in facts["records"] if row["record_key"] not in deferred_keys])
     decisions = dict(decisions, records=[row for row in decisions["records"] if row["record_key"] not in deferred_keys])
     if not facts["records"]:
-        return {"batch_id": facts["batch_id"], "write_count": 0, "deferred": deferred}
-    synchronized_first_board_dates = _sync_actual_first_board_dates(store, facts)
-    requests = _requests_for_batch(facts, decisions)
+        export = store.publish_pending() if publish else None
+        return {"batch_id": facts["batch_id"], "write_count": 0, "deferred": deferred,"static":static_result,"export":export}
+    requests = [dynamic_request(f,d,facts["batch_id"]) for f,d in zip(facts["records"],decisions["records"])]
     write_started = time.perf_counter()
-    results = [store.write_research(request) for request in requests]
+    connection = store.connect()
+    try:
+        with store.immediate(connection):
+            results = [store.write_research(request,connection) for request in requests]
+            verification = verify_dynamic(store,facts,decisions,connection)
+            if not verification["passed"]:
+                raise RuntimeError(f"batch verification failed: {verification['findings']}")
+            if any(not row.get("deduplicated") for row in results):
+                connection.execute("INSERT OR REPLACE INTO store_meta(key,value) VALUES('statistics_export_pending','1')")
+            receipt = {"key":submission_key(store,decisions_path.parent),"sha256":hashlib.sha256(decisions_path.read_bytes()).hexdigest(),
+                       "phase":"complete","record_keys":[r["record_key"] for r in results]}
+            connection.execute("INSERT OR REPLACE INTO store_meta(key,value) VALUES(?,?)",(receipt["key"],_json(receipt)))
+    finally:
+        connection.close()
     write_seconds = round(time.perf_counter() - write_started, 3)
-    verification = verify_batch(store, facts, decisions, set_cursor=True)
-    if not verification["passed"]:
-        raise RuntimeError(f"batch verification failed: {verification['findings']}")
+    clear_submitted_inputs(store,facts_path.parent,batch_facts,batch_decisions,{r["record_key"] for r in results})
     export_started = time.perf_counter()
-    export = store.export_all(publish_root=True, refresh_statistics=facts.get("scope", "both") == "both") if publish and (synchronized_first_board_dates or any(not row.get("deduplicated") for row in results)) else None
+    export = store.publish_pending(refresh_statistics=True) if publish else None
     return {
         "batch_id": facts["batch_id"],
         "record_count": len(facts["records"]),
         "write_count": len(results),
         "deferred": deferred,
+        "static": static_result,
         "scope": facts.get("scope", "both"),
-        "synchronized_first_board_dates": synchronized_first_board_dates,
         "deduplicated": sum(bool(row.get("deduplicated")) for row in results),
         "timing_seconds": {"write": write_seconds, "verify": verification["elapsed_seconds"],
                            "export": round(time.perf_counter() - export_started, 3)},
@@ -952,11 +1047,45 @@ def commit_batch(
     }
 
 
-def load_and_verify(store, facts_path: Path, decisions_path: Path, set_cursor: bool = False) -> dict[str, Any]:
-    facts, decisions = _load_pair(facts_path, decisions_path)
-    keys = {row["record_key"] for row in decisions["records"] if row.get("defer_reason")}
-    facts = dict(facts, records=[row for row in facts["records"] if row["record_key"] not in keys])
-    decisions = dict(decisions, records=[row for row in decisions["records"] if row["record_key"] not in keys])
-    if not facts["records"]:
-        return {"passed": True, "record_count": 0, "deferred_count": len(keys), "cursor_updated": False}
-    return verify_batch(store, facts, decisions, set_cursor=set_cursor)
+def _current_static_decision(raw):
+    fields = {"main_theme":"唯一主炒作属性","main_theme_basis":"唯一主炒依据",
+              "replenishment_result":"补涨判断","mapping_basis":"映射依据",
+              "suppression_result":"压制判断","suppression_basis":"压制依据",
+              "suppression_details":"一字压制核验明细","competitors":"首开潜在竞争对手事实清单",
+              "announcement_pollution":"公告污染","announcement_basis":"公告污染依据"}
+    return {key:raw.get(field) for key,field in fields.items()}
+
+
+def verify_batch_current(store, directory):
+    keys = _read_json(directory / "batch.json")["record_keys"]
+    from .derive import recompute
+    result = recompute(store, keys, preview=True,verify_saved=True)
+    connection = store.connect()
+    findings = result["findings"] + [f"{b['record_key']}: {b['reason']}" for b in result["blocked"]]
+    for row in result["records"]:
+        saved = connection.execute("SELECT * FROM current_static_research WHERE legacy_record_key=?",(row["record_key"],)).fetchone()
+        raw = json.loads(saved["raw_json"])
+        actual = (saved["main_theme"],saved["replenishment_result"],saved["suppression_result"])
+        if actual != (row["main_theme"],row["replenishment"],row["suppression"]):
+            findings.append(row["record_key"] + " 派生字段与当前输入不一致")
+        competitors = [v.get("股票代码",v.get("code")) for v in raw.get("首开潜在竞争对手事实清单", [])]
+        if competitors != row["competitors"]:
+            findings.append(row["record_key"] + " 竞争清单与当前输入不一致")
+        if (row["replenishment"] == "补涨" or row["suppression"].startswith("有")) and "首开潜在竞争对手事实清单" in raw:
+            findings.append(row["record_key"] + " 旧竞争清单残留")
+    if store.db_path == store.root / "data/store/research.sqlite":
+        try:
+            display = {r["记录键"]:r for r in _read_json(store.root / "一字首开研究总表.json")["一字首开股票与数据"]}
+            for row in result["records"]:
+                saved = connection.execute("SELECT * FROM current_static_research WHERE legacy_record_key=?",(row["record_key"],)).fetchone()
+                raw = json.loads(saved["raw_json"])
+                expected = {"唯一主炒":saved["main_theme"],"补涨判断":saved["replenishment_result"],
+                            "压制判断":saved["suppression_result"],"公告污染":bool(saved["announcement_pollution"]),
+                            "潜在竞争对手":raw.get("首开潜在竞争对手事实清单"),
+                            "静态筛选结论":raw.get("静态筛选结论")}
+                if any(display.get(row["record_key"],{}).get(k)!=v for k,v in expected.items()):
+                    findings.append(row["record_key"] + " 总表与当前库不一致")
+        except (OSError,ValueError,KeyError) as exc:
+            findings.append("总表读取失败："+str(exc))
+    connection.close()
+    return {"passed":not findings,"record_count":len(result["records"]),"findings":findings,"timing_seconds":result["timing_seconds"]}

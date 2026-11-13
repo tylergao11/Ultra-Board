@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
 import sqlite3
 import sys
-import tempfile
 import zipfile
 
 from research.system import ResearchStore, json_text, now_text, sha256_bytes, sha256_file
-from research.batch import commit_batch, load_and_verify, prepare_batch
+from research.batch import commit_batch, verify_batch_current, prepare_batch, submission_key
 from research.intake import fetch_attributes, ingest_paths
+from research.derive import recompute, set_theme
+from research.scratch import Workspace, clean as clean_temporary
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,12 +35,10 @@ def main() -> None:
     parser.add_argument("--db", help="SQLite path; defaults to data/store/research.sqlite")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    baseline = sub.add_parser("baseline", help="freeze and verify migration baseline")
-    baseline.add_argument("--output", default="data/store/migrations/baseline-20261112-initial")
-
-    sub.add_parser("migrate", help="run or reuse the complete migration")
     sub.add_parser("sync-rules", help="synchronize the current rule files without reimporting data")
     sub.add_parser("summary", help="show current database counts")
+    environment = sub.add_parser("sector-top3", help="show original sector top three for five saved trading sessions")
+    environment.add_argument("--date", required=True)
     rules = sub.add_parser("rules", help="show the current research rules")
     rules.add_argument("--scope", choices=["static", "dynamic", "all"], default="static")
     ingest = sub.add_parser("ingest", help="incrementally ingest saved files or directories; no full migration")
@@ -71,8 +71,18 @@ def main() -> None:
     impact = sub.add_parser("impact", help="locate research affected by a stock, source, date or rule object")
     impact.add_argument("--object", required=True)
 
-    write = sub.add_parser("write", help="submit a research conclusion using the current rules")
-    write.add_argument("--input", required=True, help="UTF-8 JSON request object or request array")
+    derive = sub.add_parser("derive", help="local automatic static matching; inputs contain only judgements")
+    derive.add_argument("--input", help="optional themes, announcements and record_keys JSON")
+    derive.add_argument("--batch", help="reuse record keys from a prepared batch directory")
+    derive.add_argument("--record-key", action="append", dest="record_keys")
+    derive.add_argument("--preview", action="store_true")
+    derive.add_argument("--report", help="save timing and results as JSON")
+    theme = sub.add_parser("theme-set", help="change one launch theme and refresh all related static results locally")
+    theme.add_argument("--record-key", required=True)
+    theme.add_argument("--theme", required=True)
+    theme.add_argument("--basis")
+    theme.add_argument("--preview", action="store_true")
+    theme.add_argument("--report")
 
     batch_prepare = sub.add_parser("batch-prepare", help="prepare one lightweight research batch and decision template")
     batch_prepare.add_argument("--output", required=True, help="output directory for facts.json and decisions.json")
@@ -84,25 +94,20 @@ def main() -> None:
     batch_prepare.add_argument("--offline", action="store_false", dest="fetch_missing", help="prepare from saved facts and list missing attributes")
     batch_prepare.add_argument("--year", type=int)
     batch_prepare.add_argument("--record-key", action="append", dest="record_keys")
-    batch_prepare.add_argument("--hydrate-current", action="store_true", help="fill the template from current conclusions for audit or replay")
 
     batch_commit = sub.add_parser("batch-commit", help="commit a compact decision file and run fast batch verification")
-    batch_commit.add_argument("--facts", required=True)
-    batch_commit.add_argument("--decisions", required=True)
+    batch_commit.add_argument("--batch", required=True)
     batch_commit.add_argument("--no-publish", action="store_true", help="skip regenerating the two display tables")
 
     batch_verify = sub.add_parser("batch-verify", help="run the fast per-batch database gate")
-    batch_verify.add_argument("--facts", required=True)
-    batch_verify.add_argument("--decisions", required=True)
-    batch_verify.add_argument("--set-cursor", action="store_true", help="record this verified batch as the current research cursor")
+    batch_verify.add_argument("--batch", required=True)
 
     export = sub.add_parser("export", help="generate compact tables, CSV and statistics")
     export.add_argument("--output-root")
     export.add_argument("--publish-root", action="store_true")
 
     verify = sub.add_parser("verify", help="run full real-data verification")
-    verify.add_argument("--report-dir", default="data/store/migrations/verification")
-    verify.add_argument("--skip-idempotence", action="store_true")
+    verify.add_argument("--report-dir", default="data/store/verification/current")
 
     reports = sub.add_parser("reports", help="write schema, rule and coverage reports")
     reports.add_argument("--output", default="data/store/migrations/reports")
@@ -124,13 +129,28 @@ def main() -> None:
     sub.add_parser("refresh-evidence", help="rebuild the current evidence inventory and mark historical paths")
     maintain = sub.add_parser("maintain", help="process newly downloaded daily data, verify, publish and rotate backups")
     maintain.add_argument("--keep-backups", type=int, default=3)
+    temporary = sub.add_parser("temp-new",help="create an owned temporary workspace")
+    temporary.add_argument("--purpose",required=True)
+    temporary.add_argument("--file",action="append",dest="files",default=[])
+    temporary.add_argument("--owner-pid",type=int)
+    cleanup = sub.add_parser("temp-clean",help="delete only registered temporary files")
+    cleanup.add_argument("--id")
+    cleanup.add_argument("--owner-pid",type=int)
+    snapshot = sub.add_parser("db-snapshot",help="create a consistent SQLite snapshot including committed WAL data")
+    snapshot.add_argument("--output",required=True)
 
     args = parser.parse_args()
     store = store_for(args)
-    if args.command == "baseline":
-        emit(store.create_baseline(ROOT / args.output))
-    elif args.command == "migrate":
-        emit(store.migrate_all())
+    if args.command == "sector-top3":
+        from research.environment import sector_top3
+        emit(sector_top3(store, args.date))
+    elif args.command == "temp-new":
+        workspace = Workspace(ROOT,args.purpose,args.files,owner_pid=args.owner_pid or os.getppid())
+        emit({"id":workspace.path.name,"path":str(workspace.path)})
+    elif args.command == "temp-clean":
+        emit(clean_temporary(ROOT,args.id,args.owner_pid))
+    elif args.command == "db-snapshot":
+        emit(store.database_snapshot(ROOT / args.output))
     elif args.command == "sync-rules":
         emit(store.sync_rules())
     elif args.command == "summary":
@@ -174,13 +194,45 @@ def main() -> None:
         emit(store.query_issues(args.from_date, args.to_date))
     elif args.command == "impact":
         emit(store.query_impact(args.object))
-    elif args.command == "write":
-        payload = json.loads((ROOT / args.input).read_text(encoding="utf-8"))
-        store.sync_rules()
-        if isinstance(payload, list):
-            emit([store.write_research(item) for item in payload])
+    elif args.command in {"derive", "theme-set"}:
+        submitted = None
+        receipt = None
+        if args.command == "theme-set":
+            result = set_theme(store, args.record_key, args.theme, args.basis, args.preview)
         else:
-            emit(store.write_research(payload))
+            if args.input and args.report and (ROOT / args.input).resolve()==(ROOT / args.report).resolve():
+                raise ValueError("输入文件和输出报告须使用不同路径")
+            payload = json.loads((ROOT / args.input).read_text(encoding="utf-8")) if args.input else None
+            if args.input and not args.preview:
+                submitted = (ROOT / args.input).resolve()
+                receipt = {"key":submission_key(store,submitted,"input"),
+                           "sha256":hashlib.sha256(submitted.read_bytes()).hexdigest(),"phase":"static"}
+                connection = store.connect()
+                saved = connection.execute("SELECT value FROM store_meta WHERE key=?",(receipt["key"],)).fetchone()
+                connection.close()
+                saved = json.loads(saved[0]) if saved else None
+                if saved and saved["sha256"]==receipt["sha256"]:
+                    payload = {"record_keys":saved["record_keys"]}
+            keys = list(args.record_keys or [])
+            if args.batch:
+                batch = json.loads((ROOT / args.batch / "batch.json").read_text(encoding="utf-8"))
+                keys.extend(batch["record_keys"])
+            if receipt and saved and saved["sha256"]==receipt["sha256"] and not saved["record_keys"] and not keys:
+                result = {"record_count":0,"complete":0,"blocked":[],"changed":0,"export":store.publish_pending()}
+            else:
+                result = recompute(store, keys, payload, args.preview,receipt=receipt)
+        if args.report:
+            report = ROOT / args.report
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(json_text(result, pretty=True) + "\n", encoding="utf-8")
+        if submitted:
+            if submitted.is_relative_to((ROOT / "data/research").resolve()):
+                submitted.unlink()
+                connection = store.connect()
+                connection.execute("DELETE FROM store_meta WHERE key=?",(receipt["key"],))
+                connection.commit()
+                connection.close()
+        emit(result)
     elif args.command == "batch-prepare":
         emit(prepare_batch(
             store,
@@ -188,7 +240,6 @@ def main() -> None:
             limit=args.limit,
             year=args.year,
             record_keys=args.record_keys,
-            hydrate_current=args.hydrate_current,
             scope=args.scope,
             from_date=args.from_date,
             to_date=args.to_date,
@@ -197,21 +248,22 @@ def main() -> None:
     elif args.command == "batch-commit":
         emit(commit_batch(
             store,
-            ROOT / args.facts,
-            ROOT / args.decisions,
+            ROOT / args.batch / "facts.json",
+            ROOT / args.batch / "decisions.json",
             publish=not args.no_publish,
         ))
     elif args.command == "batch-verify":
-        emit(load_and_verify(
-            store,
-            ROOT / args.facts,
-            ROOT / args.decisions,
-            set_cursor=args.set_cursor,
-        ))
+        result = verify_batch_current(store,ROOT / args.batch)
+        emit(result)
+        if not result["passed"]:
+            raise SystemExit(1)
     elif args.command == "export":
         emit(store.export_all(ROOT / args.output_root if args.output_root else None, args.publish_root))
     elif args.command == "verify":
-        emit(store.verify_full(ROOT / args.report_dir, not args.skip_idempotence))
+        result = store.verify_full(ROOT / args.report_dir)
+        emit(result)
+        if not result["passed"]:
+            raise SystemExit(1)
     elif args.command == "reports":
         emit(store.write_contract_reports(ROOT / args.output))
     elif args.command == "backup":
@@ -227,6 +279,7 @@ def main() -> None:
         if integrity != "ok":
             raise RuntimeError(f"backup integrity check failed: {integrity}")
         restored_files: list[str] = []
+        temporary_cleanup = None
         pre_restore_files = None
         if args.restore_files:
             manifest_path = backup_path.parent / "restore_manifest.json"
@@ -235,8 +288,8 @@ def main() -> None:
             if sha256_file(archive_path) != manifest["files"]["sha256"]:
                 raise RuntimeError("cutover files archive checksum mismatch")
             expected = {item["path"]: item for item in manifest["files"].get("entries", [])}
-            with tempfile.TemporaryDirectory(prefix="ultra-board-file-restore-") as temp_dir:
-                staging = Path(temp_dir)
+            with Workspace(ROOT,"restore-files",expected) as workspace:
+                staging = workspace.path
                 with zipfile.ZipFile(archive_path, "r") as archive:
                     if set(archive.namelist()) != set(expected):
                         raise RuntimeError("cutover files archive entry list mismatch")
@@ -264,6 +317,7 @@ def main() -> None:
                     shutil.copy2(source_file, staged_file)
                     os.replace(staged_file, destination)
                     restored_files.append(name)
+            temporary_cleanup = workspace.cleanup_result
         safety = target_path.with_suffix(target_path.suffix + ".pre-restore")
         if target_path.exists():
             shutil.copy2(target_path, safety)
@@ -277,6 +331,7 @@ def main() -> None:
             "target": str(target_path),
             "pre_restore_copy": str(safety) if safety.exists() else None,
             "restored_files": restored_files,
+            "temporary_cleanup": temporary_cleanup,
             "pre_restore_files_archive": str(pre_restore_files) if pre_restore_files else None,
         })
     elif args.command == "register-evidence":

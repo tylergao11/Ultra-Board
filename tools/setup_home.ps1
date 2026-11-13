@@ -17,8 +17,10 @@ $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $storeDir = Join-Path $root "data/store"
 $databasePath = Join-Path $storeDir "research.sqlite"
 $baseUrl = "https://github.com/$Repository/releases/download/$Tag"
-$tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("ultra-board-setup-" + [guid]::NewGuid().ToString("N"))
-[System.IO.Directory]::CreateDirectory($tempDir) | Out-Null
+$python = Get-Command python -ErrorAction Stop
+$temporary = & $python.Source -B (Join-Path $root "tools/research_cli.py") temp-new --purpose setup --owner-pid $PID --file database_release_manifest.json --file research.sqlite.download | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw "创建启用临时目录失败。" }
+$tempDir = $temporary.path
 
 try {
     $manifestPath = Join-Path $tempDir "database_release_manifest.json"
@@ -70,14 +72,11 @@ try {
         Write-Host "研究库已安装：$databasePath"
     }
 
-    $python = Get-Command python -ErrorAction Stop
     & $python.Source -B (Join-Path $root "tools/research_cli.py") summary
     if ($LASTEXITCODE -ne 0) {
         throw "研究库摘要检查失败。"
     }
 }
 finally {
-    if (Test-Path -LiteralPath $tempDir) {
-        [System.IO.Directory]::Delete($tempDir, $true)
-    }
+    & $python.Source -B (Join-Path $root "tools/research_cli.py") temp-clean --id $temporary.id --owner-pid $PID
 }

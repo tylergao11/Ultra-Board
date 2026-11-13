@@ -1,5 +1,6 @@
 ﻿[CmdletBinding()]
 param(
+    [switch]$Sync,
     [ValidateRange(0, 10)]
     [int]$KeepLocalBackups = 2
 )
@@ -10,6 +11,13 @@ $ErrorActionPreference = "Stop"
 $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 Push-Location $root
 try {
+    if (-not $Sync) {
+        if (-not (Test-Path -LiteralPath (Join-Path $root "data/store/research.sqlite") -PathType Leaf)) {
+            throw "本机研究库缺失。新电脑启用请运行 tools/setup_home.ps1。"
+        }
+        Write-Host "使用本机研究库，可以继续研究。GitHub 同步需显式指定 -Sync。"
+        return
+    }
     $status = @(git -c core.quotepath=false status --porcelain=v1)
     if ($LASTEXITCODE -ne 0) {
         throw "读取 Git 工作区状态失败。"

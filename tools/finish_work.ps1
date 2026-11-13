@@ -1,6 +1,7 @@
 ﻿[CmdletBinding()]
 param(
-    [string]$Message = "同步 Ultra-Board 工作结果"
+    [string]$Message = "同步 Ultra-Board 工作结果",
+    [switch]$Sync
 )
 
 Set-StrictMode -Version Latest
@@ -11,28 +12,13 @@ $python = Get-Command python -ErrorAction Stop
 
 Push-Location $root
 try {
-    $status = @(git -c core.quotepath=false status --porcelain=v1)
+    & $python.Source -B tools/research_cli.py sync-rules
     if ($LASTEXITCODE -ne 0) {
-        throw "读取 Git 工作区状态失败。"
+        throw "当前规则同步失败。"
     }
-    $ruleChanges = @($status | Where-Object {
-        $path = if ($_.Length -gt 3) { $_.Substring(3) } else { "" }
-        $path -eq "AGENTS.md" -or $path.StartsWith("data/store/rules/")
-    })
-    if ($ruleChanges.Count -gt 0) {
-        & $python.Source -B tools/research_cli.py sync-rules
-        if ($LASTEXITCODE -ne 0) {
-            throw "当前规则同步失败。"
-        }
-        foreach ($change in $ruleChanges) {
-            $path = $change.Substring(3)
-            if (Test-Path -LiteralPath $path -PathType Leaf) {
-                & $python.Source -B tools/research_cli.py register-evidence --path $path
-                if ($LASTEXITCODE -ne 0) {
-                    throw "规则证据登记失败：$path"
-                }
-            }
-        }
+    & $python.Source -B tools/research_cli.py temp-clean
+    if ($LASTEXITCODE -ne 0) {
+        throw "临时文件清理检查失败。"
     }
 
     & $python.Source -B tools/research_cli.py summary *> $null
@@ -40,9 +26,14 @@ try {
         throw "正式数据库摘要检查失败。"
     }
 
-    & (Join-Path $PSScriptRoot "sync_github.ps1") -Message $Message -PublishDatabase
-    if ($LASTEXITCODE -ne 0) {
-        throw "GitHub 交接失败。"
+    if ($Sync) {
+        & (Join-Path $PSScriptRoot "sync_github.ps1") -Message $Message -PublishDatabase
+        if ($LASTEXITCODE -ne 0) {
+            throw "GitHub 交接失败。"
+        }
+    }
+    else {
+        Write-Host "本地检查完成，研究结果已保存在本机。GitHub 同步需显式指定 -Sync。"
     }
 }
 finally {

@@ -40,21 +40,21 @@ python -B tools/research_cli.py rules
 
 ## 日常流程
 
-agent 开始实际工作前运行总入口：
+日常研究直接使用本机数据库。需要检查本地状态时使用：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/start_work.ps1
 ```
 
-完成下载、研究或修改后运行结束入口：
+本地工作检查入口：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/finish_work.ps1 -Message "本次工作摘要"
 ```
 
-开始入口负责拉取 GitHub、保护本机现场并安装当前数据库；连续工作结束时统一核验、提交、推送和发布数据库。同一次工作中的多个研究范围复用同步状态，agent 按 `AGENTS.md` 自动执行。
+这两个入口默认在本地运行。用户要求同步或换电脑时，当前电脑运行 `tools/finish_work.ps1 -Sync -Message "交接工作"`，另一台运行 `tools/start_work.ps1 -Sync`。每批研究、改题材和改口径完成后直接报告结果。
 
-日常研究按用户指定数量或清单，依次准备材料、研究题材、提交结果。默认静态研究，交易研究由买卖表任务负责。新增数据走增量入库；已有资料与草稿直接复用。具体命令见使用说明。
+日常研究按用户指定数量或清单，准备材料后只填写题材与公告判断；补涨、压制、竞争清单和总表自动生成。纠正题材使用 `theme-set --record-key "记录键" --theme "题材"`，相关结果随保存自动更新。默认静态研究，交易研究由买卖表任务负责。新增数据走增量入库；已有资料与草稿直接复用。具体命令见使用说明。
 
 ## 目录
 
@@ -65,8 +65,8 @@ data/store/rules/       正式规则源
 docs/                   执行计划、使用说明和多电脑说明
 tools/research/         数据库、迁移、查询、统计与恢复实现
 tools/research_cli.py   统一命令入口
-tools/start_work.ps1    开始工作的跨电脑同步入口
-tools/finish_work.ps1   结束工作的提交发布入口
+tools/start_work.ps1    本地开始检查；-Sync 用于跨电脑拉取
+tools/finish_work.ps1   本地结束检查；-Sync 用于提交和远端发布
 ```
 
 ## 文档
