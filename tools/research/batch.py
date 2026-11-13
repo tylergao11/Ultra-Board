@@ -315,20 +315,98 @@ def _raw_scope(root: Path, date: str) -> dict[str, Any]:
     }
 
 
-def _sina_market(root: Path, code: str, event_date: str | None) -> dict[str, Any]:
+def _trade_market(connection, stock_id: int, event_date: str | None, days: int = 20) -> dict[str, Any]:
+    """Reusable observed prices and events; never store a strategy decision here."""
     if not event_date:
-        return {"event_date": None, "source": None, "previous": None, "event": None}
-    path = root / "data/price_checks/sina_history" / f"{code}.json"
-    if not path.exists():
-        return {"event_date": event_date, "source": None, "previous": None, "event": None}
-    records = _read_json(path).get("records", [])
-    index = next((i for i, row in enumerate(records) if row.get("day") == event_date), None)
-    return {
-        "event_date": event_date,
-        "source": path.relative_to(root).as_posix(),
-        "previous": records[index - 1] if index is not None and index > 0 else None,
-        "event": records[index] if index is not None else None,
-    }
+        return {"event_date": None, "previous": None, "event": None, "following": [], "missing": ["首开日期"]}
+    rows = connection.execute(
+        """SELECT d.*,e.path AS source FROM daily_market d
+        LEFT JOIN evidence_files e ON e.id=d.evidence_file_id
+        WHERE d.stock_id=? AND d.price_mode='unadjusted'
+          AND d.trade_date>=COALESCE((SELECT MAX(trade_date) FROM daily_market
+              WHERE stock_id=? AND trade_date<? AND price_mode='unadjusted'
+              AND open_milli IS NOT NULL AND high_milli IS NOT NULL AND low_milli IS NOT NULL AND close_milli IS NOT NULL),?)
+        ORDER BY d.trade_date,CASE d.source_type WHEN 'ths_kline' THEN 0
+            WHEN 'sina_history' THEN 1 WHEN 'price_check_json' THEN 2 ELSE 3 END,d.id DESC""",
+        (stock_id, stock_id, event_date, event_date),
+    ).fetchall()
+    grouped = {}
+    fields = ['open','high','low','close','previous_close','limit_up','limit_down']
+    for row in rows:
+        day = row['trade_date']
+        if day not in grouped and len(grouped) >= days + 2:
+            break
+        item = grouped.setdefault(day, {"day": day, "sources": [], "field_sources": {}, "conflicts": []})
+        if row['source'] not in item['sources']:
+            item['sources'].append(row['source'])
+        for field in fields:
+            value = row[field + '_milli']
+            if value is None:
+                continue
+            value = value / 1000
+            if field not in item:
+                item[field] = value
+                item['field_sources'][field] = row['source']
+            elif item[field] != value:
+                item['conflicts'].append({"field": field, "value": value, "source": row['source']})
+    for day,item in grouped.items():
+        item['events'] = [dict(r) for r in connection.execute(
+            """SELECT i.event_type,i.event_time,i.time_precision,i.value_json,e.path AS source
+            FROM intraday_events i LEFT JOIN evidence_files e ON e.id=i.evidence_file_id
+            WHERE i.stock_id=? AND i.trade_date=? ORDER BY i.event_time""", (stock_id,day))]
+        for event in item['events']:
+            value=json.loads(event.pop('value_json'))
+            event['value']={'points':len(value.get('trend',[]))} if event['event_type']=='minute_trend' else value
+        item['missing'] = [field for field in ['open','high','low','close'] if field not in item]
+    previous = [v for k,v in grouped.items() if k < event_date]
+    event = grouped.get(event_date)
+    following = [v for k,v in grouped.items() if k > event_date][:days]
+    missing = [f"event:{field}" for field in event['missing']] if event else ['首开日日K']
+    if not previous:
+        missing.append('前一交易日日K')
+    missing.extend(f"following:{item['day']}:{field}" for item in following for field in item['missing'])
+    return {"event_date": event_date, "previous": previous[-1] if previous else None,
+            "event": event, "following": following, "missing": missing,
+            "following_requested": days, "following_available": len(following),
+            "event_coverage": {"available_types": sorted({e['event_type'] for item in grouped.values() for e in item['events']}),
+                               "unavailable_types": sorted({'first_break','first_reseal'}-{e['event_type'] for item in grouped.values() for e in item['events']})}}
+
+
+def trade_facts(store, record_keys, days=20):
+    if days < 1:
+        raise ValueError("days must be positive")
+    from .market import ensure_research_prices
+    from .events import ensure_trade_events
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        daily_job=executor.submit(ensure_research_prices,store,record_keys,following_days=days)
+        event_job=executor.submit(ensure_trade_events,store,record_keys)
+        ensured=daily_job.result();events=event_job.result()
+    if not ensured['complete']:raise RuntimeError(json.dumps(ensured,ensure_ascii=False))
+    connection = store.connect()
+    try:
+        records = []
+        for key in record_keys:
+            row = connection.execute("""SELECT l.stock_id,f.event_date,r.raw_json FROM legacy_key_map m
+                JOIN launch_rounds l ON l.id=m.launch_round_id
+                JOIN current_static_research r ON r.legacy_record_key=m.legacy_record_key
+                JOIN first_open_events f ON f.id=m.first_open_event_id WHERE m.legacy_record_key=?""", (key,)).fetchone()
+            if not row:
+                raise KeyError(key)
+            records.append({"record_key": key, **_trade_market(connection,row['stock_id'],row['event_date'],days),
+                            "competitors":_peer_market(connection,json.loads(row['raw_json']),row['event_date'])})
+        return {"records": records, "market": ensured, "events": events}
+    finally:
+        connection.close()
+
+
+def _peer_market(connection, raw, day):
+    from .market import _codes
+    peers=[]
+    for code in sorted(_codes(raw.get('首开潜在竞争对手事实清单',[]))):
+        row=connection.execute('SELECT id FROM stocks WHERE code=?',(code,)).fetchone()
+        if row:peers.append({'code':code,**_trade_market(connection,row[0],day,0)})
+    return peers
 
 
 def _announcement_sources(root: Path, dates: list[str], code: str, start: str | None, end: str) -> list[str]:
@@ -373,7 +451,7 @@ def _competitor_candidates(connection, dates: list[str], stock_id: int, focus_da
 
 
 def _select_records(connection, limit: int | None, year: int | None, record_keys: list[str] | None,
-                    from_date: str | None = None, to_date: str | None = None) -> list[Any]:
+                    from_date: str | None = None, to_date: str | None = None, scope='static') -> list[Any]:
     base = """SELECT r.*,f.event_date,f.event_status,l.stock_id,l.first_board_date,l.focus_date,l.board_sequence_text,
                      s.code,l.id AS launch_round_id,f.id AS event_id
               FROM current_static_research r JOIN first_open_events f ON f.id=r.first_open_event_id
@@ -387,6 +465,9 @@ def _select_records(connection, limit: int | None, year: int | None, record_keys
             rows.append(row)
         return rows
     conditions = ["r.research_status IN ('unresearched','needs_input')"]
+    if scope=='dynamic':
+        conditions=["r.main_theme IS NOT NULL", "r.research_status<>'needs_input'",
+                    "NOT EXISTS (SELECT 1 FROM current_dynamic_research d WHERE d.legacy_record_key=r.legacy_record_key)"]
     params: list[Any] = []
     if year is not None:
         conditions.append("l.focus_date LIKE ?")
@@ -404,6 +485,16 @@ def _select_records(connection, limit: int | None, year: int | None, record_keys
 
 def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
                   scope: str = "static", shared: dict | None = None) -> dict[str, Any]:
+    if scope == 'dynamic':
+        raw=json.loads(row['raw_json'])
+        dynamic=connection.execute('SELECT raw_json FROM current_dynamic_research WHERE legacy_record_key=?',(row['legacy_record_key'],)).fetchone()
+        return {'record_key':row['legacy_record_key'],'scope':'dynamic',
+                'identity':{'code':row['code'],'stock_id':row['stock_id'],'name':_name(connection,row['stock_id']),
+                            'focus_date':row['focus_date'],'first_board_date':row['first_board_date'],'first_open_date':row['event_date']},
+                'current_static_raw':raw,'current_dynamic_raw':json.loads(dynamic[0]) if dynamic else None,
+                'potential_competitor_candidates':raw.get('首开潜在竞争对手候选全集',{}),
+                'competitor_market':_peer_market(connection,raw,row['event_date']),
+                'first_open_market':_trade_market(connection,row['stock_id'],row['event_date'])}
     shared = shared if shared is not None else {}
     def attributes(stock_id):
         key = ("attributes", stock_id)
@@ -437,11 +528,6 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
                 "source": candidate.get("source"),
                 "higher_members": higher,
             })
-    dynamic = connection.execute(
-        """SELECT d.* FROM current_dynamic_research d JOIN research_plans p ON p.id=d.plan_id
-           WHERE d.legacy_record_key=? AND p.plan_code='formal'""",
-        (row["legacy_record_key"],),
-    ).fetchone() if scope == "both" else None
     high_key = ("high_pool", first_board_date)
     if high_key not in shared:
         if "parameters" not in shared:
@@ -464,7 +550,6 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
         "current_status": {
             "static": row["research_status"],
             "static_confirmation": row["confirmation_status"],
-            "dynamic": dynamic["research_status"] if dynamic else None,
         },
         "attributes": attributes(stock_id),
         "first_two": first_two,
@@ -486,13 +571,6 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
         ),
         "current_static_raw": json.loads(row["raw_json"]),
     }
-    if scope == "both":
-        transaction_path = store.root / "data/price_checks/tdx_transactions" / code / f"{row['event_date']}.json"
-        market = _sina_market(store.root, code, row["event_date"])
-        market["kaipanla"] = _daily_row(connection, stock_id, row["event_date"]) if row["event_date"] else None
-        market["transaction_source"] = transaction_path.relative_to(store.root).as_posix() if transaction_path.exists() else None
-        result["first_open_market"] = market
-        result["current_dynamic_raw"] = json.loads(dynamic["raw_json"]) if dynamic else None
     return result
 
 
@@ -500,9 +578,10 @@ def _decision_template(fact: dict[str, Any], scope: str = "static") -> dict[str,
     result = {"record_key":fact["record_key"],"static":{
         "main_theme":None,"main_theme_basis":None,
         "announcement_pollution":None,"announcement_basis":None,"additional_evidence":[]}}
-    if scope == "both":
+    if scope == "dynamic":
+        result.pop("static")
         result["dynamic"] = {"auction":None,"pk_checks":None,"pk_result":None,
-                             "buy_point":None,"market":None,"outcome":None,"additional_evidence":[]}
+                             "buy_point":None,"outcome":None,"additional_evidence":[]}
     return result
 
 
@@ -521,8 +600,8 @@ def prepare_batch(
     _batch_directory(store,output_dir)
     if limit is not None and limit < 1:
         raise ValueError("limit must be positive")
-    if scope not in {"static", "both"}:
-        raise ValueError("scope must be static or both")
+    if scope not in {"static", "dynamic"}:
+        raise ValueError("scope must be static or dynamic")
     old_decisions = _read_json(output_dir / "decisions.json") if (output_dir / "decisions.json").exists() else None
     if old_decisions and not record_keys:
         record_keys = [row["record_key"] for row in old_decisions["records"]]
@@ -539,10 +618,13 @@ def prepare_batch(
     store.apply_migrations(connection)
     batch_key = connection.execute("SELECT value FROM store_meta WHERE key='current_batch_key'").fetchone()["value"]
     dates = _trading_dates(connection)
-    selected = _select_records(connection, limit, year, record_keys, from_date, to_date)
+    selected = _select_records(connection, limit, year, record_keys, from_date, to_date, scope)
     if not selected:
         connection.close()
         raise RuntimeError("no research records matched the batch selector")
+    market_result = None
+    if scope == "dynamic" and fetch_missing:
+        market_result = trade_facts(store, [r['legacy_record_key'] for r in selected])
     shared = {}
     facts_records = [_record_facts(store, connection, dates, batch_key, row, scope, shared) for row in selected]
     connection.close()
@@ -563,11 +645,11 @@ def prepare_batch(
         "records": [_decision_template(fact, scope) for fact in facts_records],
     }
     if old_decisions:
-        if old_decisions.get("batch_id") != batch_id or old_decisions.get("scope", "both") != scope:
+        if old_decisions.get("batch_id") != batch_id or old_decisions.get("scope", "dynamic") != scope:
             raise ValueError("existing decisions belong to another selection or scope")
         decisions = old_decisions
     fetch_result = None
-    if fetch_missing:
+    if fetch_missing and scope == "static":
         from .intake import fetch_attributes
         passing = {row["record_key"] for row in decisions["records"]
                    if row["static"].get("replenishment_result") == "非补涨"
@@ -584,7 +666,8 @@ def prepare_batch(
             facts["records"] = facts_records
     facts["missing"] = _missing_facts(facts_records)
     from .derive import judgement_slots
-    decisions["high_themes"] = judgement_slots(store, facts_records, decisions.get("high_themes", []))
+    if scope == "static":
+        decisions["high_themes"] = judgement_slots(store, facts_records, decisions.get("high_themes", []))
     output_dir.mkdir(parents=True, exist_ok=True)
     _write_json(output_dir / "facts.json", facts)
     _write_json(output_dir / "decisions.json", decisions)
@@ -602,6 +685,7 @@ def prepare_batch(
         "scope": scope,
         "missing": facts["missing"],
         "fetch": fetch_result,
+        "market": market_result,
         "resumed": old_decisions is not None,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }
@@ -611,6 +695,9 @@ def _missing_facts(records: list[dict]) -> list[dict]:
     missing = []
     for fact in records:
         key = fact["record_key"]
+        if fact.get('scope')=='dynamic':
+            missing.extend({'record_key':key,'kind':'market','field':field} for field in fact['first_open_market']['missing'])
+            continue
         objects = [(fact["identity"], fact["attributes"], "candidate")]
         for day in fact["strict_one_word_days"]:
             objects.extend((item, item["attributes"], f"suppression:{day['date']}") for item in day["higher_members"])
@@ -637,6 +724,11 @@ def _missing_facts(records: list[dict]) -> list[dict]:
 
 def _brief(facts: dict) -> dict:
     """Share repeated evidence once, omit historic payloads from the AI reading view."""
+    if facts['scope']=='dynamic':
+        return {'batch_id':facts['batch_id'],'scope':'dynamic','missing':facts['missing'],
+                'records':[{'record_key':f['record_key'],'identity':f['identity'],
+                            'static_readonly':_current_static_decision(f['current_static_raw']),
+                            'market':f['first_open_market'],'competitor_market':f['competitor_market']} for f in facts['records']]}
     shared: dict[str, Any] = {}
     def ref(value):
         key = hashlib.sha256(_json(value).encode("utf-8")).hexdigest()[:12]
@@ -696,7 +788,7 @@ def _load_pending(store, decisions_path):
     return facts, decisions
 
 
-def _validate_decision(fact: dict[str, Any], decision: dict[str, Any], scope: str = "both") -> bool:
+def _validate_decision(fact: dict[str, Any], decision: dict[str, Any], scope: str = "dynamic") -> bool:
     static = decision.get("static") or {}
     required = ["main_theme", "main_theme_basis", "replenishment_result", "mapping_basis", "suppression_result", "suppression_basis", "announcement_basis"]
     missing = [key for key in required if not static.get(key)]
@@ -712,7 +804,7 @@ def _validate_decision(fact: dict[str, Any], decision: dict[str, Any], scope: st
     )
     if passed and not isinstance(static.get("competitors"), list):
         raise ValueError(f"{fact['record_key']} passing record requires competitors array")
-    if passed and scope == "both":
+    if passed and scope == "dynamic":
         dynamic = decision.get("dynamic") or {}
         missing_dynamic = [key for key in ["auction", "pk_checks", "pk_result", "buy_point", "outcome"] if dynamic.get(key) is None]
         if missing_dynamic:
@@ -725,7 +817,7 @@ def _request_id(batch_id: str, kind: str, key: str, updates: dict[str, Any]) -> 
     return f"{batch_id}-{kind}-{key.replace('|', '-')}-{digest}"
 
 
-def _dynamic_updates(passed: bool, static: dict[str, Any], dynamic: dict[str, Any]) -> dict[str, Any]:
+def _dynamic_updates(passed: bool, static: dict[str, Any], dynamic: dict[str, Any], market: dict[str, Any]) -> dict[str, Any]:
     if passed:
         updates = {
             "买入筛选": {"非补涨": True, "无一字压制": True, "公告污染": static["announcement_pollution"], "公告处理": "独立记录", "结果": "通过"},
@@ -735,8 +827,7 @@ def _dynamic_updates(passed: bool, static: dict[str, Any], dynamic: dict[str, An
             "首开买点": dynamic["buy_point"],
             "买入后结果": dynamic["outcome"],
         }
-        if dynamic.get("market") is not None:
-            updates["首开行情"] = dynamic["market"]
+        updates["首开行情"] = market
         return updates
     reasons = []
     if static["replenishment_result"] != "非补涨":
@@ -825,11 +916,11 @@ def static_request(fact, static):
 
 def dynamic_request(fact, decision, batch_id):
     static = decision["static"]
-    passed = _validate_decision(fact,decision,"both")
+    passed = _validate_decision(fact,decision,"dynamic")
     evidence = sorted(_source_values(fact))
     if passed:
         dynamic = decision["dynamic"]
-        dynamic_updates = _dynamic_updates(True, static, dynamic)
+        dynamic_updates = _dynamic_updates(True, static, dynamic, fact["first_open_market"])
         dynamic_checks = [
             {"check_type":"买入筛选","outcome":"通过","basis":"非补涨、无一字压制；公告污染独立记录。","sources":[]},
             {"check_type":"竞价筛选","outcome":dynamic["auction"].get("结果"),"basis":dynamic["auction"].get("依据"),"sources":sorted(_source_values(fact["first_open_market"]))},
@@ -837,7 +928,7 @@ def dynamic_request(fact, decision, batch_id):
             {"check_type":"买点","outcome":dynamic["buy_point"].get("结果"),"basis":dynamic["buy_point"].get("事实"),"sources":dynamic["buy_point"].get("来源",[])},
         ]
     else:
-        dynamic_updates = _dynamic_updates(False, static, {})
+        dynamic_updates = _dynamic_updates(False, static, {}, fact["first_open_market"])
         reason = dynamic_updates["买入筛选"]["依据"]
         dynamic_checks = [{"check_type":"买入筛选","outcome":"淘汰","basis":reason,"sources":[]}]
     dynamic_evidence = sorted(set(evidence) | set((decision.get("dynamic") or {}).get("additional_evidence") or []))
@@ -859,8 +950,8 @@ def verify_dynamic(store, facts, decisions, connection=None):
     try:
         for fact,decision in zip(facts["records"],decisions["records"]):
             try:
-                passed = _validate_decision(fact,decision,"both")
-                expected = _dynamic_updates(passed,decision["static"],decision.get("dynamic") or {})
+                passed = _validate_decision(fact,decision,"dynamic")
+                expected = _dynamic_updates(passed,decision["static"],decision.get("dynamic") or {},fact["first_open_market"])
             except ValueError as exc:
                 findings.append(str(exc))
                 continue
@@ -901,13 +992,15 @@ def clear_submitted_inputs(store, directory, facts, decisions, completed):
         for item in pending:
             raw = json.loads(connection.execute("SELECT raw_json FROM current_static_research WHERE legacy_record_key=?",(item["record_key"],)).fetchone()[0])
             current[item["record_key"]] = raw
-            if not item.get("defer_reason"):
+            if facts["scope"] == "static" and not item.get("defer_reason"):
                 for key,field in {"main_theme":"唯一主炒作属性","main_theme_basis":"唯一主炒依据",
                                   "announcement_pollution":"公告污染","announcement_basis":"公告污染依据"}.items():
                     if item["static"].get(key) == raw.get(field):
                         item["static"][key] = None
     finally:
         connection.close()
+    if facts["scope"] == "dynamic":
+        for item in pending:item.pop("static",None)
     pending_keys = {r["record_key"] for r in pending}
     facts = dict(facts,records=[f for f in facts["records"] if f["record_key"] in pending_keys])
     for fact in facts["records"]:
@@ -970,9 +1063,9 @@ def commit_batch(
     if not decisions_path.exists():
         from .derive import recompute
         manifest = _read_json(facts_path.parent / "batch.json")
-        result = recompute(store,manifest["record_keys"],publish=False)
+        result = recompute(store,manifest["record_keys"],publish=False) if manifest["scope"]=="static" else {"record_count":len(manifest["record_keys"])}
         if publish:
-            result["export"] = store.publish_pending(refresh_statistics=manifest["scope"]=="both")
+            result["export"] = store.publish_pending()
         clear_submitted_inputs(store,facts_path.parent,{"scope":manifest["scope"],"records":[]},{"records":[]},set())
         result["already_submitted"] = True
         return result
@@ -983,12 +1076,8 @@ def commit_batch(
         result = commit_judgements(store, facts, decisions, publish=publish,receipt=receipt)
         clear_submitted_inputs(store,facts_path.parent,facts,decisions,{r["record_key"] for r in result.get("records",[])})
         return result
-    # A combined task uses the same static input/derivation path. Dynamic writes
-    # consume its current results and never write a second static conclusion.
-    static_result = commit_judgements(store,facts,decisions,publish=False,receipt=receipt)
-    clear_submitted_inputs(store,facts_path.parent,facts,decisions,set())
-    unavailable = {r["record_key"] for r in static_result.get("blocked",[]) + static_result.get("deferred",[])}
-    decisions = dict(decisions,records=[r for r in decisions["records"] if r["record_key"] not in unavailable])
+    # Trade submissions read the saved static result; they never derive or write it.
+    static_result = None
     connection = store.connect()
     shared = {}
     dates = _trading_dates(connection)
@@ -996,7 +1085,7 @@ def commit_batch(
     fresh = []
     for decision in decisions["records"]:
         row = _select_records(connection,None,None,[decision["record_key"]])[0]
-        fact = _record_facts(store,connection,dates,batch_key,row,"both",shared)
+        fact = _record_facts(store,connection,dates,batch_key,row,"dynamic",shared)
         raw = fact["current_static_raw"]
         decision["static"] = _current_static_decision(raw)
         fresh.append(fact)
@@ -1030,14 +1119,14 @@ def commit_batch(
     write_seconds = round(time.perf_counter() - write_started, 3)
     clear_submitted_inputs(store,facts_path.parent,batch_facts,batch_decisions,{r["record_key"] for r in results})
     export_started = time.perf_counter()
-    export = store.publish_pending(refresh_statistics=True) if publish else None
+    export = store.publish_pending() if publish else None
     return {
         "batch_id": facts["batch_id"],
         "record_count": len(facts["records"]),
         "write_count": len(results),
         "deferred": deferred,
         "static": static_result,
-        "scope": facts.get("scope", "both"),
+        "scope": facts.get("scope", "dynamic"),
         "deduplicated": sum(bool(row.get("deduplicated")) for row in results),
         "timing_seconds": {"write": write_seconds, "verify": verification["elapsed_seconds"],
                            "export": round(time.perf_counter() - export_started, 3)},
@@ -1057,7 +1146,27 @@ def _current_static_decision(raw):
 
 
 def verify_batch_current(store, directory):
-    keys = _read_json(directory / "batch.json")["record_keys"]
+    manifest = _read_json(directory / "batch.json")
+    keys = manifest["record_keys"]
+    if manifest['scope']=='dynamic':
+        connection=store.connect()
+        try:
+            facts=[];decisions=[];findings=[]
+            for row in _select_records(connection,None,None,keys):
+                fact=_record_facts(store,connection,[],None,row,'dynamic')
+                raw=fact['current_dynamic_raw']
+                if not raw:
+                    findings.append(fact['record_key']+' 缺少交易记录')
+                    continue
+                facts.append(fact)
+                decisions.append({'record_key':fact['record_key'],'static':_current_static_decision(fact['current_static_raw']),
+                    'dynamic':{'auction':raw.get('竞价筛选'),'pk_checks':raw.get('同题材PK核验明细'),
+                               'pk_result':raw.get('同题材PK结果'),'buy_point':raw.get('首开买点'),'outcome':raw.get('买入后结果')}})
+            result=verify_dynamic(store,{'records':facts},{'records':decisions},connection)
+            result['findings'].extend(findings)
+            result.update(passed=not result['findings'],record_count=len(keys))
+            return result
+        finally:connection.close()
     from .derive import recompute
     result = recompute(store, keys, preview=True,verify_saved=True)
     connection = store.connect()

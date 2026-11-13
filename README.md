@@ -22,6 +22,8 @@ Ultra-Board 是本地股票研究、行情证据管理和复盘工具。项目�
 
 Windows 电脑安装 Git 和 Python 3 后执行：
 
+日K与开盘啦行情取数使用 Python 标准库；在线获取同花顺封板时间明细时另需 Node.js。
+
 ```powershell
 git clone https://github.com/tylergao11/Ultra-Board.git
 Set-Location Ultra-Board
@@ -54,7 +56,7 @@ powershell -ExecutionPolicy Bypass -File tools/finish_work.ps1 -Message "本次�
 
 这两个入口默认在本地运行。用户要求同步或换电脑时，当前电脑运行 `tools/finish_work.ps1 -Sync -Message "交接工作"`，另一台运行 `tools/start_work.ps1 -Sync`。每批研究、改题材和改口径完成后直接报告结果。
 
-日常研究按用户指定数量或清单，准备材料后只填写题材与公告判断；补涨、压制、竞争清单和总表自动生成。纠正题材使用 `theme-set --record-key "记录键" --theme "题材"`，相关结果随保存自动更新。默认静态研究，交易研究由买卖表任务负责。新增数据走增量入库；已有资料与草稿直接复用。具体命令见使用说明。
+日常研究按用户指定数量或清单，准备材料后只填写题材与公告判断；补涨、压制、竞争清单和总表自动生成。纠正题材使用 `theme-set --record-key "记录键" --theme "题材"`，相关结果随保存自动更新。静态研究和交易研究由独立任务负责，行情工具只提供事实，发布和维护不触发交易取数或回算。新增数据走增量入库；已有资料与草稿直接复用。具体命令见使用说明。
 
 ## 目录
 
@@ -63,7 +65,7 @@ data/                   原始下载、研究证据和正式数据
 data/store/exports/     当前展示与统计批次
 data/store/rules/       正式规则源
 docs/                   执行计划、使用说明和多电脑说明
-tools/research/         数据库、迁移、查询、统计与恢复实现
+tools/research/         数据库、采集、查询、静态推导与统计实现
 tools/research_cli.py   统一命令入口
 tools/start_work.ps1    本地开始检查；-Sync 用于跨电脑拉取
 tools/finish_work.ps1   本地结束检查；-Sync 用于提交和远端发布
@@ -74,11 +76,11 @@ tools/finish_work.ps1   本地结束检查；-Sync 用于提交和远端发布
 - [统一研究系统使用说明](docs/研究系统使用说明.md)
 - [GitHub 与多电脑使用](docs/GitHub与多电脑使用.md)
 - [研究系统执行计划](docs/研究系统执行计划.md)
-- [最终验收记录](data/store/migrations/final_acceptance.md)
+- [当前数据核验](data/store/verification/current/verification.json)
 
 ## GitHub 备份策略
 
 - Git 仓库保存代码、规则、原始资料、研究表、统计、报告和变更历史。
 - GitHub Release 保存经过完整性核验的当前 SQLite 数据库及校验清单。
-- 本机每日恢复副本保留最近三份，由维护命令轮换；这些副本与正式库内容重复，因此不进入 Git。
+- 本机日常操作不生成恢复副本；明确要求备份时才执行备份入口。
 - 发布脚本替换滚动 Release 中的数据库资产，避免每日产生一份新的大文件历史。

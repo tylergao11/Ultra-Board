@@ -1,0 +1,103 @@
+{
+  "当前研究统计": {
+    "formal_plans": [
+      {
+        "metrics": {
+          "buy_day_seal_rate": {
+            "denominator": 0,
+            "denominator_record_keys": [],
+            "formula": "bought samples whose buy day finally closed at limit / all bought samples",
+            "missing_record_keys": [],
+            "numerator": 0,
+            "numerator_record_keys": [],
+            "percent": null
+          },
+          "consecutive_next_board_distribution": {},
+          "low_open_board_rate": {
+            "denominator": 0,
+            "denominator_record_keys": [],
+            "formula": "low-open bought samples sealed on buy day and finally sealed next trading day / all low-open bought samples",
+            "missing_record_keys": [],
+            "numerator": 0,
+            "numerator_record_keys": [],
+            "percent": null
+          },
+          "low_open_close_red_rate": {
+            "denominator": 0,
+            "denominator_record_keys": [],
+            "formula": "low-open bought samples with next-day close strictly above buy-day close / all low-open bought samples",
+            "missing_record_keys": [],
+            "numerator": 0,
+            "numerator_record_keys": [],
+            "percent": null
+          },
+          "low_open_final_limit_down_rate": {
+            "denominator": 0,
+            "denominator_record_keys": [],
+            "formula": "low-open bought samples whose next-day final close equals limit-down / all low-open bought samples",
+            "missing_record_keys": [],
+            "numerator": 0,
+            "numerator_record_keys": [],
+            "percent": null
+          },
+          "next_day_board_rate": {
+            "denominator": 0,
+            "denominator_record_keys": [],
+            "formula": "bought samples sealed on buy day and finally sealed again next trading day / all bought samples",
+            "missing_record_keys": [],
+            "numerator": 0,
+            "numerator_record_keys": [],
+            "percent": null
+          },
+          "tail_sell_return": {
+            "average_percent": null,
+            "formula": "Arithmetic mean of stored per-trade return percentages; fees, tax and slippage follow the plan definition.",
+            "missing_record_keys": [],
+            "sample_record_keys": [],
+            "samples": 0,
+            "win_rate": {
+              "denominator": 0,
+              "denominator_record_keys": [],
+              "formula": "tail-sell samples with return above zero / bought samples with a recorded tail-sell return",
+              "missing_record_keys": [],
+              "numerator": 0,
+              "numerator_record_keys": [],
+              "percent": null
+            }
+          }
+        },
+        "plan": {
+          "code": "formal",
+          "id": 1,
+          "name": "现行正式首开交易方案",
+          "status": "current",
+          "version": 1
+        },
+        "scope": {
+          "bought_record_keys": [],
+          "bought_sample_count": 0,
+          "denominator_policy": "Only records with trade_outcomes.bought=1 enter buy-sample metrics; NULL stays a recorded data gap.",
+          "dynamic_record_count": 0,
+          "dynamic_record_keys": [],
+          "explicit_not_bought_record_keys": [],
+          "missing_bought_status_record_keys": [],
+          "record_key_year": null
+        },
+        "year_scopes": {}
+      }
+    ]
+  },
+  "生成信息": {
+    "database_snapshot": "83c16999ed5bf294fba54c6246b1a4e448e56d46500fd0a3fe6a8e6387ab3c7a",
+    "generated_at": "2026-11-13T19:41:09+08:00",
+    "generation_key": "20261113-194109-316600-83c16999ed",
+    "input_batch_key": "full-27eb46afab6cde4b",
+    "rule_versions": {
+      "dynamic": "2026-11-12-73cfdb9f2e94",
+      "static": "2026-11-12-a3eeff487fcc",
+      "workflow": "2026-11-13-072341a64a2c"
+    },
+    "snapshot_scope": "display_inputs",
+    "statistics_refreshed": true
+  }
+}

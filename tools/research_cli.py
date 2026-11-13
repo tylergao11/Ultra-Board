@@ -13,8 +13,9 @@ import sys
 import zipfile
 
 from research.system import ResearchStore, json_text, now_text, sha256_bytes, sha256_file
-from research.batch import commit_batch, verify_batch_current, prepare_batch, submission_key
+from research.batch import commit_batch, verify_batch_current, prepare_batch, submission_key, trade_facts
 from research.intake import fetch_attributes, ingest_paths
+from research.market import ensure_research_prices
 from research.derive import recompute, set_theme
 from research.scratch import Workspace, clean as clean_temporary
 
@@ -46,6 +47,20 @@ def main() -> None:
     fetch = sub.add_parser("fetch-attributes", help="save and incrementally ingest stock attributes")
     fetch.add_argument("--code", action="append", required=True, dest="codes")
     fetch.add_argument("--refresh", action="store_true", help="fetch a new same-day snapshot")
+    market_fetch = sub.add_parser('market-fetch', help='exact stock code/date historical quotes and minute trend')
+    market_fetch.add_argument('--code', action='append', required=True, dest='codes')
+    market_fetch.add_argument('--date', action='append', required=True, dest='dates')
+    market_fetch.add_argument('--refresh', action='store_true')
+    market_fetch.add_argument('--details', action='store_true', help='also acquire exact-provider limit-board intervals')
+
+    prices = sub.add_parser("market-ensure", help="cache daily bars only for researched candidates and named peers")
+    prices.add_argument("--record-key", action="append", dest="record_keys")
+    prices.add_argument("--from-date")
+    prices.add_argument("--to-date")
+
+    facts = sub.add_parser("trade-facts", help="reuse observed daily prices and events for trade research")
+    facts.add_argument("--record-key", action="append", required=True, dest="record_keys")
+    facts.add_argument("--days", type=int, default=20)
 
     stock = sub.add_parser("stock", help="query a stock file")
     stock.add_argument("--code", required=True)
@@ -89,7 +104,7 @@ def main() -> None:
     batch_prepare.add_argument("--limit", type=int)
     batch_prepare.add_argument("--from-date")
     batch_prepare.add_argument("--to-date")
-    batch_prepare.add_argument("--scope", choices=["static", "both"], default="static")
+    batch_prepare.add_argument("--scope", choices=["static", "dynamic"], default="static")
     batch_prepare.add_argument("--fetch-missing", action="store_true", default=True, help="fetch missing stock attributes (default)")
     batch_prepare.add_argument("--offline", action="store_false", dest="fetch_missing", help="prepare from saved facts and list missing attributes")
     batch_prepare.add_argument("--year", type=int)
@@ -110,14 +125,14 @@ def main() -> None:
     verify.add_argument("--report-dir", default="data/store/verification/current")
 
     reports = sub.add_parser("reports", help="write schema, rule and coverage reports")
-    reports.add_argument("--output", default="data/store/migrations/reports")
+    reports.add_argument("--output", default="data/store/verification/current")
 
     backup = sub.add_parser("backup", help="create a coherent database and cutover restore point")
-    backup.add_argument("--output", default="data/store/migrations/recovery/current")
+    backup.add_argument("--output", default="data/store/recovery/current")
 
     drill = sub.add_parser("restore-drill", help="restore a backup into an isolated copy and verify it")
     drill.add_argument("--backup", required=True)
-    drill.add_argument("--report", default="data/store/migrations/verification/restore_drill.json")
+    drill.add_argument("--report", default="data/store/verification/current/restore_drill.json")
 
     restore = sub.add_parser("restore", help="restore a database backup with a pre-restore safety copy")
     restore.add_argument("--backup", required=True)
@@ -128,7 +143,7 @@ def main() -> None:
     evidence.add_argument("--path", required=True)
     sub.add_parser("refresh-evidence", help="rebuild the current evidence inventory and mark historical paths")
     maintain = sub.add_parser("maintain", help="process newly downloaded daily data, verify, publish and rotate backups")
-    maintain.add_argument("--keep-backups", type=int, default=3)
+    maintain.add_argument("--keep-backups", type=int, default=0)
     temporary = sub.add_parser("temp-new",help="create an owned temporary workspace")
     temporary.add_argument("--purpose",required=True)
     temporary.add_argument("--file",action="append",dest="files",default=[])
@@ -153,6 +168,19 @@ def main() -> None:
         emit(store.database_snapshot(ROOT / args.output))
     elif args.command == "sync-rules":
         emit(store.sync_rules())
+    elif args.command == 'market-fetch':
+        from research.events import acquire_market_facts
+        result=acquire_market_facts(store,[(code,day) for code in args.codes for day in args.dates],
+                                    kinds=('snapshot','trend','details') if args.details else ('snapshot','trend'),refresh=args.refresh)
+        emit(result)
+        if not result['complete']:raise SystemExit(1)
+    elif args.command == "market-ensure":
+        result = ensure_research_prices(store,args.record_keys,args.from_date,args.to_date)
+        emit(result)
+        if not result["complete"]:
+            raise SystemExit(1)
+    elif args.command == "trade-facts":
+        emit(trade_facts(store, args.record_keys, args.days))
     elif args.command == "summary":
         connection = store.connect()
         store.apply_migrations(connection)

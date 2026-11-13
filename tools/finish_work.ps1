@@ -21,6 +21,11 @@ try {
         throw "临时文件清理检查失败。"
     }
 
+    & $python.Source -B tools/research_cli.py export --publish-root *> $null
+    if ($LASTEXITCODE -ne 0) {
+        throw "本地展示表与统计更新失败。"
+    }
+
     & $python.Source -B tools/research_cli.py summary *> $null
     if ($LASTEXITCODE -ne 0) {
         throw "正式数据库摘要检查失败。"

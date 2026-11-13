@@ -546,12 +546,17 @@ def recompute(store, record_keys=None, inputs=None, preview=False, publish=True,
             connection.rollback()
         written = time.perf_counter()
         changed = sum(not r.get("deduplicated") for r in results)
+        market = None
+        if not preview and not verify_saved:
+            from .market import ensure_research_prices
+            market = ensure_research_prices(store, list(keys))
         export = store.publish_pending(export_root,publish_root) if publish and not preview else None
         finished = time.perf_counter()
+        market_seconds = market["elapsed_seconds"] if market else 0
         timing.update({"setup": prepared-started-timing["prepare"]-timing["match"],
-                       "write_verify": written-prepared,"export": finished-written,"total": finished-started})
+                       "write_verify": written-prepared,"market": market_seconds,"export": finished-written-market_seconds,"total": finished-started})
         return {"record_count": len(keys), "complete": len(requests), "blocked": blocked, "changed": changed,"findings":findings,
-                "preview": preview, "timing_seconds": {k:round(v,4) for k,v in timing.items()},
+                "preview": preview, "market": market, "timing_seconds": {k:round(v,4) for k,v in timing.items()},
                 "records": [{"record_key":d["record_key"],"main_theme":d["static"]["main_theme"],
                              "replenishment":d["static"]["replenishment_result"],"suppression":d["static"]["suppression_result"],
                              "competitors":[m["股票代码"] for m in d["static"]["competitors"]]} for d in decisions["records"]],

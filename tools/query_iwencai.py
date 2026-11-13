@@ -11,7 +11,7 @@ import tempfile
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
-import requests
+from research.network import request_bytes, retry_call
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,64 +40,76 @@ def table_rows(value):
 
 
 def signing_bundle():
-    response = requests.get("https://pypi.org/pypi/pywencai/json", timeout=20)
-    response.raise_for_status()
-    metadata = response.json()
+    cache = Path(tempfile.gettempdir()) / "ultra-board-iwencai"
+    installed=sorted(cache.glob('hexin-v-*.js'),key=lambda p:p.stat().st_mtime)
+    if installed:
+        return installed[-1], installed[-1].stem.removeprefix('hexin-v-')
+    metadata=json.loads(retry_call(lambda:request_bytes("https://pypi.org/pypi/pywencai/json",timeout=20))[0])
     version = metadata["info"]["version"]
     if not re.fullmatch(r"[A-Za-z0-9.+-]+", version):
         raise ValueError("Invalid package version")
-    cache = Path(tempfile.gettempdir()) / "ultra-board-iwencai"
     cache.mkdir(exist_ok=True)
     destination = cache / f"hexin-v-{version}.js"
     if not destination.exists():
         wheel = next(item for item in metadata["urls"] if item["filename"].endswith(".whl"))
-        package = requests.get(wheel["url"], timeout=30)
-        package.raise_for_status()
-        if hashlib.sha256(package.content).hexdigest() != wheel["digests"]["sha256"]:
+        package=retry_call(lambda:request_bytes(wheel['url'],timeout=30))[0]
+        if hashlib.sha256(package).hexdigest() != wheel["digests"]["sha256"]:
             raise ValueError("Package checksum mismatch")
-        with zipfile.ZipFile(io.BytesIO(package.content)) as archive:
+        with zipfile.ZipFile(io.BytesIO(package)) as archive:
             destination.write_bytes(archive.read("pywencai/hexin-v.bundle.js"))
     return destination, version
 
 
-def query(item, output_dir, bundle, version):
+def query(item, output_dir, bundle, version, validate=None, retries=3, refresh=False):
     identifier = item["id"]
     if not re.fullmatch(r"[A-Za-z0-9_-]+", identifier):
         raise ValueError("Invalid query id")
     destination = output_dir / f"{identifier}.json"
-    if destination.exists():
-        cached = json.loads(destination.read_text(encoding="utf-8"))
+    if destination.exists() and not refresh:
+        try:
+            cached = json.loads(destination.read_text(encoding="utf-8"))
+        except (ValueError,OSError):
+            cached = {}
         rows = table_rows(cached.get("response", {}))
-        if cached.get("question") == item["question"] and cached.get("response", {}).get("status_code") == 0 and rows:
+        if cached.get("question") == item["question"] and cached.get("response", {}).get("status_code") == 0 and rows and (validate is None or validate(rows)):
             return {"id": identifier, "status_code": 0, "data_rows": len(rows),
                     "cached": True, "file": str(destination)}
-    token = subprocess.run(
-        ["node", str(bundle)], capture_output=True, text=True, check=True, timeout=20
-    ).stdout.strip()
     body = {
         "question": item["question"], "perpage": 100, "page": 1,
         "source": "Ths_iwencai_Xuangu", "version": "2.0", "secondary_intent": "stock",
         "add_info": json.dumps({"urp": {"scene": 1, "company": 1, "business": 1},
                                 "contentType": "json", "searchInfo": True}),
     }
-    response = requests.post(
-        ENDPOINT, data=body,
-        headers={"hexin-v": token, "User-Agent": USER_AGENT, "Referer": "https://www.iwencai.com/"},
-        timeout=30,
-    )
+    # Each attempt renews the signature and connection. Empty or partial answers
+    # never become a successful cache entry and never replace a valid response.
+    def request():
+        token = subprocess.run(
+            ["node", str(bundle)], capture_output=True, text=True, check=True, timeout=20
+        ).stdout.strip()
+        payload=json.loads(request_bytes(ENDPOINT,data=body,headers={"hexin-v":token,"User-Agent":USER_AGENT,
+            "Referer":"https://www.iwencai.com/","Content-Type":"application/x-www-form-urlencoded"},timeout=30))
+        rows = table_rows(payload)
+        if payload.get('status_code') != 0 or not rows or (validate is not None and not validate(rows)):
+            raise ValueError(f'{identifier}: response lacks requested facts')
+        return payload
     try:
-        payload = response.json()
-    except ValueError:
-        payload = {"status_code": None, "response_text": response.text}
+        payload,timing=retry_call(request,retries=retries)
+    except Exception as exc:
+        error=RuntimeError(f'{identifier}: {ENDPOINT}: failed after {retries} retries: {type(exc).__name__}: {exc}')
+        error.retry_timing=getattr(exc,'retry_timing',{})
+        raise error from None
     result = {
         "question": item["question"], "url": ENDPOINT, "request_format": "form-urlencoded",
-        "http_status": response.status_code, "signing_package": f"pywencai {version}",
+        "http_status": 200, "signing_package": f"pywencai {version}",
         "response": payload,
     }
-    destination.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return {"id": identifier, "http_status": response.status_code,
+    output_dir.mkdir(parents=True, exist_ok=True)
+    staging = destination.with_suffix('.json.new')
+    staging.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    staging.replace(destination)
+    return {"id": identifier, "http_status": 200,
             "status_code": payload.get("status_code"), "data_rows": len(table_rows(payload)),
-            "file": str(destination)}
+            "file": str(destination), **timing}
 
 
 def main():
@@ -110,14 +122,20 @@ def main():
     items = json.loads(args.questions_file.read_text(encoding="utf-8"))
     args.output_dir.mkdir(parents=True, exist_ok=True)
     bundle, version = signing_bundle()
+    def fetch(item):
+        try:
+            return query(item, args.output_dir, bundle, version)
+        except Exception as exc:
+            return {'id':item['id'], 'status_code':None, 'error':str(exc)}
     with ThreadPoolExecutor(max_workers=min(4, max(1, len(items)))) as executor:
-        results = list(executor.map(lambda item: query(item, args.output_dir, bundle, version), items))
+        results = list(executor.map(fetch, items))
     if args.register_db:
         from research.system import ResearchStore
 
         store = ResearchStore(ROOT)
         for result in results:
-            store.register_evidence_path(Path(result["file"]))
+            if result.get('file'):
+                store.register_evidence_path(Path(result["file"]))
     print(json.dumps(results, ensure_ascii=True))
     if any(item["status_code"] != 0 or not item["data_rows"] for item in results):
         raise SystemExit(1)

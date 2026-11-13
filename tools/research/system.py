@@ -198,31 +198,6 @@ class ResearchStore:
 
 
 
-    def ensure_rule_sources(
-        self,
-        static_data: dict[str, Any],
-        dynamic_data: dict[str, Any],
-    ) -> tuple[Path, Path, dict[str, Any], dict[str, Any]]:
-        rules_dir = self.root / "data/store/rules"
-        rules_dir.mkdir(parents=True, exist_ok=True)
-        definitions = [
-            (rules_dir / "static_rules.json", "static", static_data.get("判断口径", {})),
-            (rules_dir / "dynamic_rules.json", "dynamic", dynamic_data.get("判断口径", {})),
-        ]
-        resolved: list[tuple[Path, dict[str, Any]]] = []
-        for path, rule_type, initial_rules in definitions:
-            if not path.exists():
-                path.write_text(json_text({
-                    "rule_type": rule_type,
-                    "effective_from": "2026-11-12",
-                    "rules": initial_rules,
-                }, pretty=True) + "\n", encoding="utf-8")
-            document = json.loads(path.read_text(encoding="utf-8"))
-            if document.get("rule_type") != rule_type or not isinstance(document.get("rules"), dict):
-                raise ValueError(f"invalid rule source: {path.relative_to(self.root).as_posix()}")
-            resolved.append((path, document))
-        return resolved[0][0], resolved[1][0], resolved[0][1], resolved[1][1]
-
     def register_evidence_path(self, path: Path | str, connection: sqlite3.Connection | None = None) -> int:
         target = Path(path)
         if not target.is_absolute():
@@ -332,7 +307,7 @@ class ResearchStore:
                parse_error=CASE
                    WHEN EXISTS(SELECT 1 FROM current_evidence_paths current WHERE current.path=evidence.path)
                        THEN NULL
-                   ELSE 'path absent from current workspace; retained as migration history'
+                   ELSE 'path absent from current workspace'
                END"""
         )
         connection.execute("DROP TABLE current_evidence_paths")
@@ -356,7 +331,7 @@ class ResearchStore:
         try:
             return self.build_evidence_inventory(
                 connection,
-                self.root / "data/store/migrations/reports/evidence_inventory.jsonl",
+                self.root / "data/store/verification/current/evidence_inventory.jsonl",
             )
         finally:
             connection.close()
@@ -384,12 +359,12 @@ class ResearchStore:
         dynamic_data: dict[str, Any],
     ) -> dict[str, int]:
         result: dict[str, int] = {}
-        static_rule_path, dynamic_rule_path, static_rule_doc, dynamic_rule_doc = self.ensure_rule_sources(
-            static_data, dynamic_data
-        )
+        for kind, document in (("static", static_data), ("dynamic", dynamic_data)):
+            if document.get("rule_type") != kind or not isinstance(document.get("rules"), dict):
+                raise ValueError(f"invalid current rule source: {kind}")
         sources = [
-            ("static", static_rule_path, static_rule_doc["rules"], static_rule_doc.get("effective_from")),
-            ("dynamic", dynamic_rule_path, dynamic_rule_doc["rules"], dynamic_rule_doc.get("effective_from")),
+            ("static", static_path, static_data["rules"], static_data.get("effective_from")),
+            ("dynamic", dynamic_path, dynamic_data["rules"], dynamic_data.get("effective_from")),
         ]
         agents_path = self.root / "AGENTS.md"
         sources.append((
@@ -882,6 +857,19 @@ class ResearchStore:
                             commit: bool = True) -> dict[str, int]:
         counts = {"files": 0, "daily_rows": 0, "parse_errors": 0}
         for path in paths if paths is not None else sorted((self.root / "data/price_checks").rglob("*.json")):
+            if path.parent.name == 'iwencai':
+                from .events import import_provider_file
+                counts['daily_rows'] += import_provider_file(self, connection, path)
+                counts['files'] += 1
+                continue
+            from .market import daily_file_identity, import_daily_file, research_price_needs
+            if daily_file_identity(path):
+                code, _ = daily_file_identity(path)
+                needs, _ = research_price_needs(connection)
+                years = {year for stock,year in needs if stock==code}
+                counts["daily_rows"] += import_daily_file(self, connection, path, years) if years else 0
+                counts["files"] += 1
+                continue
             code = valid_code(path.stem)
             if code is None:
                 continue
@@ -935,68 +923,28 @@ class ResearchStore:
             connection.commit()
         return counts
 
-    def import_ths_kline(self, connection: sqlite3.Connection) -> dict[str, int]:
-        counts = {"files": 0, "daily_rows": 0, "parse_errors": 0}
-        base = self.root / "data/research/buy_points_2026/ths_kline"
-        for path in sorted(base.glob("*.js")) if base.exists() else []:
-            match_code = re.match(r"(\d{6})-", path.name)
-            if not match_code:
-                continue
-            try:
-                text = path.read_text(encoding="utf-8")
-                match = re.search(r'\(\{"data":"([\s\S]*?)"\}\)', text)
-                if not match:
-                    raise ValueError("THS data payload missing")
-                code = match_code.group(1)
-                stock_id = self.stock_id(connection, code)
-                evidence_id = self.evidence_id(connection, path.relative_to(self.root).as_posix())
-                for row in filter(None, match.group(1).split(";")):
-                    values = row.split(",")
-                    if len(values) < 5 or not re.fullmatch(r"20\d{6}", values[0]):
-                        continue
-                    date = f"{values[0][:4]}-{values[0][4:6]}-{values[0][6:8]}"
-                    payload = {
-                        "date": date,
-                        "open": values[1],
-                        "high": values[2],
-                        "low": values[3],
-                        "close": values[4],
-                    }
-                    connection.execute(
-                        """INSERT OR IGNORE INTO daily_market
-                           (stock_id,trade_date,source_type,price_mode,open_milli,high_milli,low_milli,close_milli,
-                            evidence_file_id,raw_json)
-                           VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                        (
-                            stock_id,
-                            date,
-                            "ths_kline",
-                            "unadjusted",
-                            price_milli(values[1]),
-                            price_milli(values[2]),
-                            price_milli(values[3]),
-                            price_milli(values[4]),
-                            evidence_id,
-                            json_text(payload),
-                        ),
-                    )
-                    connection.execute(
-                        """INSERT INTO trading_days(trade_date,is_trading_day,calendar_source,raw_market_coverage,price_coverage)
-                           VALUES(?,1,?,0,1)
-                           ON CONFLICT(trade_date) DO UPDATE SET price_coverage=1""",
-                        (date, "ths_kline"),
-                    )
-                    counts["daily_rows"] += 1
-                counts["files"] += 1
-            except Exception as exc:
-                self._mark_parse_error(connection, path, exc)
-                counts["parse_errors"] += 1
-            if counts["files"] % 50 == 0:
-                connection.commit()
-        connection.commit()
-        return counts
 
 
+
+    def discard_obsolete_research(self, connection):
+        """Delete replaced judgments; raw market evidence and current conclusions stay intact."""
+        obsolete = """SELECT d.id FROM dynamic_research d
+            LEFT JOIN rule_sets r ON r.id=d.rule_set_id
+            JOIN research_plans p ON p.id=d.plan_id
+            WHERE d.is_current=0 OR r.status IS NOT 'current' OR p.status<>'current'"""
+        connection.execute(f"DELETE FROM research_checks WHERE dynamic_research_id IN ({obsolete})")
+        connection.execute(f"DELETE FROM trade_outcomes WHERE dynamic_research_id IN ({obsolete})")
+        connection.execute(f"DELETE FROM dynamic_research WHERE id IN ({obsolete})")
+        connection.execute("DELETE FROM static_research WHERE is_current=0")
+        connection.execute("DELETE FROM revisions")
+        connection.execute("DELETE FROM rule_items WHERE rule_set_id IN (SELECT id FROM rule_sets WHERE status='superseded')")
+        connection.execute("DELETE FROM write_requests WHERE object_type='dynamic' AND object_key NOT IN (SELECT legacy_record_key FROM dynamic_research)")
+        connection.execute("DELETE FROM archived_sections WHERE archive_kind IN ('statistics','comparison_study')")
+        connection.execute("DELETE FROM statistics WHERE plan_id IN (SELECT id FROM research_plans WHERE status<>'current')")
+        connection.execute("DELETE FROM research_plans WHERE status<>'current' AND id NOT IN (SELECT plan_id FROM dynamic_research)")
+        connection.execute("UPDATE legacy_key_map SET dynamic_source_record_id=NULL WHERE dynamic_source_record_id IN (SELECT id FROM source_records WHERE source_kind='legacy_dynamic')")
+        connection.execute("UPDATE stock_names SET source_record_id=NULL WHERE source_record_id IN (SELECT id FROM source_records WHERE source_kind='legacy_dynamic')")
+        connection.execute("DELETE FROM source_records WHERE source_kind='legacy_dynamic' AND id NOT IN (SELECT source_record_id FROM dynamic_research WHERE source_record_id IS NOT NULL)")
 
     def sync_rules(self) -> dict[str, Any]:
         static_path = self.root / "data/store/rules/static_rules.json"
@@ -1011,6 +959,30 @@ class ResearchStore:
             reused = saved==digests
             if not reused:
                 self.import_rules(connection, static_path, dynamic_path, static_data, dynamic_data)
+            # Current trade results use active rules; obsolete derived judgments are deleted.
+            view_sql = """CREATE VIEW current_dynamic_research AS
+                SELECT d.* FROM dynamic_research d
+                JOIN rule_sets r ON r.id=d.rule_set_id
+                JOIN research_plans p ON p.id=d.plan_id
+                WHERE d.is_current=1 AND r.rule_type='dynamic' AND r.status='current'
+                  AND p.status='current'"""
+            existing_view = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='view' AND name='current_dynamic_research'"
+            ).fetchone()
+            if not existing_view or existing_view[0] != view_sql:
+                connection.execute("DROP VIEW IF EXISTS current_dynamic_research")
+                connection.execute(view_sql)
+                connection.execute("INSERT OR REPLACE INTO store_meta(key,value) VALUES('statistics_export_pending','1')")
+            connection.execute(
+                """UPDATE research_plans SET definition_json=?,rule_set_id=(
+                    SELECT id FROM rule_sets WHERE rule_type='dynamic' AND status='current')
+                    WHERE plan_code='formal' AND status='current'""",
+                (json_text({"规则来源": "data/store/rules/dynamic_rules.json"}),),
+            )
+            if not reused:
+                connection.execute("INSERT OR REPLACE INTO store_meta(key,value) VALUES('statistics_export_pending','1')")
+            self.discard_obsolete_research(connection)
+            connection.commit()
             current = {
                 row["rule_type"]: {"source_path": row["source_path"]}
                 for row in connection.execute(
@@ -1412,7 +1384,7 @@ class ResearchStore:
                 "return_pct_micros": None,
                 "source_record_id": mapping["static_source_record_id"],
                 "evidence_snapshot_json": static_seed["evidence_snapshot_json"],
-                "raw_json": static_seed["raw_json"],
+                "raw_json": json_text({"底稿记录键": record_key}),
                 "rule_set_id": rule["id"],
             }
         elif expected_version is not None and int(current["version"]) != expected_version:
@@ -1430,6 +1402,7 @@ class ResearchStore:
         if evidence is not None and not isinstance(evidence, list):
             raise ValueError("evidence must be an array when provided")
         raw = json.loads(current["raw_json"])
+        replace_dynamic = kind == "dynamic" and request.get("replace") is True
         if (not create_dynamic and all(raw.get(key) == value for key, value in updates.items())
                 and all(key not in raw for key in remove_fields)
                 and (evidence is None or json.loads(current["evidence_snapshot_json"]) == evidence)
@@ -1448,6 +1421,14 @@ class ResearchStore:
                 desired_checks = []  # Resolve code-based subject changes through the normal write path.
             if checks is None or saved_checks == desired_checks:
                 return {"record_key": record_key, "kind": kind, "version": current["version"], "deduplicated": True}
+        trade_fields = ("唯一主炒作属性", "补涨判断", "压制判断", "公告污染", "公告真实属性", "首开日期",
+                        "首开潜在竞争对手事实清单", "开盘啦完整属性集")
+        changed_trade_inputs = kind == "static" and any(
+            (key in updates and raw.get(key) != updates[key]) or (key in remove_fields and key in raw)
+            for key in trade_fields
+        )
+        if replace_dynamic:
+            raw = {"底稿记录键": record_key}
         for key, value in updates.items():
             raw[key] = value
         for key in remove_fields:
@@ -1458,6 +1439,10 @@ class ResearchStore:
                 connection.execute(f"UPDATE {table} SET is_current=0 WHERE id=?", (current["id"],))
             columns = [key for key in current.keys() if key != "id"]
             values = {key: current[key] for key in columns}
+            if replace_dynamic:
+                for name in ('auction_result','auction_pct_micros','pk_result','buy_result','buy_type','buy_time',
+                             'buy_price_milli','sell_time','sell_price_milli','return_pct_micros'):
+                    values[name] = None
             values["version"] = new_version
             values["is_current"] = 1
             values["research_status"] = request.get("research_status", "formal_research")
@@ -1500,7 +1485,7 @@ class ResearchStore:
                         values["buy_price_milli"] = None
                     else:
                         values["buy_price_milli"] = price_milli(
-                            outcome_update.get("买入价格", (market_update or {}).get("涨停价"))
+                            outcome_update.get("买入价格", ((market_update or {}).get("event") or {}).get("limit_up"))
                         ) or values["buy_price_milli"]
                     values["sell_time"] = outcome_update.get(
                         "尾盘卖出日期", outcome_update.get("卖出日期", outcome_update.get("卖出时间"))
@@ -1564,7 +1549,7 @@ class ResearchStore:
                 old_outcome = connection.execute(
                     "SELECT raw_json FROM trade_outcomes WHERE dynamic_research_id=?", (current["id"],)
                 ).fetchone() if not create_dynamic else None
-                outcome_raw = json.loads(old_outcome["raw_json"]) if old_outcome else {}
+                outcome_raw = json.loads(old_outcome["raw_json"]) if old_outcome and not replace_dynamic else {}
                 if isinstance(updates.get("买入后结果"), dict):
                     outcome_raw.update(updates["买入后结果"])
                 connection.execute(
@@ -1585,11 +1570,14 @@ class ResearchStore:
                         json_text(outcome_raw),
                     ),
                 )
-            connection.execute(
-                """INSERT INTO revisions(object_type,object_key,version,change_json,confirmation_status,source_record_id,created_at)
-                   VALUES(?,?,?,?,?,?,?)""",
-                (kind, record_key, new_version, json_text(updates), request.get("confirmation_status", "pending_user_confirmation"), current["source_record_id"], now_text()),
-            )
+            if changed_trade_inputs:
+                # Only changed trade inputs invalidate its dependent decision.
+                trade_ids = "SELECT id FROM dynamic_research WHERE legacy_record_key=?"
+                connection.execute(f"DELETE FROM research_checks WHERE dynamic_research_id IN ({trade_ids})", (record_key,))
+                connection.execute(f"DELETE FROM trade_outcomes WHERE dynamic_research_id IN ({trade_ids})", (record_key,))
+                connection.execute("DELETE FROM dynamic_research WHERE legacy_record_key=?", (record_key,))
+            self.discard_obsolete_research(connection)
+            connection.execute("DELETE FROM write_requests WHERE object_type=? AND object_key=?", (kind, record_key))
             result = {
                 "record_key": record_key,
                 "kind": kind,
@@ -1613,8 +1601,8 @@ class ResearchStore:
                 digest.update(json_text(list(row)).encode("utf-8"))
         return digest.hexdigest()
 
-    def export_all(self, output_root: Path | None = None, publish_root: bool = False,
-                   refresh_statistics: bool = True) -> dict[str, Any]:
+    def export_all(self, output_root: Path | None = None, publish_root: bool = False) -> dict[str, Any]:
+        self.sync_rules()
         connection = self.connect()
         batch_key = connection.execute(
             "SELECT value FROM store_meta WHERE key='current_batch_key'"
@@ -1683,25 +1671,13 @@ class ResearchStore:
                 "研究状态": row["research_status"],
                 "确认状态": row["confirmation_status"],
             })
-        calculated = None
-        statistics_source = None
-        if refresh_statistics:
-            calculated = self._calculate_statistics(connection)
-        else:
-            pointer_path = self.root / "data/store/exports/current.json"
-            if pointer_path.exists():
-                pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
-                previous_statistics = (self.root / pointer["manifest"]).parent / "研究统计.json"
-                if previous_statistics.exists():
-                    previous_document = json.loads(previous_statistics.read_text(encoding="utf-8"))
-                    calculated = previous_document.get("研究库计算与存档差异")
-                    statistics_source = previous_document.get("沿用统计来源") or previous_document.get("生成信息")
+        calculated = self._calculate_statistics(connection)
         metadata = {
             "generation_key": generation_key,
             "generated_at": now_text(),
             "database_snapshot": snapshot,
             "snapshot_scope": "display_inputs",
-            "statistics_refreshed": refresh_statistics,
+            "statistics_refreshed": True,
             "input_batch_key": batch_key,
             "rule_versions": {
                 row["rule_type"]: row["version"]
@@ -1710,10 +1686,7 @@ class ResearchStore:
         }
         static_document = {"生成信息": metadata, "记录数": len(static_rows), "一字首开股票与数据": static_rows}
         dynamic_document = {"生成信息": metadata, "记录数": len(dynamic_rows), "买卖研究记录": dynamic_rows}
-        statistics_document = {"生成信息": metadata, "研究库计算与存档差异": calculated}
-        if not refresh_statistics:
-            statistics_document["沿用统计来源"] = statistics_source
-            statistics_document["说明"] = "本次仅更新静态研究；交易统计沿用既有结果，由交易研究任务更新。"
+        statistics_document = {"生成信息": metadata, "当前研究统计": calculated}
         files: list[Path] = []
         for filename, value in (
             (STATIC_FILE, static_document),
@@ -1752,7 +1725,8 @@ class ResearchStore:
         generation_id = connection.execute(
             "SELECT id FROM generation_batches WHERE generation_key=?", (generation_key,)
         ).fetchone()["id"]
-        for plan_result in ((calculated or {}).get("formal_plans", []) + (calculated or {}).get("comparison_plans", [])) if refresh_statistics else []:
+        connection.execute("DELETE FROM statistics")
+        for plan_result in calculated["formal_plans"]:
             plan_id = plan_result["plan"]["id"]
             for key, value in plan_result.get("metrics", {}).items():
                 connection.execute(
@@ -1785,24 +1759,23 @@ class ResearchStore:
             connection = self.connect()
             try:
                 connection.execute("DELETE FROM store_meta WHERE key='static_export_pending'")
-                if refresh_statistics:
-                    connection.execute("DELETE FROM store_meta WHERE key='statistics_export_pending'")
+                connection.execute("DELETE FROM store_meta WHERE key='statistics_export_pending'")
                 connection.commit()
             finally:
                 connection.close()
         return {"generation_key": generation_key, "output_dir": str(output_dir), "manifest": manifest,
                 "published": publish_root,"removed_exports":removed_exports}
 
-    def publish_pending(self, output_root=None, publish_root=True, refresh_statistics=False):
+    def publish_pending(self, output_root=None, publish_root=True):
+        self.sync_rules()
         connection = self.connect()
         try:
             pending = {r["key"] for r in connection.execute("SELECT key FROM store_meta WHERE value='1' AND key IN ('static_export_pending','statistics_export_pending')")}
         finally:
             connection.close()
-        if "static_export_pending" not in pending and not (refresh_statistics and "statistics_export_pending" in pending):
+        if not pending:
             return None
-        return self.export_all(output_root,publish_root=publish_root and self.db_path==self.root / "data/store/research.sqlite",
-                               refresh_statistics=refresh_statistics)
+        return self.export_all(output_root,publish_root=publish_root and self.db_path==self.root / "data/store/research.sqlite")
 
     @staticmethod
     def _prune_exports(base: Path, current: Path) -> int:
@@ -1838,14 +1811,15 @@ class ResearchStore:
     def _calculate_statistics(connection: sqlite3.Connection) -> dict[str, Any]:
         return build_statistics_report(connection)
 
-    def maintain_daily(self, keep_backups: int = 3) -> dict[str, Any]:
-        if keep_backups < 1:
-            raise ValueError("keep_backups must be at least 1")
+    def maintain_daily(self, keep_backups: int = 0) -> dict[str, Any]:
+        if keep_backups < 0:
+            raise ValueError("keep_backups must be nonnegative")
         timestamp = datetime.now(SHANGHAI).strftime("%Y%m%d-%H%M%S-%f")
-        report_dir = self.root / "data/store/maintenance" / timestamp
-        report_dir.mkdir(parents=True, exist_ok=False)
+        report_dir = self.root / "data/store/maintenance/current"
+        report_dir.mkdir(parents=True, exist_ok=True)
         from .intake import ingest_paths
         ingestion = ingest_paths(self)
+        self.sync_rules()
         connection = self.connect()
         verification_started = time.perf_counter()
         foreign_key_errors = len(connection.execute("PRAGMA foreign_key_check").fetchall())
@@ -1859,6 +1833,7 @@ class ResearchStore:
             (report_dir / "maintenance_report.json").write_text(json_text({"ingestion": ingestion, "verification": verification}, pretty=True) + "\n", encoding="utf-8")
             raise RuntimeError(f"daily database check failed: {report_dir}")
         snapshot = self.export_snapshot_hash(connection)
+        pending=bool(connection.execute("SELECT 1 FROM store_meta WHERE key IN ('static_export_pending','statistics_export_pending') AND value='1'").fetchone())
         connection.close()
         current_pointer = self.root / "data/store/exports/current.json"
         current_manifest = None
@@ -1867,8 +1842,8 @@ class ResearchStore:
             manifest_path = self.root / pointer["manifest"]
             if manifest_path.exists():
                 current_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        changed = current_manifest is None or current_manifest.get("database_snapshot") != snapshot
-        export = self.export_all(publish_root=True, refresh_statistics=False) if changed else {
+        changed = pending or current_manifest is None or current_manifest.get("database_snapshot") != snapshot
+        export = self.export_all(publish_root=True) if changed else {
             "generation_key": current_manifest["generation_key"],
             "manifest": current_manifest,
             "published": True,
@@ -1877,7 +1852,7 @@ class ResearchStore:
         backup = None
         removed_backups: list[str] = []
         pending_backup_cleanup = []
-        if changed or ingestion["updated"]:
+        if keep_backups and (changed or ingestion["updated"]):
             backup_root = (self.root / "data/store/recovery/daily").resolve()
             backup_root.mkdir(parents=True, exist_ok=True)
             backup_root.relative_to((self.root / "data/store/recovery").resolve())
@@ -2094,8 +2069,6 @@ class ResearchStore:
                 dictionary.append(f"| {column['name']} | {column['type']} | {column['notnull']} | {column['pk']} |")
             dictionary.append("")
         (output_dir / "data_dictionary.md").write_text("\n".join(dictionary) + "\n", encoding="utf-8")
-        rules = self.current_rules()
-        (output_dir / "rule_migration.json").write_text(json_text(rules, pretty=True) + "\n", encoding="utf-8")
         counts = {
             table: connection.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()["c"]
             for table in tables
@@ -2113,54 +2086,3 @@ class ResearchStore:
     def verify_full(self, report_dir: Path) -> dict[str, Any]:
         from .validation import verify_store
         return verify_store(self,report_dir)
-
-    def _rollback_drill(self) -> dict[str, Any]:
-        with Workspace(self.root,"rollback-drill") as workspace:
-            copy_path = workspace.file("rollback.sqlite")
-            source = self.connect()
-            target = sqlite3.connect(copy_path)
-            source.backup(target)
-            target.close()
-            source.close()
-            connection = sqlite3.connect(copy_path)
-            before = connection.execute("SELECT COUNT(*) FROM stocks").fetchone()[0]
-            try:
-                connection.execute("BEGIN IMMEDIATE")
-                connection.execute("INSERT INTO stocks(code,market,created_at) VALUES('999999','SZ','drill')")
-                raise RuntimeError("intentional rollback drill")
-            except RuntimeError:
-                connection.rollback()
-            after = connection.execute("SELECT COUNT(*) FROM stocks").fetchone()[0]
-            connection.close()
-        return {"before": before, "after": after, "passed": before == after,"temporary_cleanup":workspace.cleanup_result}
-
-    def _version_conflict_drill(self) -> dict[str, Any]:
-        with Workspace(self.root,"conflict-drill") as workspace:
-            copy_path = workspace.file("conflict.sqlite")
-            source = self.connect()
-            target = sqlite3.connect(copy_path)
-            source.backup(target)
-            key = source.execute("SELECT legacy_record_key FROM current_static_research ORDER BY id LIMIT 1").fetchone()["legacy_record_key"]
-            rule_version = source.execute(
-                "SELECT version FROM rule_sets WHERE rule_type='static' AND status='current'"
-            ).fetchone()["version"]
-            before = source.execute("SELECT COUNT(*) AS c FROM static_research").fetchone()["c"]
-            target.close()
-            source.close()
-            copy_store = ResearchStore(self.root, copy_path)
-            conflict = None
-            try:
-                copy_store.write_research({
-                    "request_id": "version-conflict-drill",
-                    "record_key": key,
-                    "kind": "static",
-                    "rule_version": rule_version,
-                    "expected_version": 999999,
-                    "updates": {"研究状态": "drill"},
-                })
-            except RuntimeError as exc:
-                conflict = str(exc)
-            check = sqlite3.connect(copy_path)
-            after = check.execute("SELECT COUNT(*) FROM static_research").fetchone()[0]
-            check.close()
-        return {"record_key": key, "message": conflict, "before": before, "after": after,"temporary_cleanup":workspace.cleanup_result,"passed": bool(conflict and before == after)}

@@ -1,4 +1,4 @@
-"""Read-only acceptance of the current library, source archive, and published views."""
+"""Read-only acceptance of current facts, record identities and published views."""
 from __future__ import annotations
 
 import json
@@ -15,7 +15,7 @@ def _paths(document):
 def verify_store(store, directory):
     started = time.perf_counter()
     findings = []
-    original_paths, current_paths = set(), set()
+    current_paths = set()
     connection = store.connect()
     try:
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
@@ -29,9 +29,13 @@ def verify_store(store, directory):
             findings.append({"kind":"record_mapping_count"})
         for row in connection.execute("SELECT id,source_kind,record_key,raw_json,raw_sha256 FROM source_records"):
             raw = json.loads(row["raw_json"])
-            original_paths.update(_paths(raw))
             if canonical_hash(raw)!=row["raw_sha256"]:
-                findings.append({"kind":"source_archive_changed","id":row["id"],"record_key":row["record_key"]})
+                findings.append({"kind":"record_identity_changed","id":row["id"],"record_key":row["record_key"]})
+            if raw or row['source_kind'] not in {'record_anchor','announcement_anchor'}:
+                findings.append({'kind':'duplicate_research_payload','record_key':row['record_key']})
+        for table in ('field_mappings','archived_sections','revisions'):
+            if connection.execute(f'SELECT count(*) FROM {table}').fetchone()[0]:
+                findings.append({'kind':'obsolete_research_copy','table':table})
         for row in connection.execute("""SELECT m.legacy_record_key FROM legacy_key_map m
             LEFT JOIN source_records s ON s.id=m.static_source_record_id
             LEFT JOIN current_static_research r ON r.legacy_record_key=m.legacy_record_key
@@ -73,9 +77,8 @@ def verify_store(store, directory):
     finally:
         connection.close()
     source_gaps = sorted(p for p in current_paths if not (store.root/p).exists())
-    new_source_gaps = [p for p in source_gaps if p not in original_paths]
-    if new_source_gaps:
-        findings.append({"kind":"current_source_missing","paths":new_source_gaps})
+    if source_gaps:
+        findings.append({"kind":"current_source_missing","paths":source_gaps})
     from .derive import recompute
     automatic = recompute(store,automatic_keys,preview=True,verify_saved=True) if automatic_keys and not out_of_sync else {"complete":0,"findings":[],"blocked":[]}
     if automatic["findings"] or automatic["blocked"]:
@@ -115,9 +118,9 @@ def verify_store(store, directory):
             publication = {"checked":True,"generation_key":manifest["generation_key"],"files":len(manifest["files"])}
         except (OSError,KeyError,ValueError) as exc:
             findings.append({"kind":"publication_read","error":str(exc)})
-    result = {"passed":not findings,"scope":"current library, archived source integrity, automatic research and published output",
+    result = {"passed":not findings,"scope":"current library, unique research inputs, evidence references and published output",
               "counts":counts,"integrity_check":integrity,"foreign_key_errors":len(foreign_keys),"findings":findings,
-              "preexisting_source_gaps":[p for p in source_gaps if p in original_paths],"automatic_records":automatic["complete"],
+              "automatic_records":automatic["complete"],
               "publication":publication,"elapsed_seconds":round(time.perf_counter()-started,3)}
     directory.mkdir(parents=True,exist_ok=True)
     (directory/"verification.json").write_text(json_text(result,pretty=True)+"\n",encoding="utf-8")

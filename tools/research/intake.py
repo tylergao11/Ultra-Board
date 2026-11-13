@@ -14,6 +14,8 @@ from .system import SHANGHAI, json_text, sha256_file, valid_code
 
 
 def _kind(path: str) -> str:
+    if path.startswith('data/kaipanla/stock_history/'):
+        return 'history'
     if path.startswith("data/kaipanla/raw/"):
         name = Path(path).name
         return "raw" if name in {"zt_pool.json", "historical_messages.json", "sector_ladder.json"} or name.startswith("limit_performance_") else "evidence"
@@ -31,13 +33,13 @@ def ingest_paths(store, paths: list[Path | str] | None = None) -> dict:
     started = time.perf_counter()
     explicit = paths is not None
     roots = paths if explicit else ["data/kaipanla/raw", "data/kaipanla/concepts_current",
-                                   "data/kaipanla/plate_members", "data/price_checks"]
+                                   "data/kaipanla/plate_members", "data/kaipanla/stock_history", "data/price_checks"]
     files = set()
     for value in roots:
         path = (store.root / value).resolve()
         path.relative_to(store.root.resolve())
         if path.is_dir():
-            files.update(item for item in path.rglob("*.json") if item.is_file())
+            files.update(item for item in path.rglob("*") if item.is_file() and (item.suffix==".json" or (item.suffix==".js" and item.parent.name=="ths_kline")))
         elif path.is_file():
             files.add(path)
         elif explicit:
@@ -52,23 +54,9 @@ def ingest_paths(store, paths: list[Path | str] | None = None) -> dict:
     )}
     # Existing structured rows provide the initial receipt; registration alone does not.
     parsed = set()
-    imported = {}
     if any(path.relative_to(store.root).as_posix() not in receipts for path in files):
         for table in ("stock_concepts", "plate_memberships", "daily_market", "market_source_facts"):
             parsed.update(row[0] for row in connection.execute(f"SELECT DISTINCT evidence_file_id FROM {table}"))
-        # Seed empty successful sources from the verified full-import inventory once.
-        # Empty daily responses have no fact rows and still must not trigger a rebuild.
-        full = connection.execute("SELECT summary_json FROM import_batches WHERE kind='full_migration' AND status='complete' ORDER BY id DESC LIMIT 1").fetchone()
-        inventory = store.root / "data/store/migrations/reports/evidence_inventory.jsonl"
-        summary = json.loads(full[0]) if full else {}
-        if inventory.exists() and sha256_file(inventory) == summary.get("evidence_inventory", {}).get("inventory_sha256"):
-            reports = {"concepts": ["concepts"], "members": ["plate_members"], "prices": ["price_checks"],
-                       "raw": ["raw_market", "market_source_facts"], "evidence": []}
-            with inventory.open(encoding="utf-8") as source:
-                for line in source:
-                    item = json.loads(line)
-                    if all(key in summary and not summary[key].get("parse_errors") for key in reports[_kind(item["path"]) ]):
-                        imported[item["path"]] = item["sha256"]
     pending = {}
     result = {"files_considered": len(files), "files_hashed": 0, "updated": [], "unchanged": 0,
               "affected_records": [], "errors": [], "full_imports": 0}
@@ -82,7 +70,7 @@ def ingest_paths(store, paths: list[Path | str] | None = None) -> dict:
             result["unchanged"] += 1
             continue
         modified = datetime.fromtimestamp(stat.st_mtime, SHANGHAI).isoformat(timespec="seconds")
-        baseline = previous and (previous["id"] in parsed or imported.get(relative) == previous["sha256"] or _kind(relative) == "evidence")
+        baseline = previous and (previous["id"] in parsed or _kind(relative) == "evidence")
         if not explicit and baseline and previous["size_bytes"] == stat.st_size and previous["modified_at"] == modified:
             digest = previous["sha256"]
         else:
@@ -150,6 +138,9 @@ def ingest_paths(store, paths: list[Path | str] | None = None) -> dict:
                         store.import_plate_members(connection, [item[0] for item in items], commit=False)
                     elif kind == "prices":
                         store.import_price_checks(connection, [item[0] for item in items], commit=False)
+                    elif kind == 'history':
+                        from .events import import_history_file
+                        for item in items:import_history_file(store,connection,item[0])
                     for path, relative, metadata in items:
                         connection.execute("INSERT OR REPLACE INTO store_meta(key,value) VALUES(?,?)",
                                            (f"intake:{relative}", json_text(metadata)))

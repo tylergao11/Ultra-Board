@@ -4,7 +4,7 @@ param(
     [string]$Tag = "research-store-current",
     [switch]$Force,
     [ValidateRange(0, 10)]
-    [int]$KeepLocalBackups = 2
+    [int]$KeepLocalBackups = 0
 )
 
 Set-StrictMode -Version Latest
@@ -37,7 +37,7 @@ try {
             $needsDownload = $false
         }
         elseif (-not $Force) {
-            throw "本地数据库与 GitHub 快照不同。请先处理本地研究，或使用 -Force 覆盖并自动保留本机备份。"
+            throw "本地数据库与 GitHub 快照不同。请先处理本地研究；确认覆盖时使用 -Force，需要保留副本时另传 -KeepLocalBackups。"
         }
     }
 
@@ -51,7 +51,7 @@ try {
             throw "下载校验失败：size=$actualSize sha256=$actualHash"
         }
         [System.IO.Directory]::CreateDirectory($storeDir) | Out-Null
-        if (Test-Path -LiteralPath $databasePath) {
+        if ((Test-Path -LiteralPath $databasePath) -and $KeepLocalBackups -gt 0) {
             $backupDir = Join-Path $storeDir "local-backups"
             [System.IO.Directory]::CreateDirectory($backupDir) | Out-Null
             $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -68,7 +68,12 @@ try {
                 [System.IO.File]::Delete($oldBackup.FullName)
             }
         }
-        [System.IO.File]::Move($downloadPath, $databasePath)
+        if (Test-Path -LiteralPath $databasePath) {
+            [System.IO.File]::Replace($downloadPath, $databasePath, $null)
+        }
+        else {
+            [System.IO.File]::Move($downloadPath, $databasePath)
+        }
         Write-Host "研究库已安装：$databasePath"
     }
 

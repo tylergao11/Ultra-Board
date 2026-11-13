@@ -6,7 +6,7 @@
 
 - Git 仓库保存原始资料、代码、规则、生成表、统计和核验报告。
 - GitHub Release `research-store-current` 保存当前正式 SQLite 数据库、SHA-256 和机器可读清单。
-- 本机 `data/store/recovery/` 保存短期滚动恢复副本，由 `maintain` 自动保留最近三份。
+- 本机默认不生成恢复副本；明确要求备份时再使用备份入口。
 
 正式数据库约 403 MB。GitHub 普通 Git 的单文件上限为 100 MiB；Git LFS 每次修改都会计入一个完整的新版本。滚动 Release 让下载地址保持稳定，同时控制大文件版本数量。
 
@@ -33,7 +33,7 @@ powershell -ExecutionPolicy Bypass -File tools/setup_home.ps1
 powershell -ExecutionPolicy Bypass -File tools/setup_home.ps1 -Force
 ```
 
-被替换的数据库会移动到 `data/store/local-backups/`，便于回退。
+默认直接替换已经核验的目标库；显式传入 `-KeepLocalBackups` 才保留指定份数的本机旧库。
 
 ## 按需同步与换电脑
 
@@ -49,7 +49,7 @@ powershell -ExecutionPolicy Bypass -File tools/start_work.ps1 -Sync
 powershell -ExecutionPolicy Bypass -File tools/finish_work.ps1 -Sync -Message "本次工作摘要"
 ```
 
-加 `-Sync` 后，`start_work.ps1` 检查工作区、快进拉取 GitHub、安装当前数据库并保留最多两份本机旧库；`finish_work.ps1` 检查本机结果，提交、推送并更新滚动数据库 Release。省略 `-Sync` 时两个入口均只操作本机。底层脚本保留给 agent 排障和单项操作。
+加 `-Sync` 后，`start_work.ps1` 检查工作区、快进拉取 GitHub、安装当前数据库；`finish_work.ps1` 检查本机结果，提交、推送并更新滚动数据库 Release。省略 `-Sync` 时两个入口均只操作本机。底层脚本保留给 agent 排障和单项操作。
 
 ## 单独发布数据库
 
@@ -67,6 +67,6 @@ powershell -ExecutionPolicy Bypass -File tools/publish_database_release.ps1
 
 ## 冲突处理
 
-两台电脑同时研究时，先在一台完成研究写入、导出和数据库发布，再在另一台执行 `git pull` 与 `setup_home.ps1 -Force`。开始覆盖前，脚本会把另一台的现有数据库移入本机备份目录。
+两台电脑同时研究时，先在一台完成研究写入、导出和数据库发布，再在另一台执行 `git pull` 与 `setup_home.ps1 -Force`。覆盖前完成下载与校验，确认使用新快照时原子替换目标库。
 
 原始资料和 JSON 冲突使用 Git 处理。SQLite 数据库通过当前 Release 整体切换，避免二进制合并。

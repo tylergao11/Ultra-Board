@@ -11,7 +11,6 @@ from __future__ import annotations
 from collections import Counter
 from decimal import Decimal
 import json
-import re
 import sqlite3
 from typing import Any, Iterable
 
@@ -284,190 +283,17 @@ def calculate_plan_statistics(
 
 
 def calculate_all_plan_statistics(connection: sqlite3.Connection) -> dict[str, Any]:
-    """Calculate every plan independently, with formal and comparison groups separated."""
-
-    plans = _rows(
-        connection,
-        "SELECT id,plan_code,version,status FROM research_plans ORDER BY plan_code,version",
-    )
-    formal: list[dict[str, Any]] = []
-    comparisons: list[dict[str, Any]] = []
+    plans = _rows(connection, "SELECT id FROM research_plans WHERE status='current' AND plan_code='formal'")
+    formal = []
     for plan in plans:
         result = calculate_plan_statistics(connection, int(plan["id"]))
-        years = sorted({
-            str(key).partition("|")[2][:4]
-            for key in result["scope"]["dynamic_record_keys"]
-            if re.fullmatch(r"\d{4}", str(key).partition("|")[2][:4])
-        })
+        years = sorted({key.partition("|")[2][:4] for key in result["scope"]["dynamic_record_keys"]})
         result["year_scopes"] = {
-            year: calculate_plan_statistics(connection, int(plan["id"]), year)
-            for year in years
+            year: calculate_plan_statistics(connection, int(plan["id"]), year) for year in years
         }
-        target = formal if plan["status"] == "current" and plan["plan_code"] == "formal" else comparisons
-        target.append(result)
-    return {
-        "formal_plans": formal,
-        "comparison_plans": comparisons,
-        "separation_policy": "Each metric is grouped by research_plans.id; archived or hypothetical rows never enter formal-plan SQL results.",
-    }
-
-
-def load_archived_statistics(connection: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Load old statistics/comparison material as read-only comparison evidence."""
-
-    rows = _rows(
-        connection,
-        """
-        SELECT source_file,section,archive_kind,raw_sha256,raw_json
-          FROM archived_sections
-         WHERE archive_kind IN ('statistics','comparison_study')
-         ORDER BY source_file,section
-        """,
-    )
-    for row in rows:
-        try:
-            row["value"] = json.loads(row.pop("raw_json"))
-        except (TypeError, ValueError):
-            row["value"] = None
-            row.pop("raw_json", None)
-    return rows
-
-
-def _scalar_paths(value: Any, path: str = "") -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    if isinstance(value, dict):
-        for key, child in value.items():
-            child_path = f"{path}.{key}" if path else str(key)
-            result.update(_scalar_paths(child, child_path))
-    elif not isinstance(value, list):
-        result[path] = value
-    return result
-
-
-ARCHIVED_METRIC_ALIASES = {
-    "buy_day_seal_rate": ("buyDaySealRatePct", "买入日封板率", "买入日封板率百分比", "封板率"),
-    "next_day_board_rate": ("nextDayBoardRatePct", "次日连板率", "次日连板率百分比"),
-    "low_open_board_rate": ("lowOpenNextBoardRatePct", "低开连板率", "低开连板率百分比"),
-    "low_open_close_red_rate": ("lowOpenCloseRedRatePct", "低开后收盘红概率", "低开收红率百分比"),
-    "low_open_final_limit_down_rate": ("lowOpenFinalLimitDownRatePct", "低开后跌停概率", "低开最终跌停率百分比"),
-}
-
-
-def _archived_sample_keys(value: Any) -> list[str]:
-    candidates: list[list[str]] = []
-    if isinstance(value, dict):
-        for key, child in value.items():
-            if isinstance(child, list) and "买入样本" in str(key):
-                sample = [item for item in child if isinstance(item, str) and "|" in item]
-                if sample:
-                    candidates.append(sample)
-            candidates.extend([_archived_sample_keys(child)])
-    elif isinstance(value, list):
-        for child in value:
-            candidates.extend([_archived_sample_keys(child)])
-    candidates = [item for item in candidates if item]
-    return max(candidates, key=len) if candidates else []
-
-
-def compare_with_archived(
-    current_plan_result: dict[str, Any],
-    archived_sections: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Compare equivalent scalar rates and state a concrete difference category."""
-
-    archived_values: list[tuple[dict[str, Any], str, Any]] = []
-    for section in archived_sections:
-        for path, value in _scalar_paths(section.get("value")).items():
-            archived_values.append((section, path, value))
-    comparisons: list[dict[str, Any]] = []
-    for metric_key, aliases in ARCHIVED_METRIC_ALIASES.items():
-        all_history = current_plan_result.get("metrics", {}).get(metric_key, {})
-        matches = [
-            (section, path, value)
-            for section, path, value in archived_values
-            if any(path == alias or path.endswith(f".{alias}") for alias in aliases)
-        ]
-        if not matches:
-            comparisons.append({
-                "metric": metric_key,
-                "current_percent": all_history.get("percent"),
-                "archive_status": "no_equivalent_scalar_found",
-                "difference_attribution": "The archive has no scalar under a recognized metric name; retain the archive value and formula for manual review.",
-            })
-            continue
-        for section, path, value in matches:
-            year_match = re.search(r"(?<!\d)(20\d{2})(?!\d)", f"{section.get('section', '')}.{path}")
-            archive_year = year_match.group(1) if year_match else None
-            scoped_result = current_plan_result.get("year_scopes", {}).get(archive_year, current_plan_result)
-            current = scoped_result.get("metrics", {}).get(metric_key, {})
-            current_value = current.get("percent")
-            try:
-                archived_value = float(value) if value is not None else None
-            except (TypeError, ValueError):
-                archived_value = None
-            equal = (
-                current_value is not None
-                and archived_value is not None
-                and abs(float(current_value) - archived_value) < 0.005
-            )
-            archived_keys = _archived_sample_keys(section.get("value"))
-            current_keys = current.get("denominator_record_keys", [])
-            current_only = sorted(set(current_keys) - set(archived_keys)) if archived_keys else []
-            archived_only = sorted(set(archived_keys) - set(current_keys)) if archived_keys else []
-            if equal:
-                attribution = "same_formula_result" if archive_year is None else f"same_formula_result_for_{archive_year}_record_scope"
-            elif archived_keys:
-                if not current_only and not archived_only and archived_value is not None:
-                    archived_numerator = round(archived_value * len(archived_keys) / 100)
-                    attribution = (
-                        f"same_sample_outcome_revision: both use {len(current_keys)} sample keys; "
-                        f"current numerator={current.get('numerator')}, archived numerator inferred from its scalar={archived_numerator}; "
-                        f"the archived path is retained as an earlier outcome/statistics revision"
-                    )
-                else:
-                    attribution = (
-                        f"sample_scope_difference: current denominator {len(current_keys)}, archived sample {len(archived_keys)}; "
-                        f"current_only={current_only}; archived_only={archived_only}"
-                    )
-            else:
-                attribution = (
-                    f"formula_or_coverage_difference: current numerator={current.get('numerator')}, "
-                    f"denominator={current.get('denominator')}, percent={current_value}; "
-                    f"archive scalar={archived_value} and no equivalent archived sample-key list is present"
-                )
-            comparisons.append({
-                "metric": metric_key,
-                "current_percent": current_value,
-                "all_history_percent": all_history.get("percent"),
-                "comparison_record_key_year": archive_year,
-                "current_numerator": current.get("numerator"),
-                "current_denominator": current.get("denominator"),
-                "archived_percent": archived_value,
-                "archived_source_file": section.get("source_file"),
-                "archived_section": section.get("section"),
-                "archived_path": path,
-                "same_value": equal,
-                "difference_attribution": attribution,
-            })
-    return comparisons
+        formal.append(result)
+    return {"formal_plans": formal}
 
 
 def build_statistics_report(connection: sqlite3.Connection) -> dict[str, Any]:
-    """Return formal results, separate comparison results, and archive differences."""
-
-    plans = calculate_all_plan_statistics(connection)
-    archived = load_archived_statistics(connection)
-    formal_archived = [section for section in archived if section.get("archive_kind") == "statistics"]
-    formal_comparisons = [
-        {
-            "plan": result["plan"],
-            "archive_comparison": compare_with_archived(result, formal_archived),
-        }
-        for result in plans["formal_plans"]
-    ]
-    return {
-        **plans,
-        "archived_sections": archived,
-        "formal_archive_comparisons": formal_comparisons,
-        "archive_policy": "Archived values remain evidence. Differences are reported and never overwrite current plan statistics.",
-    }
+    return calculate_all_plan_statistics(connection)
