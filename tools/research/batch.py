@@ -124,8 +124,8 @@ def _confirmed_theme(connection, stock_id: int, trade_date: str) -> str | None:
         """SELECT r.main_theme FROM launch_rounds l
            JOIN first_open_events f ON f.launch_round_id=l.id
            JOIN current_static_research r ON r.first_open_event_id=f.id
-           WHERE l.stock_id=? AND l.first_board_date<=?
-           ORDER BY l.first_board_date DESC,l.focus_date DESC LIMIT 1""",
+           WHERE l.stock_id=? AND l.focus_date<=?
+           ORDER BY l.focus_date DESC LIMIT 1""",
         (stock_id, trade_date),
     ).fetchone()
     return row["main_theme"] if row else None
@@ -318,11 +318,12 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
     stock_id = int(row["stock_id"])
     code = row["code"]
     end_date = row["event_date"] or row["focus_date"]
-    first_two = _first_two(connection, stock_id, end_date, row["first_board_date"])
+    first_two = _first_two(connection, stock_id, end_date)
+    first_board_date = first_two[0]["date"] if first_two else (row["first_board_date"] or row["focus_date"])
     strict_days = []
-    scope_dates = {row["first_board_date"], row["focus_date"]}
+    scope_dates = {first_board_date, row["focus_date"]}
     for date in dates:
-        if row["first_board_date"] and row["first_board_date"] <= date <= end_date:
+        if first_board_date <= date <= end_date:
             candidate = _daily_row(connection, stock_id, date)
             if not candidate or not candidate.get("strict_one_word"):
                 continue
@@ -344,9 +345,9 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
            WHERE d.legacy_record_key=? AND p.plan_code='formal'""",
         (row["legacy_record_key"],),
     ).fetchone() if scope == "both" else None
-    high_key = ("high_pool", row["first_board_date"])
+    high_key = ("high_pool", first_board_date)
     if high_key not in shared:
-        shared[high_key] = _high_pool(connection, dates, row["first_board_date"], batch_key)
+        shared[high_key] = _high_pool(connection, dates, first_board_date, batch_key)
     for date in scope_dates:
         if date and ("raw_scope", date) not in shared:
             shared[("raw_scope", date)] = _raw_scope(store.root, date)
@@ -356,7 +357,7 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
             "stock_id": stock_id,
             "code": code,
             "name": _name(connection, stock_id),
-            "first_board_date": row["first_board_date"],
+            "first_board_date": first_board_date,
             "focus_date": row["focus_date"],
             "first_open_date": row["event_date"],
             "board_sequence": row["board_sequence_text"],
@@ -371,15 +372,15 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
         "high_pool": shared[high_key],
         "strict_one_word_days": strict_days,
         "scope_audit": [shared[("raw_scope", date)] for date in sorted(date for date in scope_dates if date)],
-        "announcement_sources": _announcement_sources(store.root, dates, code, row["first_board_date"], end_date),
+        "announcement_sources": _announcement_sources(store.root, dates, code, first_board_date, end_date),
         "announcement_missing_dates": [date for date in dates
-            if (_previous_date(dates, row["first_board_date"]) or row["first_board_date"] or end_date) <= date <= end_date
+            if (_previous_date(dates, first_board_date) or first_board_date) <= date <= end_date
             and not (store.root / "data/kaipanla/raw" / date / "historical_messages.json").exists()],
         "announcement_facts": [dict(item) for item in connection.execute(
             """SELECT DISTINCT m.trade_date,m.source_kind,m.topic,m.description,e.path AS source
                FROM market_source_facts m LEFT JOIN evidence_files e ON e.id=m.evidence_file_id
                WHERE m.stock_id=? AND m.trade_date BETWEEN ? AND ? ORDER BY m.trade_date,m.source_kind""",
-            (stock_id, _previous_date(dates, row["first_board_date"]) or row["first_board_date"], end_date),
+            (stock_id, _previous_date(dates, first_board_date) or first_board_date, end_date),
         )],
         "potential_competitor_candidates": _competitor_candidates(
             connection, dates, stock_id, row["focus_date"], row["event_date"]
@@ -793,6 +794,14 @@ def verify_batch(
         if not static or static["research_status"] == "unresearched":
             findings.append(f"{fact['record_key']} static research missing")
             continue
+        launch = connection.execute(
+            """SELECT l.first_board_date FROM first_open_events f
+               JOIN launch_rounds l ON l.id=f.launch_round_id
+               WHERE f.id=?""",
+            (static["first_open_event_id"],),
+        ).fetchone()
+        if not launch or launch["first_board_date"] != fact["identity"]["first_board_date"]:
+            findings.append(f"{fact['record_key']} actual first-board date mismatch")
         raw = json.loads(static["raw_json"])
         expected_static = {
             "唯一主炒作属性": decision["static"].get("main_theme"),
@@ -868,6 +877,27 @@ def verify_batch(
     }
 
 
+def _sync_actual_first_board_dates(store, facts: dict[str, Any]) -> int:
+    connection = store.connect()
+    store.apply_migrations(connection)
+    changed = 0
+    with store.immediate(connection):
+        for fact in facts["records"]:
+            actual = fact["identity"]["first_board_date"]
+            row = connection.execute(
+                """SELECT l.id,l.first_board_date FROM current_static_research r
+                   JOIN first_open_events f ON f.id=r.first_open_event_id
+                   JOIN launch_rounds l ON l.id=f.launch_round_id
+                   WHERE r.legacy_record_key=?""",
+                (fact["record_key"],),
+            ).fetchone()
+            if row and row["first_board_date"] != actual:
+                connection.execute("UPDATE launch_rounds SET first_board_date=? WHERE id=?", (actual, row["id"]))
+                changed += 1
+    connection.close()
+    return changed
+
+
 def commit_batch(
     store,
     facts_path: Path,
@@ -884,6 +914,7 @@ def commit_batch(
     decisions = dict(decisions, records=[row for row in decisions["records"] if row["record_key"] not in deferred_keys])
     if not facts["records"]:
         return {"batch_id": facts["batch_id"], "write_count": 0, "deferred": deferred}
+    synchronized_first_board_dates = _sync_actual_first_board_dates(store, facts)
     requests = _requests_for_batch(facts, decisions)
     write_started = time.perf_counter()
     results = [store.write_research(request) for request in requests]
@@ -892,13 +923,14 @@ def commit_batch(
     if not verification["passed"]:
         raise RuntimeError(f"batch verification failed: {verification['findings']}")
     export_started = time.perf_counter()
-    export = store.export_all(publish_root=True, refresh_statistics=facts.get("scope", "both") == "both") if publish and any(not row.get("deduplicated") for row in results) else None
+    export = store.export_all(publish_root=True, refresh_statistics=facts.get("scope", "both") == "both") if publish and (synchronized_first_board_dates or any(not row.get("deduplicated") for row in results)) else None
     return {
         "batch_id": facts["batch_id"],
         "record_count": len(facts["records"]),
         "write_count": len(results),
         "deferred": deferred,
         "scope": facts.get("scope", "both"),
+        "synchronized_first_board_dates": synchronized_first_board_dates,
         "deduplicated": sum(bool(row.get("deduplicated")) for row in results),
         "timing_seconds": {"write": write_seconds, "verify": verification["elapsed_seconds"],
                            "export": round(time.perf_counter() - export_started, 3)},
