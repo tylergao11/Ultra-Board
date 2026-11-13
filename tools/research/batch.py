@@ -502,8 +502,7 @@ def prepare_batch(
         from .intake import fetch_attributes
         passing = {row["record_key"] for row in decisions["records"]
                    if row["static"].get("replenishment_result") == "非补涨"
-                   and str(row["static"].get("suppression_result") or "").startswith("无")
-                   and row["static"].get("announcement_pollution") is False}
+                   and str(row["static"].get("suppression_result") or "").startswith("无")}
         missing_codes = sorted({item["code"] for item in _missing_facts(facts_records)
                                 if item["kind"] == "attributes" and
                                 (not item.get("required_when") or item["record_key"] in passing)})
@@ -632,7 +631,6 @@ def _validate_decision(fact: dict[str, Any], decision: dict[str, Any], scope: st
     passed = (
         static["replenishment_result"] == "非补涨"
         and str(static["suppression_result"]).startswith("无")
-        and static["announcement_pollution"] is False
     )
     if passed and not isinstance(static.get("competitors"), list):
         raise ValueError(f"{fact['record_key']} passing record requires competitors array")
@@ -652,7 +650,7 @@ def _request_id(batch_id: str, kind: str, key: str, updates: dict[str, Any]) -> 
 def _dynamic_updates(passed: bool, static: dict[str, Any], dynamic: dict[str, Any]) -> dict[str, Any]:
     if passed:
         updates = {
-            "买入筛选": {"非补涨": True, "无一字压制": True, "无公告污染": True, "结果": "通过"},
+            "买入筛选": {"非补涨": True, "无一字压制": True, "公告污染": static["announcement_pollution"], "公告处理": "独立记录", "结果": "通过"},
             "竞价筛选": dynamic["auction"],
             "同题材PK核验明细": dynamic["pk_checks"],
             "同题材PK结果": dynamic["pk_result"],
@@ -667,21 +665,20 @@ def _dynamic_updates(passed: bool, static: dict[str, Any], dynamic: dict[str, An
         reasons.append("补涨")
     if not str(static["suppression_result"]).startswith("无"):
         reasons.append("有一字压制")
-    if static["announcement_pollution"]:
-        reasons.append("公告污染")
     reason = "、".join(reasons)
     return {
         "买入筛选": {
             "非补涨": static["replenishment_result"] == "非补涨",
             "无一字压制": str(static["suppression_result"]).startswith("无"),
-            "无公告污染": not static["announcement_pollution"],
+            "公告污染": static["announcement_pollution"],
+            "公告处理": "独立记录",
             "结果": "淘汰",
             "依据": reason,
         },
-        "竞价筛选": {"结果": "未进入", "依据": "三项筛选已淘汰"},
+        "竞价筛选": {"结果": "未进入", "依据": "补涨或一字压制筛选已淘汰"},
         "同题材PK核验明细": [],
-        "同题材PK结果": "未进入：三项筛选已淘汰",
-        "首开买点": {"结果": "未进入", "买点类型": None, "买点时间": None, "事实": "三项筛选已淘汰", "来源": []},
+        "同题材PK结果": "未进入：补涨或一字压制筛选已淘汰",
+        "首开买点": {"结果": "未进入", "买点类型": None, "买点时间": None, "事实": "补涨或一字压制筛选已淘汰", "来源": []},
         "买入后结果": {"是否买入": False, "统计处理": "不进入买入样本"},
     }
 
@@ -721,7 +718,10 @@ def _requests_for_batch(facts: dict[str, Any], decisions: dict[str, Any]) -> lis
             "公告污染依据": static["announcement_basis"],
             "公告污染来源": fact["announcement_sources"],
             "静态三项结论": "通过" if passed else "不通过",
+            "静态筛选口径": "非补涨 + 无一字压制；公告污染独立记录",
         }
+        if static["announcement_pollution"]:
+            updates["公告真实属性"] = static["main_theme"]
         if passed:
             updates["首开潜在竞争对手事实清单"] = static["competitors"]
             updates["首开潜在竞争对手候选全集"] = fact["potential_competitor_candidates"]
@@ -734,10 +734,16 @@ def _requests_for_batch(facts: dict[str, Any], decisions: dict[str, Any]) -> lis
         ]
         if passed:
             checks.append({"check_type":"首开潜在竞争对手事实清单","outcome":"完整","basis":"按前日同身位及更高身位全集逐只裁决。","sources":sorted(_source_values(fact["potential_competitor_candidates"])),"raw":static["competitors"]})
+        remove_fields = []
+        if not passed:
+            remove_fields.extend(["首开潜在竞争对手事实清单", "首开潜在竞争对手候选全集"])
+        if not static["announcement_pollution"]:
+            remove_fields.append("公告真实属性")
         requests.append({
             "request_id": _request_id(facts["batch_id"], "static", fact["record_key"], updates),
             "record_key": fact["record_key"], "kind": "static", "research_status": "formal_source_record",
-            "confirmation_status": "pending_user_confirmation", "evidence": evidence, "updates": updates, "checks": checks,
+            "confirmation_status": "pending_user_confirmation", "evidence": evidence, "updates": updates,
+            "remove_fields": remove_fields, "checks": checks,
         })
         if facts.get("scope", "both") == "static":
             continue
@@ -745,7 +751,7 @@ def _requests_for_batch(facts: dict[str, Any], decisions: dict[str, Any]) -> lis
             dynamic = decision["dynamic"]
             dynamic_updates = _dynamic_updates(True, static, dynamic)
             dynamic_checks = [
-                {"check_type":"买入筛选","outcome":"通过","basis":"非补涨、无一字压制、无公告污染。","sources":[]},
+                {"check_type":"买入筛选","outcome":"通过","basis":"非补涨、无一字压制；公告污染独立记录。","sources":[]},
                 {"check_type":"竞价筛选","outcome":dynamic["auction"].get("结果"),"basis":dynamic["auction"].get("依据"),"sources":sorted(_source_values(fact["first_open_market"]))},
                 {"check_type":"theme_pk","outcome":dynamic["pk_result"],"basis":"按静态竞争清单执行。","sources":sorted(_source_values(fact["potential_competitor_candidates"])),"raw":dynamic["pk_checks"]},
                 {"check_type":"买点","outcome":dynamic["buy_point"].get("结果"),"basis":dynamic["buy_point"].get("事实"),"sources":dynamic["buy_point"].get("来源",[])},
@@ -816,6 +822,8 @@ def verify_batch(
         for key, value in expected_static.items():
             if raw.get(key) != value:
                 findings.append(f"{fact['record_key']} static value mismatch: {key}")
+        if decision["static"].get("announcement_pollution") and raw.get("公告真实属性") != decision["static"].get("main_theme"):
+            findings.append(f"{fact['record_key']} announcement industry theme missing")
         for key in ["开盘啦完整属性集","高标事实池","唯一主炒作属性","补涨判断","压制判断","公告污染","公告污染来源"]:
             if key not in raw:
                 findings.append(f"{fact['record_key']} missing static field: {key}")
@@ -840,7 +848,7 @@ def verify_batch(
             for key, value in expected_dynamic.items():
                 actual = dynamic_raw.get(key)
                 if key == "买入筛选" and isinstance(actual, dict) and isinstance(value, dict):
-                    conclusion_keys = ("非补涨", "无一字压制", "无公告污染", "结果")
+                    conclusion_keys = ("非补涨", "无一字压制", "结果")
                     matches = all(actual.get(item) == value.get(item) for item in conclusion_keys)
                     if value.get("结果") == "淘汰" and not actual.get("依据"):
                         matches = False
@@ -856,6 +864,10 @@ def verify_batch(
                 findings.append(f"{fact['record_key']} bought outcome lacks price or sell date")
         if passed and "首开潜在竞争对手事实清单" not in raw:
             findings.append(f"{fact['record_key']} passing record lacks competitor list")
+        if not passed and ("首开潜在竞争对手事实清单" in raw or "首开潜在竞争对手候选全集" in raw):
+            findings.append(f"{fact['record_key']} stale competitor fields remain")
+        if not decision["static"].get("announcement_pollution") and "公告真实属性" in raw:
+            findings.append(f"{fact['record_key']} stale announcement industry theme remains")
         records.append({
             "record_key": fact["record_key"],
             "static_pass": passed,

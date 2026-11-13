@@ -2170,6 +2170,10 @@ class ResearchStore:
         if not isinstance(updates, dict):
             connection.close()
             raise ValueError("updates must be an object")
+        remove_fields = request.get("remove_fields", [])
+        if not isinstance(remove_fields, list) or any(not isinstance(key, str) for key in remove_fields):
+            connection.close()
+            raise ValueError("remove_fields must be a string array")
         checks = request.get("checks")
         if checks is not None and not isinstance(checks, list):
             connection.close()
@@ -2180,6 +2184,7 @@ class ResearchStore:
             raise ValueError("evidence must be an array when provided")
         raw = json.loads(current["raw_json"])
         if (not create_dynamic and all(raw.get(key) == value for key, value in updates.items())
+                and all(key not in raw for key in remove_fields)
                 and (evidence is None or json.loads(current["evidence_snapshot_json"]) == evidence)
                 and int(current["rule_set_id"]) == int(rule["id"])
                 and current["research_status"] == request.get("research_status", "formal_research")
@@ -2199,6 +2204,8 @@ class ResearchStore:
                 return {"record_key": record_key, "kind": kind, "version": current["version"], "deduplicated": True}
         for key, value in updates.items():
             raw[key] = value
+        for key in remove_fields:
+            raw.pop(key, None)
         new_version = int(current["version"]) + 1
         with self.immediate(connection):
             if not create_dynamic:
