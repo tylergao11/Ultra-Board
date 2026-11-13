@@ -1189,6 +1189,7 @@ def verify_batch_current(store, directory):
                 saved = connection.execute("SELECT * FROM current_static_research WHERE legacy_record_key=?",(row["record_key"],)).fetchone()
                 raw = json.loads(saved["raw_json"])
                 expected = {"唯一主炒":saved["main_theme"],"补涨判断":saved["replenishment_result"],
+                            "补涨题材日期":raw.get("补涨题材日期"),"出生当日补涨题材":raw.get("出生当日补涨题材"),
                             "压制判断":saved["suppression_result"],"公告污染":bool(saved["announcement_pollution"]),
                             "潜在竞争对手":raw.get("首开潜在竞争对手事实清单"),
                             "静态筛选结论":raw.get("静态筛选结论")}

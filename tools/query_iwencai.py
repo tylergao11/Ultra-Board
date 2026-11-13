@@ -87,7 +87,7 @@ def query(item, output_dir, bundle, version, validate=None, retries=3, refresh=F
             ["node", str(bundle)], capture_output=True, text=True, check=True, timeout=20
         ).stdout.strip()
         payload=json.loads(request_bytes(ENDPOINT,data=body,headers={"hexin-v":token,"User-Agent":USER_AGENT,
-            "Referer":"https://www.iwencai.com/","Content-Type":"application/x-www-form-urlencoded"},timeout=30))
+            "Referer":"https://www.iwencai.com/","Content-Type":"application/x-www-form-urlencoded"},timeout=30,use_proxy=False))
         rows = table_rows(payload)
         if payload.get('status_code') != 0 or not rows or (validate is not None and not validate(rows)):
             raise ValueError(f'{identifier}: response lacks requested facts')

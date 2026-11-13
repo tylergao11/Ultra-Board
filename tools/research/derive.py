@@ -14,6 +14,15 @@ from .batch import (_json, _read_json, _select_records, _record_facts,
                     _actual_first_board_date, _actual_next_first_board_date, static_request)
 
 
+def save_theme_inputs(connection, inputs):
+    for (stock_id, date), value in inputs.items():
+        connection.execute("""INSERT INTO research_theme_inputs VALUES(?,?,?,?,?,?)
+            ON CONFLICT(stock_id,first_board_date) DO UPDATE SET main_theme=excluded.main_theme,
+            basis=excluded.basis,sources_json=excluded.sources_json,
+            attribute_overrides_json=excluded.attribute_overrides_json""",
+            (stock_id,date,value["main_theme"],value["basis"],_json(value["sources"]),_json(value["attributes"])))
+
+
 class MissingInput(ValueError):
     pass
 
@@ -444,6 +453,9 @@ def recompute(store, record_keys=None, inputs=None, preview=False, publish=True,
                 resolver.register_dependencies(fact)
                 decision = derive_record(fact, resolver, announcement)
                 request = static_request(fact,decision["static"])
+                from .birth_themes import birth_fields
+                request["updates"].update(birth_fields(fact["identity"]["first_board_date"],
+                    fact["high_pool"]["members"], resolver.canonical))
                 request["confirmation_status"] = row["confirmation_status"]
                 request["updates"]["补涨映射明细"] = decision["static"]["replenishment_details"]
                 request["updates"]["自动推导"] = True
@@ -481,12 +493,7 @@ def recompute(store, record_keys=None, inputs=None, preview=False, publish=True,
         if not preview:
             # Validate every record before writing; all changed inputs and outputs commit together.
             with nullcontext():
-                for (stock_id, date), value in resolver.changed_inputs.items():
-                    connection.execute("""INSERT INTO research_theme_inputs VALUES(?,?,?,?,?,?)
-                        ON CONFLICT(stock_id,first_board_date) DO UPDATE SET main_theme=excluded.main_theme,
-                        basis=excluded.basis,sources_json=excluded.sources_json,
-                        attribute_overrides_json=excluded.attribute_overrides_json""",
-                        (stock_id,date,value["main_theme"],value["basis"],_json(value["sources"]),_json(value["attributes"])))
+                save_theme_inputs(connection, resolver.changed_inputs)
                 for request, fact in zip(requests, facts["records"]):
                     results.append(store.write_research(request, connection=connection))
                     connection.execute("""UPDATE launch_rounds SET first_board_date=? WHERE id=(

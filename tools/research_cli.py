@@ -38,6 +38,12 @@ def main() -> None:
 
     sub.add_parser("sync-rules", help="synchronize the current rule files without reimporting data")
     sub.add_parser("summary", help="show current database counts")
+    birth = sub.add_parser("birth-themes", help="fill complete birth-day replenishment themes without changing judgements")
+    birth.add_argument("--from-date", required=True)
+    birth.add_argument("--to-date", required=True)
+    birth.add_argument("--preview", action="store_true")
+    birth.add_argument("--input", help="optional reviewed shared high themes JSON")
+    birth.add_argument("--audit", action="store_true", help="read-only audit of daily pools, stored lists and JSON/CSV")
     environment = sub.add_parser("sector-top3", help="show original sector top three for five saved trading sessions")
     environment.add_argument("--date", required=True)
     rules = sub.add_parser("rules", help="show the current research rules")
@@ -57,6 +63,7 @@ def main() -> None:
     prices.add_argument("--record-key", action="append", dest="record_keys")
     prices.add_argument("--from-date")
     prices.add_argument("--to-date")
+    prices.add_argument("--days", type=int, default=0, help="include following trading sessions for data readiness")
 
     facts = sub.add_parser("trade-facts", help="reuse observed daily prices and events for trade research")
     facts.add_argument("--record-key", action="append", required=True, dest="record_keys")
@@ -156,7 +163,26 @@ def main() -> None:
 
     args = parser.parse_args()
     store = store_for(args)
-    if args.command == "sector-top3":
+    if args.command == "birth-themes":
+        if args.audit:
+            if args.input or args.preview:
+                parser.error("--audit 不能与 --input 或 --preview 同用")
+            from research.audit_birth_themes import audit_birth_themes
+            result = audit_birth_themes(store, args.from_date, args.to_date)
+            emit(result)
+            if not result['passed']:
+                raise SystemExit(1)
+            return
+        from research.birth_themes import refresh_birth_themes
+        input_path = (ROOT / args.input).resolve() if args.input else None
+        payload = json.loads(input_path.read_text(encoding="utf-8")) if input_path else None
+        result = refresh_birth_themes(store, args.from_date, args.to_date, args.preview, payload)
+        emit(result)
+        if result["missing"]:
+            raise SystemExit(1)
+        if input_path and not args.preview and input_path.is_relative_to((ROOT / "data/research").resolve()):
+            input_path.unlink()
+    elif args.command == "sector-top3":
         from research.environment import sector_top3
         emit(sector_top3(store, args.date))
     elif args.command == "temp-new":
@@ -175,7 +201,9 @@ def main() -> None:
         emit(result)
         if not result['complete']:raise SystemExit(1)
     elif args.command == "market-ensure":
-        result = ensure_research_prices(store,args.record_keys,args.from_date,args.to_date)
+        if args.days < 0:
+            raise ValueError('days must be non-negative')
+        result = ensure_research_prices(store,args.record_keys,args.from_date,args.to_date,args.days)
         emit(result)
         if not result["complete"]:
             raise SystemExit(1)

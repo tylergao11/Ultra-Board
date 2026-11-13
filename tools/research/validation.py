@@ -101,6 +101,7 @@ def verify_store(store, directory):
             for item in shown:
                 row,raw = static[item["记录键"]]
                 expected = {"唯一主炒":row["main_theme"],"补涨判断":row["replenishment_result"],"压制判断":row["suppression_result"],
+                    "补涨题材日期":raw.get("补涨题材日期"),"出生当日补涨题材":raw.get("出生当日补涨题材"),
                     "公告污染":None if row["announcement_pollution"] is None else bool(row["announcement_pollution"]),
                     "静态筛选结论":raw.get("静态筛选结论"),"潜在竞争对手":raw.get("首开潜在竞争对手事实清单"),"待补齐":raw.get("自动推导缺项")}
                 if any(item.get(k)!=v for k,v in expected.items()):

@@ -14,6 +14,8 @@ from .system import SHANGHAI, json_text, sha256_file, valid_code
 
 
 def _kind(path: str) -> str:
+    if path.startswith('data/market_status/') and path.endswith('.json'):
+        return 'suspensions'
     if path.startswith('data/kaipanla/stock_history/'):
         return 'history'
     if path.startswith("data/kaipanla/raw/"):
@@ -33,7 +35,7 @@ def ingest_paths(store, paths: list[Path | str] | None = None) -> dict:
     started = time.perf_counter()
     explicit = paths is not None
     roots = paths if explicit else ["data/kaipanla/raw", "data/kaipanla/concepts_current",
-                                   "data/kaipanla/plate_members", "data/kaipanla/stock_history", "data/price_checks"]
+                                   "data/kaipanla/plate_members", "data/kaipanla/stock_history", "data/price_checks", "data/market_status"]
     files = set()
     for value in roots:
         path = (store.root / value).resolve()
@@ -141,6 +143,9 @@ def ingest_paths(store, paths: list[Path | str] | None = None) -> dict:
                     elif kind == 'history':
                         from .events import import_history_file
                         for item in items:import_history_file(store,connection,item[0])
+                    elif kind == 'suspensions':
+                        from .events import import_suspension_file
+                        for item in items:import_suspension_file(store,connection,item[0])
                     for path, relative, metadata in items:
                         connection.execute("INSERT OR REPLACE INTO store_meta(key,value) VALUES(?,?)",
                                            (f"intake:{relative}", json_text(metadata)))

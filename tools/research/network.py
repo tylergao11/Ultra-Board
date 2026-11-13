@@ -1,12 +1,13 @@
 """Shared acquisition retry policy. A failed request returns to its caller."""
 import time
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, build_opener, ProxyHandler
 from urllib.parse import urlencode
 
 
-def request_bytes(url, *, data=None, headers=None, timeout=15):
+def request_bytes(url, *, data=None, headers=None, timeout=15, use_proxy=True):
     body=urlencode(data).encode('utf-8') if data is not None else None
-    with urlopen(Request(url,data=body,headers=headers or {}),timeout=timeout) as response:
+    opener = urlopen if use_proxy else build_opener(ProxyHandler({})).open
+    with opener(Request(url,data=body,headers=headers or {}),timeout=timeout) as response:
         return response.read()
 
 

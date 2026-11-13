@@ -12,6 +12,42 @@ HISTORY_HEADERS={
 }
 
 
+def import_suspension_file(store, connection, path):
+    """Import reviewed non-trading dates with local announcement evidence."""
+    document = json.loads(path.read_text(encoding='utf-8'))
+    if document.get('kind') != 'reviewed_suspensions' or not isinstance(document.get('records'), list):
+        raise ValueError('invalid suspension document')
+    prepared = []
+    for item in document['records']:
+        code = item['code']
+        if not re.fullmatch(r'\d{6}', code) or not item.get('basis') or not item.get('sources'):
+            raise ValueError('suspension requires stock, basis and evidence')
+        sources = []
+        for value in item['sources']:
+            source = (store.root / value).resolve()
+            source.relative_to(store.root.resolve())
+            if not source.is_file() or source.stat().st_size == 0:
+                raise ValueError(f'missing suspension evidence: {value}')
+            sources.append(source)
+        for day in item['dates']:
+            datetime.strptime(day, '%Y-%m-%d')
+            stock = connection.execute('SELECT id FROM stocks WHERE code=?', (code,)).fetchone()
+            if not stock:
+                raise ValueError(f'unknown stock: {code}')
+            if connection.execute("""SELECT 1 FROM daily_market WHERE stock_id=? AND trade_date=?
+                AND open_milli>0 AND high_milli>0 AND low_milli>0 AND close_milli>0""", (stock[0], day)).fetchone():
+                raise ValueError(f'{code} {day}: suspension conflicts with saved OHLC')
+            prepared.append((stock[0], day, item, sources))
+    store.register_evidence_path(path, connection)
+    for sid, day, item, sources in prepared:
+        ids = [store.register_evidence_path(source, connection) for source in sources]
+        connection.execute("DELETE FROM intraday_events WHERE stock_id=? AND trade_date=? AND event_type='suspended'", (sid, day))
+        connection.execute("""INSERT INTO intraday_events
+            (stock_id,trade_date,event_type,time_precision,value_json,evidence_file_id)
+            VALUES(?,?,'suspended','day',?,?)""", (sid, day, json_text(item), ids[0]))
+    return len(prepared)
+
+
 def _valid_history(data, code, day, kind):
     if not isinstance(data,dict) or str(data.get('errcode','0'))!='0' or str(data.get('code'))!=code or str(data.get('day'))!=day.replace('-',''):
         return False
@@ -92,12 +128,31 @@ def acquire_market_facts(store, pairs, kinds=('snapshot','trend'), refresh=False
     from concurrent.futures import ThreadPoolExecutor,as_completed
     from pathlib import Path
     import time
-    started=time.perf_counter();jobs=sorted({(str(code),day,kind) for code,day in pairs for kind in kinds})
+    started=time.perf_counter();pairs={(str(code),day) for code,day in pairs}
+    connection=store.connect()
+    non_trading=[]
+    try:
+        with store.immediate(connection):
+            for row in connection.execute("""SELECT s.code,i.stock_id,i.trade_date,e.path FROM intraday_events i
+                JOIN stocks s ON s.id=i.stock_id JOIN evidence_files e ON e.id=i.evidence_file_id
+                WHERE i.event_type='suspended'""").fetchall():
+                pair=(row['code'],row['trade_date'])
+                if pair not in pairs:continue
+                non_trading.append({'code':pair[0],'date':pair[1],'source':row['path']})
+                # Providers may carry forward yesterday's OHLC on suspended days.
+                invalid=connection.execute("SELECT evidence_file_id FROM daily_market WHERE stock_id=? AND trade_date=? AND source_type='iwencai_daily'",(row['stock_id'],pair[1])).fetchall()
+                for item in invalid:
+                    connection.execute("DELETE FROM intraday_events WHERE stock_id=? AND trade_date=? AND evidence_file_id=? AND event_type<>'suspended'",(row['stock_id'],pair[1],item[0]))
+                connection.execute("DELETE FROM daily_market WHERE stock_id=? AND trade_date=? AND source_type='iwencai_daily'",(row['stock_id'],pair[1]))
+                pairs.discard(pair)
+    finally:
+        connection.close()
+    jobs=sorted({(code,day,kind) for code,day in pairs for kind in kinds})
     for code,day,kind in jobs:
         if not re.fullmatch(r'\d{6}',code):raise ValueError('股票代码须为6位数字')
         datetime.strptime(day,'%Y-%m-%d')
         if kind not in {'snapshot','trend','details'}:raise ValueError('unsupported data kind')
-    result={'requests':len(jobs),'downloaded':0,'reused':0,'errors':[],'results':[]}
+    result={'requests':len(jobs),'downloaded':0,'reused':0,'errors':[],'results':[],'non_trading':non_trading}
     connection=store.connect();write_seconds=0
     try:
         with ThreadPoolExecutor(max_workers=4) as executor:
@@ -144,7 +199,10 @@ def fetch_limit_details(store,code,day,kind='details',refresh=False):
                             raise ValueError('invalid provider interval')
                 except (ValueError,KeyError,TypeError):continue
                 return row
-            if high and limit and high<limit:return row
+            # A valid dated quote may explicitly lack board-event fields.
+            # Preserve that distinction in facts.complete instead of treating
+            # the response as a network failure or inventing a zero count.
+            return row
         return None
     path=store.root/'data/price_checks/iwencai'/f"{code}-{day.replace('-','')}.json"
     row=None;timing={'attempts':0,'retry_wait_seconds':0,'elapsed_seconds':0};cached=False
@@ -154,7 +212,8 @@ def fetch_limit_details(store,code,day,kind='details',refresh=False):
     if row is not None:cached=True
     else:
         bundle,version=signing_bundle()
-        item={'id':path.stem,'question':f'{code}，{day}开盘价、最高价、最低价、收盘价、涨停价、跌停价、涨停明细数据、封板次数'}
+        dated=datetime.strptime(day,'%Y-%m-%d').strftime('%Y年%m月%d日')
+        item={'id':path.stem,'question':f'股票代码{code}，{dated}开盘价、最高价、最低价、收盘价、涨停价、跌停价、涨停明细数据、封板次数'}
         result=query(item,path.parent,bundle,version,validate=lambda rows:matching(rows) is not None,refresh=refresh)
         timing.update({k:result.get(k,0) for k in timing})
         row=matching(table_rows(json.loads(path.read_text(encoding='utf-8'))['response']))
@@ -162,11 +221,15 @@ def fetch_limit_details(store,code,day,kind='details',refresh=False):
     encoded=_field(row,'涨停明细数据')
     intervals=(json.loads(encoded) if isinstance(encoded,str) else encoded) or []
     count=_field(row,'封板次数')
-    low,up=price_milli(_field(row,'最低价:不复权')),price_milli(_field(row,'涨停价'))
+    op,high,low,up=[price_milli(_field(row,k)) for k in ['开盘价:不复权','最高价:不复权','最低价:不复权','涨停价']]
     complete=encoded is not None and count is not None and len(intervals)==int(count)
-    if intervals and low and up and low<up and all(v.get('openTime') is None for v in intervals):complete=False
+    if high and up and high<up:
+        complete=True
+    if intervals and op==up and low and up and low<up and all(v.get('openTime') is None for v in intervals):complete=False
     return {'code':code,'date':day,'kind':kind,'path':str(path),'cached':cached,**timing,
-            'facts':{'board_count':count,'precision':'millisecond','intervals':intervals,'complete':complete}}
+            'facts':{'board_count':count,'precision':'millisecond','intervals':intervals,'complete':complete,
+                     'missing_fields':([] if high and up and high<up else
+                         (['封板次数'] if count is None else [])+(['封板时间序列'] if encoded is None else []))}}
 
 
 
@@ -207,6 +270,8 @@ def import_provider_file(store, connection, path, allowed=None):
             continue
         code,day=identity
         sid=(store.stock_id(connection,code),)
+        if connection.execute("SELECT 1 FROM intraday_events WHERE stock_id=? AND trade_date=? AND event_type='suspended'",(sid[0],day)).fetchone():
+            raise ValueError(f'{code} {day}: announcement confirms suspension; quote rejected')
         values=[price_milli(_field(row,k)) for k in ['开盘价:不复权','最高价:不复权','最低价:不复权','收盘价:不复权','涨停价','跌停价']]
         if any(v is None or v<=0 for v in values[:4]):
             continue
@@ -222,18 +287,19 @@ def import_provider_file(store, connection, path, allowed=None):
                 if str(item.get('code',''))[:6]!=code or start.date().isoformat()!=day or (end and (end<start or end.date().isoformat()!=day)):
                     raise ValueError(f'{code} {day}: invalid interval')
         eid=eid or store.register_evidence_path(path,connection)
-        existing=connection.execute("SELECT raw_json FROM daily_market WHERE stock_id=? AND trade_date=? AND source_type='iwencai_daily' AND evidence_file_id=?",(sid[0],day,eid)).fetchone()
-        if existing and existing[0]==json_text(row) and connection.execute("SELECT 1 FROM intraday_events WHERE stock_id=? AND trade_date=? AND event_type='limit_summary' AND evidence_file_id=?",(sid[0],day,eid)).fetchone():
-            count+=1
-            continue
         connection.execute("DELETE FROM daily_market WHERE stock_id=? AND trade_date=? AND source_type='iwencai_daily'",(sid[0],day))
         connection.execute("""INSERT INTO daily_market(stock_id,trade_date,source_type,price_mode,open_milli,high_milli,low_milli,close_milli,limit_up_milli,limit_down_milli,evidence_file_id,raw_json)
             VALUES(?,?,'iwencai_daily','unadjusted',?,?,?,?,?,?,?,?)""",(sid[0],day,*values,eid,json_text(row)))
-        connection.execute("DELETE FROM intraday_events WHERE stock_id=? AND trade_date=? AND evidence_file_id=? AND event_type IN ('limit_summary','limit_intervals','first_touch','first_break','first_reseal')",(sid[0],day,eid))
+        connection.execute("""DELETE FROM intraday_events WHERE stock_id=? AND trade_date=?
+            AND evidence_file_id IN (SELECT id FROM evidence_files WHERE path=?)
+            AND event_type IN ('limit_summary','limit_intervals','first_touch','first_break','first_reseal')""",
+            (sid[0],day,path.resolve().relative_to(store.root.resolve()).as_posix()))
         board_count=_field(row,'封板次数')
         complete=intervals is not None and board_count is not None and len(intervals)==int(board_count)
+        if hi and up and hi<up:
+            complete=True
         # A full-day open interval conflicts with an observed trade below limit.
-        if intervals and up and lo<up and all(v.get('openTime') is None for v in intervals):
+        if intervals and op==up and up and lo<up and all(v.get('openTime') is None for v in intervals):
             complete=False
         events=[('limit_summary',None,{'board_count':board_count,'complete':complete})]
         if intervals:

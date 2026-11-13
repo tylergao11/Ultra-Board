@@ -1633,6 +1633,8 @@ class ResearchStore:
                 "一字段": row["focus_date"],
                 "首开日": row["event_date"],
                 "唯一主炒": row["main_theme"],
+                "补涨题材日期": static_raw.get("补涨题材日期"),
+                "出生当日补涨题材": static_raw.get("出生当日补涨题材"),
                 "补涨判断": row["replenishment_result"],
                 "压制判断": row["suppression_result"],
                 "公告污染": None if row["announcement_pollution"] is None else bool(row["announcement_pollution"]),

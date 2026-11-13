@@ -147,9 +147,10 @@ def ensure_research_prices(store, record_keys=None, from_date=None, to_date=None
         def coverage():
             covered = {}
             for r in connection.execute("""SELECT s.code,d.trade_date FROM daily_market d JOIN stocks s ON s.id=d.stock_id
-                WHERE d.source_type IN ('ths_kline','sina_history') AND d.price_mode='unadjusted'
-                AND d.open_milli IS NOT NULL AND d.high_milli IS NOT NULL
-                AND d.low_milli IS NOT NULL AND d.close_milli IS NOT NULL"""):
+                WHERE d.source_type IN ('ths_kline','sina_history','kaipanla_snapshot','iwencai_daily')
+                AND d.price_mode='unadjusted' AND d.low_milli>0
+                AND d.low_milli<=d.open_milli AND d.low_milli<=d.close_milli
+                AND d.high_milli>=d.open_milli AND d.high_milli>=d.close_milli"""):
                 key = (r['code'],r['trade_date'][:4])
                 if key in needed:
                     covered.setdefault(key,set()).add(r['trade_date'])

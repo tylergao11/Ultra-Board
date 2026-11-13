@@ -69,7 +69,7 @@ try {
             }
         }
         if (Test-Path -LiteralPath $databasePath) {
-            [System.IO.File]::Replace($downloadPath, $databasePath, $null)
+            [System.IO.File]::Replace($downloadPath, $databasePath, [System.Management.Automation.Language.NullString]::Value)
         }
         else {
             [System.IO.File]::Move($downloadPath, $databasePath)
