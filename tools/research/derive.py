@@ -112,9 +112,15 @@ class Resolver:
 
     def attributes(self, member, date):
         attributes = member["attributes"]
-        if attributes.get("snapshot_status") == "missing":
-            raise MissingInput(f"{member['code']} 缺少完整属性快照；影响 {date} 映射")
         value = self.theme(member["stock_id"], date)
+        if attributes.get("snapshot_status") == "missing":
+            override = value.get("attributes", {}) if value else {}
+            if (override.get("confirmed_partial") is not True
+                    or not override.get("from_date", "0000") <= date <= override.get("to_date", "9999")):
+                raise MissingInput(f"{member['code']} 缺少完整属性快照；影响 {date} 映射")
+            attributes = dict(attributes, tags=[], snapshot_status="confirmed_partial",
+                              confirmation_basis=override["basis"])
+            member["attributes"] = attributes
         tags = {self.canonical(t) for t in attributes["tags"]}
         sources = set(attributes.get("sources", []))
         if value:
@@ -125,6 +131,8 @@ class Resolver:
                 tags.update(self.canonical(t) for t in override.get("add", []))
                 tags.difference_update(self.canonical(t) for t in override.get("remove", []))
                 sources.update(override.get("sources", []))
+        if attributes.get("snapshot_status") == "confirmed_partial":
+            attributes.update(tags=sorted(tags), sources=sorted(sources))
         return tags, sorted(sources)
 
     def register_dependencies(self, fact):
@@ -155,15 +163,25 @@ class Resolver:
 def _match_row(member, date, theme, resolver):
     tags, sources = resolver.attributes(member, date)
     hit = resolver.canonical(theme) in tags
+    partial = member["attributes"].get("snapshot_status") == "confirmed_partial"
+    if partial and not hit:
+        raise MissingInput(f"{member['code']} 已确认属性不能证明不具备{theme}；不得把部分属性当成完整排除证据")
     return {"股票代码": member["code"], "股票名称": member["name"],
             "日期": date, "身位": member.get("board_height"), "命中": hit,
             "命中属性": theme if hit else None, "完整有效属性": sorted(tags),
-            "依据": f"有效属性{'具备' if hit else '不具备'}{theme}",
+            "依据": f"{'已确认属性' if partial else '有效属性'}{'具备' if hit else '不具备'}{theme}",
             "来源": sorted(set(sources) | _source_values(member.get("source")))}
 
 
 def derive_record(fact, resolver, announcement=None):
+    source_fact = fact
     identity = fact["identity"]
+    # Also reject historical days in previously prepared material.
+    fact = dict(fact, strict_one_word_days=[
+        day for day in fact["strict_one_word_days"]
+        if day["date"] == identity["focus_date"]
+        and (not identity.get("first_open_date") or day["date"] < identity["first_open_date"])
+    ])
     if not fact["strict_one_word_days"]:
         raise MissingInput(f"{fact['record_key']} 缺少本轮实际严格一字日，需核对行情与事件归属")
     subject = dict(identity, attributes=fact["attributes"])
@@ -171,6 +189,9 @@ def derive_record(fact, resolver, announcement=None):
     resolver.verify_sequence(identity["stock_id"],identity["focus_date"])
     theme = own["main_theme"]
     tags, sources = resolver.attributes(subject, identity["first_board_date"])
+    fact["attributes"] = subject["attributes"]
+    source_fact["attributes"] = subject["attributes"]
+    partial = fact["attributes"].get("snapshot_status") == "confirmed_partial"
     replenishment = []
     for high in fact["high_pool"]["members"]:
         judgement = resolver.theme(high["stock_id"], fact["high_pool"]["date"], True)
@@ -180,13 +201,15 @@ def derive_record(fact, resolver, announcement=None):
         direction = resolver.canonical(judgement["main_theme"])
         replenishment.append({"股票代码": high["code"], "股票名称": high["name"],
                               "身位": high["board_height"], "状态": high["status"],
-                              "高标主炒": judgement["main_theme"], "命中": direction in tags,
+                              "高标主炒": judgement["main_theme"], "命中": True if direction in tags else (None if partial else False),
                               "来源": sorted(set(sources + judgement["sources"]) | _source_values(high["source"]))})
     suppression = []
     for day in fact["strict_one_word_days"]:
         suppression.append({"日期": day["date"], "候选身位": day["candidate_height"],
                             "更高一字票": [_match_row(h, day["date"], theme, resolver) for h in day["higher_members"]]})
     replen_hits = [h for h in replenishment if h["命中"]]
+    if partial and not replen_hits:
+        raise MissingInput(f"{fact['record_key']} 已确认属性尚未命中高标，不能据部分属性判定非补涨")
     suppress_hits = [(d["日期"], h) for d in suppression for h in d["更高一字票"] if h["命中"]]
     passed = not replen_hits and not suppress_hits
     competitors = []
@@ -213,12 +236,12 @@ def derive_record(fact, resolver, announcement=None):
         "main_theme": theme, "main_theme_basis": own["basis"],
         "replenishment_result": "补涨" if replen_hits else "非补涨",
         "mapping_basis": (f"首板日 {identity['first_board_date']} 高标 {brief(replen_hits[0])} 主炒"
-                          f"{replen_hits[0]['高标主炒']}，候选完整有效属性命中。" if replen_hits else
+                          f"{replen_hits[0]['高标主炒']}，候选{'已确认属性' if partial else '完整有效属性'}命中。" if replen_hits else
                           f"首板日 {identity['first_board_date']} 的 {len(replenishment)} 只合格高标主炒逐项映射，候选完整有效属性均无命中。"),
         "replenishment_details": replenishment,
         "suppression_result": "有一字压制" if suppress_hits else "无一字压制",
         "suppression_basis": ("；".join(f"{date} {brief(h)} 具备{theme}" for date, h in suppress_hits)
-                              if suppress_hits else f"逐日核对 {len(suppression)} 个实际一字日的全部更高一字票，有效属性均未命中{theme}。"),
+                              if suppress_hits else f"核对本次首开前一字日 {identity['focus_date']} 的全部更高一字票，有效属性均未命中{theme}；此前日期不延续压制。"),
         "suppression_details": suppression, "competitors": competitors,
         "announcement_pollution": pollution, "announcement_basis": basis,
         "additional_evidence": sorted(set(own["sources"]) | set(raw.get("公告污染来源", []))),
@@ -291,6 +314,8 @@ def _parse_edits(connection, payload):
         if override and (not override.get("basis") or not override.get("sources")):
             raise ValueError("时点属性例外需填写 basis 和 sources")
         if override:
+            if "confirmed_partial" in override and not isinstance(override["confirmed_partial"],bool):
+                raise ValueError("attributes.confirmed_partial 须为布尔值")
             for name in ("add","remove","sources"):
                 values = override.get(name,[])
                 if not isinstance(values,list) or any(not isinstance(v,str) or not v for v in values):

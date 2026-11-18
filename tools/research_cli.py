@@ -35,6 +35,23 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Ultra-Board unified research store")
     parser.add_argument("--db", help="SQLite path; defaults to data/store/research.sqlite")
     sub = parser.add_subparsers(dest="command", required=True)
+    daily = sub.add_parser('daily-backfill', help='acquire dated market sources, reconcile and ingest locally')
+    daily.add_argument('--from-date', required=True)
+    daily.add_argument('--to-date', required=True)
+    daily.add_argument('--report', required=True)
+    daily.add_argument('--reconcile-missing', action='store_true', help='add only verified omitted provider rows; conflicts still stop')
+    daily.add_argument('--audit-only', action='store_true', help='read-only comparison of source files and database coverage')
+    morning = sub.add_parser('morning-audit', help='audit current entries against morning-only buy rule')
+    morning.add_argument('--commit', action='store_true')
+    morning.add_argument('--report', required=True)
+    tail = sub.add_parser('tail-close', help='evaluate unified list at first post-buy broken close')
+    tail.add_argument('--commit', action='store_true')
+    tail.add_argument('--report', required=True)
+    suppression = sub.add_parser("suppression-repair", help="repair only first-open suppression dates")
+    suppression.add_argument("--from-date", required=True)
+    suppression.add_argument("--to-date", required=True)
+    suppression.add_argument("--preview", action="store_true")
+    suppression.add_argument("--report")
 
     sub.add_parser("sync-rules", help="synchronize the current rule files without reimporting data")
     sub.add_parser("summary", help="show current database counts")
@@ -163,7 +180,44 @@ def main() -> None:
 
     args = parser.parse_args()
     store = store_for(args)
-    if args.command == "birth-themes":
+    if args.command == 'daily-backfill':
+        from research.daily_history import acquire_range, audit_range
+        if args.audit_only:
+            result = audit_range(store, args.from_date, args.to_date, args.report)
+            emit(result)
+            if not result['passed']:
+                raise SystemExit(1)
+            return
+        result = acquire_range(store, args.from_date, args.to_date, args.report, args.reconcile_missing)
+        emit({'days':result['days'], 'errors':[r for r in result['results'] if r['status']=='error'],
+              'intake_errors':result['intake']['errors']})
+        if result['intake']['errors'] or any(r['status']=='error' for r in result['results']):
+            raise SystemExit(1)
+    elif args.command == 'morning-audit':
+        from research.afternoon import audit
+        result = audit(store, args.commit)
+        path = Path(args.report)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json_text(result, pretty=True) + '\n', encoding='utf-8')
+        if args.commit:
+            store.export_all(publish_root=True)
+        emit({k:v for k,v in result.items() if k != '记录'})
+    elif args.command == 'tail-close':
+        from research.tail_close import evaluate
+        result = evaluate(store, args.commit)
+        path = Path(args.report)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json_text(result, pretty=True) + '\n', encoding='utf-8')
+        emit(result['统计'])
+    elif args.command == "suppression-repair":
+        from research.suppression import repair
+        result = repair(store_for(args), args.from_date, args.to_date, args.preview)
+        if args.report:
+            path = Path(args.report)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json_text(result, pretty=True) + "\n", encoding="utf-8")
+        emit(result)
+    elif args.command == "birth-themes":
         if args.audit:
             if args.input or args.preview:
                 parser.error("--audit 不能与 --input 或 --preview 同用")

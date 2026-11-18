@@ -12,6 +12,31 @@ HISTORY_HEADERS={
 }
 
 
+def fetch_historical_messages(store, day):
+    """Fetch one dated catalyst file, validating date and nonempty stock rows."""
+    from .network import retry_call, request_bytes
+    datetime.strptime(day, '%Y-%m-%d')
+    path = store.root / 'data/kaipanla/raw' / day / 'historical_messages.json'
+    def validate(body):
+        rows = [r for sector in body.get('list', []) for r in sector.get('StockList', [])]
+        if (str(body.get('errcode', '0')) != '0'
+                or str(body.get('date', '')).replace('-', '') != day.replace('-', '')
+                or not rows or any(len(r) < 18 for r in rows)):
+            raise ValueError(f'{day}: invalid catalyst response date or rows')
+        return body
+    if path.exists():
+        validate(json.loads(path.read_text(encoding='utf-8-sig')))
+        return path
+    params = {'a': 'GetPlateInfo_w38', 'c': 'HisLimitResumption', 'Date': day,
+              'st': '100', 'Index': '0', 'PhoneOSNew': '1', 'apiv': 'w42',
+              'VerSion': '5.21.0.2'}
+    body, _ = retry_call(lambda: validate(json.loads(request_bytes(
+        HISTORY_URL, data=params, headers=HISTORY_HEADERS).decode('utf-8'))))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json_text(body, pretty=True) + '\n', encoding='utf-8')
+    return path
+
+
 def import_suspension_file(store, connection, path):
     """Import reviewed non-trading dates with local announcement evidence."""
     document = json.loads(path.read_text(encoding='utf-8'))
@@ -213,7 +238,7 @@ def fetch_limit_details(store,code,day,kind='details',refresh=False):
     else:
         bundle,version=signing_bundle()
         dated=datetime.strptime(day,'%Y-%m-%d').strftime('%Y年%m月%d日')
-        item={'id':path.stem,'question':f'股票代码{code}，{dated}开盘价、最高价、最低价、收盘价、涨停价、跌停价、涨停明细数据、封板次数'}
+        item={'id':path.stem,'question':f'股票代码{code}，{dated}开盘价、最高价、最低价、收盘价、涨停价、跌停价、涨停明细数据、封板次数、首次涨停时间、最终涨停时间、涨停开板次数'}
         result=query(item,path.parent,bundle,version,validate=lambda rows:matching(rows) is not None,refresh=refresh)
         timing.update({k:result.get(k,0) for k in timing})
         row=matching(table_rows(json.loads(path.read_text(encoding='utf-8'))['response']))

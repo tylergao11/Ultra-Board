@@ -203,3 +203,4 @@ def fetch_attributes(store, codes: list[str], refresh: bool = False) -> dict:
     intake = ingest_paths(store, saved) if saved else None
     return {"saved": [path.relative_to(store.root).as_posix() for path in sorted(saved)], "errors": errors,
             "intake": intake, "elapsed_seconds": round(time.perf_counter() - started, 3)}
+

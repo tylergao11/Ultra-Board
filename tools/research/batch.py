@@ -488,13 +488,15 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
     if scope == 'dynamic':
         raw=json.loads(row['raw_json'])
         dynamic=connection.execute('SELECT raw_json FROM current_dynamic_research WHERE legacy_record_key=?',(row['legacy_record_key'],)).fetchone()
+        dynamic_raw=json.loads(dynamic[0]) if dynamic else None
+        following_days=0 if ((dynamic_raw or {}).get('买入后结果') or {}).get('研究范围')=='买点封板率' else 20
         return {'record_key':row['legacy_record_key'],'scope':'dynamic',
                 'identity':{'code':row['code'],'stock_id':row['stock_id'],'name':_name(connection,row['stock_id']),
                             'focus_date':row['focus_date'],'first_board_date':row['first_board_date'],'first_open_date':row['event_date']},
-                'current_static_raw':raw,'current_dynamic_raw':json.loads(dynamic[0]) if dynamic else None,
+                'current_static_raw':raw,'current_dynamic_raw':dynamic_raw,
                 'potential_competitor_candidates':raw.get('首开潜在竞争对手候选全集',{}),
                 'competitor_market':_peer_market(connection,raw,row['event_date']),
-                'first_open_market':_trade_market(connection,row['stock_id'],row['event_date'])}
+                'first_open_market':_trade_market(connection,row['stock_id'],row['event_date'],following_days)}
     shared = shared if shared is not None else {}
     def attributes(stock_id):
         key = ("attributes", stock_id)
@@ -511,7 +513,9 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
     strict_days = []
     scope_dates = {first_board_date, row["focus_date"]}
     for date in dates:
-        if first_board_date <= date <= end_date:
+        # Suppression belongs to this first-open opportunity, not its whole
+        # launch round. Only the last strict one-price day before it applies.
+        if date == row["focus_date"] and (not row["event_date"] or date < row["event_date"]):
             candidate = _daily_row(connection, stock_id, date)
             if not candidate or not candidate.get("strict_one_word"):
                 continue
@@ -566,8 +570,13 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
                WHERE m.stock_id=? AND m.trade_date BETWEEN ? AND ? ORDER BY m.trade_date,m.source_kind""",
             (stock_id, _previous_date(dates, first_board_date) or first_board_date, end_date),
         )],
-        "potential_competitor_candidates": _competitor_candidates(
-            connection, dates, stock_id, row["focus_date"], row["event_date"]
+        "potential_competitor_candidates": (
+            _competitor_candidates(connection, dates, stock_id, row["focus_date"], row["event_date"])
+            if int(row["focus_date"][:4]) in _read_json(
+                store.root / "data/store/rules/static_rules.json"
+            )["rules"]["潜在竞争对手参数"]["适用年份"]
+            else {"date": _previous_date(dates, row["event_date"]),
+                  "candidate_height": None, "members": [], "applicable": False}
         ),
         "current_static_raw": json.loads(row["raw_json"]),
     }
@@ -791,6 +800,10 @@ def _load_pending(store, decisions_path):
 def _validate_decision(fact: dict[str, Any], decision: dict[str, Any], scope: str = "dynamic") -> bool:
     static = decision.get("static") or {}
     required = ["main_theme", "main_theme_basis", "replenishment_result", "mapping_basis", "suppression_result", "suppression_basis", "announcement_basis"]
+    if scope == "dynamic":
+        # Saved legacy static conclusions are read-only inputs to trading.
+        # Their old prose layout must not trigger a static rewrite here.
+        required = ["main_theme", "replenishment_result", "suppression_result"]
     missing = [key for key in required if not static.get(key)]
     if missing or not isinstance(static.get("announcement_pollution"), bool):
         raise ValueError(f"{fact['record_key']} static decision incomplete: {missing or ['announcement_pollution']}")
@@ -802,7 +815,7 @@ def _validate_decision(fact: dict[str, Any], decision: dict[str, Any], scope: st
         static["replenishment_result"] == "非补涨"
         and str(static["suppression_result"]).startswith("无")
     )
-    if passed and not isinstance(static.get("competitors"), list):
+    if passed and scope == "static" and not isinstance(static.get("competitors"), list):
         raise ValueError(f"{fact['record_key']} passing record requires competitors array")
     if passed and scope == "dynamic":
         dynamic = decision.get("dynamic") or {}
@@ -817,10 +830,25 @@ def _request_id(batch_id: str, kind: str, key: str, updates: dict[str, Any]) -> 
     return f"{batch_id}-{kind}-{key.replace('|', '-')}-{digest}"
 
 
+def opening_day_result(market):
+    quote=market.get('event') or {}
+    previous=quote.get('previous_close') or (market.get('previous') or {}).get('close')
+    sealed=quote['close']==quote['limit_up'] if all(quote.get(k) is not None for k in ('close','limit_up')) else None
+    basis='收盘价与涨停价比较'
+    if sealed is None and quote.get('close') is not None and previous and quote['close']<previous:
+        sealed=False
+        basis='收盘价低于前收盘价，明确没有收盘涨停；不补造缺失的涨停价'
+    day_result={'一字首开日':market.get('event_date'),
+                '当天是否封板':sealed,'依据':basis,
+                '收盘价':quote.get('close'),'涨停价':quote.get('limit_up'),'来源':quote.get('sources',[])}
+    return day_result
+
+
 def _dynamic_updates(passed: bool, static: dict[str, Any], dynamic: dict[str, Any], market: dict[str, Any]) -> dict[str, Any]:
+    day_result=opening_day_result(market)
     if passed:
         updates = {
-            "买入筛选": {"非补涨": True, "无一字压制": True, "公告污染": static["announcement_pollution"], "公告处理": "独立记录", "结果": "通过"},
+            "买入筛选": {"非补涨": True, "无一字压制": True, "公告污染": static["announcement_pollution"], "公告处理": "独立记录", "结果": "淘汰" if "医药" in static["main_theme"] else "通过", "依据": "医药及医药强相关题材" if "医药" in static["main_theme"] else "非补涨、无一字压制；上午买点及同轮去重另核"},
             "竞价筛选": dynamic["auction"],
             "同题材PK核验明细": dynamic["pk_checks"],
             "同题材PK结果": dynamic["pk_result"],
@@ -828,6 +856,7 @@ def _dynamic_updates(passed: bool, static: dict[str, Any], dynamic: dict[str, An
             "买入后结果": dynamic["outcome"],
         }
         updates["首开行情"] = market
+        updates['首开当日结果']=day_result
         return updates
     reasons = []
     if static["replenishment_result"] != "非补涨":
@@ -836,6 +865,7 @@ def _dynamic_updates(passed: bool, static: dict[str, Any], dynamic: dict[str, An
         reasons.append("有一字压制")
     reason = "、".join(reasons)
     return {
+        '首开当日结果':day_result,
         "买入筛选": {
             "非补涨": static["replenishment_result"] == "非补涨",
             "无一字压制": str(static["suppression_result"]).startswith("无"),
@@ -888,6 +918,12 @@ def static_request(fact, static):
     }
     if static["announcement_pollution"]:
         updates["公告真实属性"] = static["main_theme"]
+    if fact["attributes"].get("snapshot_status") == "confirmed_partial":
+        updates["开盘啦完整属性集"] = []
+        updates["开盘啦完整属性来源"] = []
+        updates["已确认属性集"] = fact["attributes"]["tags"]
+        updates["已确认属性来源"] = fact["attributes"]["sources"]
+        updates["属性时点说明"] = fact["attributes"]["confirmation_basis"] + "；已确认属性只用于肯定命中，不冒充完整属性快照。"
     if passed:
         updates["首开潜在竞争对手事实清单"] = static["competitors"]
         updates["首开潜在竞争对手候选全集"] = fact["potential_competitor_candidates"]
@@ -922,7 +958,7 @@ def dynamic_request(fact, decision, batch_id):
         dynamic = decision["dynamic"]
         dynamic_updates = _dynamic_updates(True, static, dynamic, fact["first_open_market"])
         dynamic_checks = [
-            {"check_type":"买入筛选","outcome":"通过","basis":"非补涨、无一字压制；公告污染独立记录。","sources":[]},
+            {"check_type":"买入筛选","outcome":dynamic_updates["买入筛选"]["结果"],"basis":dynamic_updates["买入筛选"]["依据"],"sources":[]},
             {"check_type":"竞价筛选","outcome":dynamic["auction"].get("结果"),"basis":dynamic["auction"].get("依据"),"sources":sorted(_source_values(fact["first_open_market"]))},
             {"check_type":"theme_pk","outcome":dynamic["pk_result"],"basis":"按静态竞争清单执行。","sources":sorted(_source_values(fact["potential_competitor_candidates"])),"raw":dynamic["pk_checks"]},
             {"check_type":"买点","outcome":dynamic["buy_point"].get("结果"),"basis":dynamic["buy_point"].get("事实"),"sources":dynamic["buy_point"].get("来源",[])},
@@ -965,8 +1001,21 @@ def verify_dynamic(store, facts, decisions, connection=None):
             for name,value in expected.items():
                 if raw.get(name) != value:
                     findings.append(fact["record_key"]+" 交易字段不一致："+name)
-            if (raw.get("买入后结果") or {}).get("是否买入") is True and (row["buy_price_milli"] is None or row["sell_time"] is None):
-                findings.append(fact["record_key"]+" 买入结果缺少价格或卖出日期")
+            outcome = raw.get("买入后结果") or {}
+            if outcome.get("是否买入") is True:
+                if row["buy_price_milli"] is None:
+                    findings.append(fact["record_key"]+" 买入结果缺少价格")
+                if outcome.get("研究范围") == "买点封板率":
+                    if not isinstance(outcome.get("买入日最终封板"), bool):
+                        findings.append(fact["record_key"]+" 缺少买入日封板结果")
+                    if outcome.get("统计次日连板"):
+                        next_day=outcome.get("次日行情") or {}
+                        known=all(next_day.get(k) is not None for k in ("close","limit_up"))
+                        expected=bool(outcome.get("买入日最终封板") and next_day.get("close")==next_day.get("limit_up"))
+                        if not known or outcome.get("次日最终连板") is not expected:
+                            findings.append(fact["record_key"]+" 次日连板结果与行情不一致")
+                elif row["sell_time"] is None:
+                    findings.append(fact["record_key"]+" 买入结果缺少卖出日期")
     finally:
         if owned:
             connection.close()
