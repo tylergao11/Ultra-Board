@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import sys
 import zipfile
+from contextlib import contextmanager, nullcontext
 
 from research.system import ResearchStore, json_text, now_text, sha256_bytes, sha256_file
 from research.batch import commit_batch, verify_batch_current, prepare_batch, submission_key, trade_facts
@@ -25,6 +26,98 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def store_for(args: argparse.Namespace) -> ResearchStore:
     return ResearchStore(ROOT, Path(args.db) if getattr(args, "db", None) else None)
+
+
+READ_ONLY_COMMANDS = {"summary", "status", "rules", "stock", "attributes", "pool", "research", "issues", "impact",
+                      "sector-top3", "batch-verify", "selfcheck", "temp-new", "temp-clean", "db-snapshot", "reports",
+                      "restore-drill"}
+LOCK_PATH = ROOT / "data/store/write.lock"
+
+
+def _process_alive(pid: int) -> bool:
+    if os.name == "nt":
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        handle = kernel.OpenProcess(0x1000, False, int(pid))  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        code = ctypes.c_ulong()
+        ok = kernel.GetExitCodeProcess(handle, ctypes.byref(code))
+        kernel.CloseHandle(handle)
+        return bool(ok) and code.value == 259  # STILL_ACTIVE
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except OSError:
+        return False
+
+
+def _lock_holder() -> dict | None:
+    try:
+        holder = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return holder if holder.get("pid") and _process_alive(holder["pid"]) else None
+
+
+@contextmanager
+def write_lock(command: str):
+    """One writer at a time across sessions; a lock left by a dead process is taken over."""
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            holder = _lock_holder()
+            if holder:
+                raise RuntimeError(f"另一个写入正在进行：{json_text(holder)}；等它结束后再执行，不要删除锁文件")
+            LOCK_PATH.unlink(missing_ok=True)
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json_text({"pid": os.getpid(), "command": command, "started_at": now_text()}))
+        break
+    else:
+        raise RuntimeError("无法取得写入锁")
+    try:
+        yield
+    finally:
+        LOCK_PATH.unlink(missing_ok=True)
+
+
+def status_report(store: ResearchStore) -> dict:
+    connection = store.connect()
+    try:
+        store.apply_migrations(connection)
+        counts = {r[0]: r[1] for r in connection.execute(
+            "SELECT research_status,COUNT(*) FROM current_static_research GROUP BY 1")}
+        todo = [r[0] for r in connection.execute(
+            """SELECT r.legacy_record_key FROM current_static_research r JOIN first_open_events f ON f.id=r.first_open_event_id
+               JOIN launch_rounds l ON l.id=f.launch_round_id
+               WHERE r.research_status IN ('unresearched','needs_input') ORDER BY l.focus_date,r.legacy_record_key LIMIT 10""")]
+        pending = [r[0] for r in connection.execute(
+            "SELECT key FROM store_meta WHERE value='1' AND key IN ('static_export_pending','statistics_export_pending')")]
+        dynamic = connection.execute("SELECT COUNT(*),SUM(confirmation_status='user_confirmed') FROM current_dynamic_research").fetchone()
+        latest_pool = connection.execute(
+            "SELECT MAX(trade_date) FROM daily_market WHERE source_type='kaipanla_limit_pool'").fetchone()[0]
+    finally:
+        connection.close()
+    raw_days = sorted(p.name for p in (ROOT / "data/kaipanla/raw").glob("20??-??-??") if p.is_dir())
+    temp_root = ROOT / "data/store/tmp"
+    leftovers = sorted(p.name for p in temp_root.iterdir()) if temp_root.exists() else []
+    return {"static_research": counts, "next_unresearched": todo,
+            "dynamic_research": {"current": dynamic[0], "user_confirmed": dynamic[1] or 0},
+            "latest_raw_day": raw_days[-1] if raw_days else None, "latest_ingested_pool_day": latest_pool,
+            "export_pending": pending, "write_lock": _lock_holder(), "temp_leftovers": leftovers}
+
+
+def selfcheck(store: ResearchStore) -> dict:
+    """Recompute every automatic static record read-only and compare with what is saved."""
+    import time
+    started = time.perf_counter()
+    result = recompute(store, preview=True, publish=False, verify_saved=True)
+    return {"passed": not result["findings"], "records": result["record_count"], "findings": result["findings"][:50],
+            "findings_total": len(result["findings"]), "blocked": result["blocked"],
+            "seconds": round(time.perf_counter() - started, 2)}
 
 
 def emit(value) -> None:
@@ -58,6 +151,8 @@ def main() -> None:
 
     sub.add_parser("sync-rules", help="synchronize the current rule files without reimporting data")
     sub.add_parser("summary", help="show current database counts")
+    sub.add_parser("status", help="one-shot work status: todo, locks, leftovers, pending publish")
+    sub.add_parser("selfcheck", help="read-only full static recompute compared with saved results")
     birth = sub.add_parser("birth-themes", help="fill complete birth-day replenishment themes without changing judgements")
     birth.add_argument("--from-date", required=True)
     birth.add_argument("--to-date", required=True)
@@ -183,7 +278,19 @@ def main() -> None:
 
     args = parser.parse_args()
     store = store_for(args)
-    if args.command == 'daily-backfill':
+    with (nullcontext() if args.command in READ_ONLY_COMMANDS else write_lock(args.command)):
+        run(args, store, parser)
+
+
+def run(args, store, parser) -> None:
+    if args.command == 'status':
+        emit(status_report(store))
+    elif args.command == 'selfcheck':
+        result = selfcheck(store)
+        emit(result)
+        if not result['passed']:
+            raise SystemExit(1)
+    elif args.command == 'daily-backfill':
         from research.daily_history import acquire_range, audit_range
         if args.audit_only:
             result = audit_range(store, args.from_date, args.to_date, args.report)

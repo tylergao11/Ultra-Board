@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from datetime import datetime
 import hashlib
 import json
@@ -161,8 +162,8 @@ def _trading_dates(connection) -> list[str]:
 def _previous_date(dates: list[str], value: str | None) -> str | None:
     if not value:
         return None
-    earlier = [date for date in dates if date < value]
-    return earlier[-1] if earlier else None
+    index = bisect_left(dates, value)  # dates come sorted from _trading_dates
+    return dates[index - 1] if index else None
 
 
 def _confirmed_theme(connection, stock_id: int, trade_date: str) -> str | None:
@@ -680,7 +681,7 @@ def prepare_batch(
     output_dir.mkdir(parents=True, exist_ok=True)
     _write_json(output_dir / "facts.json", facts)
     _write_json(output_dir / "decisions.json", decisions)
-    brief = _brief(facts)
+    brief = _brief(facts, decisions)
     _write_json(output_dir / "brief.json", brief)
     if not old_decisions or not (output_dir / "batch.json").exists():
         _write_json(output_dir / "batch.json", {"scope":scope,"record_keys":[f["record_key"] for f in facts_records]})
@@ -731,35 +732,98 @@ def _missing_facts(records: list[dict]) -> list[dict]:
     return missing
 
 
-def _brief(facts: dict) -> dict:
-    """Share repeated evidence once, omit historic payloads from the AI reading view."""
-    if facts['scope']=='dynamic':
-        return {'batch_id':facts['batch_id'],'scope':'dynamic','missing':facts['missing'],
-                'records':[{'record_key':f['record_key'],'identity':f['identity'],
-                            'static_readonly':_current_static_decision(f['current_static_raw']),
-                            'market':f['first_open_market'],'competitor_market':f['competitor_market']} for f in facts['records']]}
-    shared: dict[str, Any] = {}
-    def ref(value):
-        key = hashlib.sha256(_json(value).encode("utf-8")).hexdigest()[:12]
-        shared[key] = value
-        return {"evidence_ref": key}
-    records = []
+CAPITAL_TERMS = ("股权转让", "并购", "重组", "控制权", "实际控制人", "实控人", "收购", "易主")
+
+
+def _clip(text: Any, limit: int = 160) -> str | None:
+    if text is None:
+        return None
+    value = " ".join(str(text).split())
+    return value if len(value) <= limit else value[:limit] + "…"
+
+
+def _day_view(day: dict | None) -> dict | None:
+    """One limit-up day as the agent needs it for a theme decision."""
+    if not day:
+        return None
+    topics = []
+    for item in day.get("context") or []:
+        topic = item.get("topic")
+        if topic and topic not in topics:
+            topics.append(topic)
+    return {"date": day.get("date"), "height": day.get("board_height"), "one_word": day.get("strict_one_word"),
+            "first_limit": day.get("first_limit_time"), "theme": day.get("theme"), "tags": day.get("theme_tags"),
+            "reason": _clip(day.get("description"), 220), "message_topics": topics[:6], "source": day.get("source")}
+
+
+def _capital_hits(fact: dict) -> list[dict]:
+    """Search aid for the announcement step: rows whose text names a capital event. Not a judgement."""
+    hits, seen = [], set()
+    rows = [(r.get("trade_date"), r.get("source_kind"), r.get("topic"), r.get("description"), r.get("source"))
+            for r in fact.get("announcement_facts") or []]
+    rows += [(d.get("date"), "limit_pool", d.get("theme"),
+              " ".join(filter(None, [d.get("theme_tags"), d.get("description")])), d.get("source"))
+             for d in fact.get("first_two") or [] if d]
+    for date, kind, topic, text, source in rows:
+        blob = f"{topic or ''} {text or ''}"
+        terms = [term for term in CAPITAL_TERMS if term in blob]
+        key = (date, kind, topic, source)
+        if terms and key not in seen:
+            seen.add(key)
+            hits.append({"date": date, "kind": kind, "topic": topic, "terms": terms, "text": _clip(text, 200), "source": source})
+    return hits
+
+
+def _brief(facts: dict, decisions: dict | None = None) -> dict:
+    """Agent worksheet: only what a judgement needs. Full evidence stays in facts.json."""
+    if facts['scope'] == 'dynamic':
+        return {'batch_id': facts['batch_id'], 'scope': 'dynamic', 'missing': facts['missing'],
+                'records': [{'record_key': f['record_key'], 'identity': f['identity'],
+                             'static_readonly': _current_static_decision(f['current_static_raw']),
+                             'market': f['first_open_market'], 'competitor_market': f['competitor_market']}
+                            for f in facts['records']]}
+    records, reused = [], []
     for fact in facts["records"]:
-        item = {key: value for key, value in fact.items()
-                if key not in {"current_static_raw", "current_dynamic_raw", "scope_audit"}}
-        item["attributes"] = ref(fact["attributes"])
-        item["first_two"] = [ref(day) for day in fact["first_two"]]
-        item["high_pool"] = ref(dict(fact["high_pool"], members=[
-            dict(member, first_two=[ref(day) for day in member["first_two"]])
-            for member in fact["high_pool"]["members"]]))
-        item["strict_one_word_days"] = [dict(day, higher_members=[
-            dict(member, attributes=ref(member["attributes"])) for member in day["higher_members"]
-        ]) for day in fact["strict_one_word_days"]]
-        item["potential_competitor_candidates"] = ref(dict(fact["potential_competitor_candidates"], members=[
-            dict(member, attributes=ref(member["attributes"])) for member in fact["potential_competitor_candidates"]["members"]]))
-        records.append(item)
-    return {"batch_id": facts["batch_id"], "scope": facts["scope"], "records": records,
-            "shared_evidence": shared, "missing": facts["missing"]}
+        raw = fact.get("current_static_raw") or {}
+        identity = fact["identity"]
+        theme = raw.get("唯一主炒作属性")
+        pollution = raw.get("公告污染")
+        needs = [name for name, done in (("main_theme", bool(theme)), ("announcement", isinstance(pollution, bool))) if not done]
+        if not needs:
+            reused.append({"record_key": fact["record_key"], "name": identity.get("name"), "main_theme": theme,
+                           "announcement_pollution": pollution})
+            continue
+        records.append({
+            "record_key": fact["record_key"], "needs": needs,
+            "stock": f"{identity['code']} {identity.get('name') or ''}".strip(),
+            "first_board_date": identity["first_board_date"], "focus_date": identity["focus_date"],
+            "first_open_date": identity.get("first_open_date"),
+            "saved": {"main_theme": theme, "main_theme_basis": _clip(raw.get("唯一主炒依据")),
+                      "announcement_pollution": pollution},
+            "first_two": [_day_view(day) for day in fact.get("first_two") or []],
+            "attribute_tags": (fact.get("attributes") or {}).get("tags", []),
+            "announcement": {"sources": fact.get("announcement_sources", []),
+                             "missing_dates": fact.get("announcement_missing_dates", []),
+                             "capital_term_hits": _capital_hits(fact)},
+        })
+    members = {}
+    for fact in facts["records"]:
+        for member in fact["high_pool"]["members"]:
+            if member.get("first_two"):
+                members.setdefault((member["code"], member["first_two"][0]["date"]), member)
+    high = []
+    for slot in (decisions or {}).get("high_themes", []):
+        if slot.get("main_theme"):
+            continue
+        member = members.get((slot["code"], slot["first_board_date"]), {})
+        high.append({"code": slot["code"], "name": member.get("name"), "first_board_date": slot["first_board_date"],
+                     "status": member.get("status"), "first_two": [_day_view(day) for day in member.get("first_two") or []]})
+    missing = [m for m in facts.get("missing", []) if m.get("kind") != "attributes" or not m.get("required_when")]
+    return {"batch_id": facts["batch_id"], "scope": facts["scope"],
+            "how_to_fill": ("只填 decisions.json：records[].static 的 main_theme/main_theme_basis（needs 含 main_theme 时）、"
+                            "announcement_pollution/announcement_basis（needs 含 announcement 时）；high_themes[] 的 main_theme/basis。"
+                            "capital_term_hits 只是检索提示，须核对原文后判断。补涨、压制、竞争清单由程序生成。具体疑点再查 facts.json 对应记录。"),
+            "records": records, "high_themes_to_decide": high, "reused": reused, "missing": missing}
 
 
 def _source_values(value: Any) -> set[str]:
@@ -1061,7 +1125,7 @@ def clear_submitted_inputs(store, directory, facts, decisions, completed):
                      high_themes=[h for h in decisions.get("high_themes",[]) if not h.get("main_theme")])
     _write_json(directory / "decisions.json",decisions)
     _write_json(directory / "facts.json",facts)
-    _write_json(directory / "brief.json",_brief(facts))
+    _write_json(directory / "brief.json",_brief(facts, decisions))
     _forget_submission(store,directory)
 
 
