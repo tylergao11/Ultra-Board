@@ -8,7 +8,7 @@
 - GitHub Release `research-store-current` 保存当前正式 SQLite 数据库、SHA-256 和机器可读清单。
 - 本机默认不生成恢复副本；明确要求备份时再使用备份入口。
 
-正式数据库约 403 MB。GitHub 普通 Git 的单文件上限为 100 MiB；Git LFS 每次修改都会计入一个完整的新版本。滚动 Release 让下载地址保持稳定，同时控制大文件版本数量。
+正式数据库约 650 MB。GitHub 普通 Git 的单文件上限为 100 MiB；Git LFS 每次修改都会计入一个完整的新版本。滚动 Release 让下载地址保持稳定，同时控制大文件版本数量。
 
 ## 家里电脑首次启用
 

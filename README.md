@@ -64,7 +64,7 @@ powershell -ExecutionPolicy Bypass -File tools/finish_work.ps1 -Message "本次�
 data/                   原始下载、研究证据和正式数据
 data/store/exports/     当前展示与统计批次
 data/store/rules/       正式规则源
-docs/                   执行计划、使用说明和多电脑说明
+docs/                   使用说明和多电脑说明
 tools/research/         数据库、采集、查询、静态推导与统计实现
 tools/research_cli.py   统一命令入口
 tools/start_work.ps1    本地开始检查；-Sync 用于跨电脑拉取
@@ -75,7 +75,6 @@ tools/finish_work.ps1   本地结束检查；-Sync 用于提交和远端发布
 
 - [统一研究系统使用说明](docs/研究系统使用说明.md)
 - [GitHub 与多电脑使用](docs/GitHub与多电脑使用.md)
-- [研究系统执行计划](docs/研究系统执行计划.md)
 - [当前数据核验](data/store/verification/current/verification.json)
 
 ## GitHub 备份策略
