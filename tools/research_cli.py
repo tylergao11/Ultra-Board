@@ -41,6 +41,9 @@ def main() -> None:
     daily.add_argument('--report', required=True)
     daily.add_argument('--reconcile-missing', action='store_true', help='add only verified omitted provider rows; conflicts still stop')
     daily.add_argument('--audit-only', action='store_true', help='read-only comparison of source files and database coverage')
+    cands = sub.add_parser('candidate-sync', help='register or advance strict one-word candidate events from limit pools')
+    cands.add_argument('--from-date', required=True)
+    cands.add_argument('--to-date', required=True)
     morning = sub.add_parser('morning-audit', help='audit current entries against morning-only buy rule')
     morning.add_argument('--commit', action='store_true')
     morning.add_argument('--report', required=True)
@@ -193,6 +196,9 @@ def main() -> None:
               'intake_errors':result['intake']['errors']})
         if result['intake']['errors'] or any(r['status']=='error' for r in result['results']):
             raise SystemExit(1)
+    elif args.command == 'candidate-sync':
+        from research.intake import sync_candidates
+        emit(sync_candidates(store, args.from_date, args.to_date))
     elif args.command == 'morning-audit':
         from research.afternoon import audit
         result = audit(store, args.commit)

@@ -38,6 +38,12 @@ class Resolver:
             raise ValueError("属性归并应填写题材名称到名称的映射")
         for name in self.aliases:
             self.canonical(name)
+        self.implied = rules["自动匹配"].get("属性附带", {})
+        if (not isinstance(self.implied, dict)
+                or any(not isinstance(k, str) or not isinstance(v, list)
+                       or any(not isinstance(i, str) or not i.strip() for i in v)
+                       for k, v in self.implied.items())):
+            raise ValueError("属性附带应填写标签名称到附带属性列表的映射")
         self.inputs = {}
         self.rounds = {}
         self.dependencies = set()
@@ -121,14 +127,23 @@ class Resolver:
             attributes = dict(attributes, tags=[], snapshot_status="confirmed_partial",
                               confirmation_basis=override["basis"])
             member["attributes"] = attributes
-        tags = {self.canonical(t) for t in attributes["tags"]}
+        raw_tags = set(attributes["tags"])
+        tags = {self.canonical(t) for t in raw_tags}
+        for t in list(raw_tags) + list(tags):
+            for extra in self.implied.get(t, []):
+                tags.add(self.canonical(extra))
         sources = set(attributes.get("sources", []))
         if value:
             tags.add(self.canonical(value["main_theme"]))
+            for extra in self.implied.get(value["main_theme"], []):
+                tags.add(self.canonical(extra))
             sources.update(value["sources"])
             override = value["attributes"]
             if override and override.get("from_date", "0000") <= date <= override.get("to_date", "9999"):
-                tags.update(self.canonical(t) for t in override.get("add", []))
+                for t in override.get("add", []):
+                    tags.add(self.canonical(t))
+                    for extra in self.implied.get(t, []):
+                        tags.add(self.canonical(extra))
                 tags.difference_update(self.canonical(t) for t in override.get("remove", []))
                 sources.update(override.get("sources", []))
         if attributes.get("snapshot_status") == "confirmed_partial":
@@ -426,7 +441,9 @@ def recompute(store, record_keys=None, inputs=None, preview=False, publish=True,
         keys = set(record_keys or payload.get("record_keys", [])) | set(payload.get("record_keys", [])) | _affected_keys(connection, edits, minimum)
         keys.update(payload.get("announcements", {}))
         if not keys and not edits:
-            keys = {r[0] for r in connection.execute("SELECT DISTINCT record_key FROM research_dependencies")}
+            keys = {r[0] for r in connection.execute(
+                "SELECT legacy_record_key FROM current_static_research WHERE json_extract(raw_json, '$.自动推导') = 1"
+            )}
         resolver = Resolver(connection, rules, edits)
         # Explicit input can also concern a high stock without a first-open candidate.
         for stock_id, date in edits:

@@ -1421,12 +1421,20 @@ class ResearchStore:
                 desired_checks = []  # Resolve code-based subject changes through the normal write path.
             if checks is None or saved_checks == desired_checks:
                 return {"record_key": record_key, "kind": kind, "version": current["version"], "deduplicated": True}
-        trade_fields = ("唯一主炒作属性", "补涨判断", "压制判断", "公告污染", "公告真实属性", "首开日期",
-                        "首开潜在竞争对手事实清单", "开盘啦完整属性集")
-        changed_trade_inputs = kind == "static" and any(
+        def _peer_codes(value):
+            return [m.get("股票代码") for m in value if isinstance(m, dict)] if isinstance(value, list) else []
+
+        core_trade_fields = ("唯一主炒作属性", "补涨判断", "压制判断", "首开日期")
+        core_changed = kind == "static" and any(
             (key in updates and raw.get(key) != updates[key]) or (key in remove_fields and key in raw)
-            for key in trade_fields
+            for key in core_trade_fields
         )
+        peers_changed = kind == "static" and (
+            ("首开潜在竞争对手事实清单" in updates
+             and _peer_codes(raw.get("首开潜在竞争对手事实清单")) != _peer_codes(updates.get("首开潜在竞争对手事实清单")))
+            or ("首开潜在竞争对手事实清单" in remove_fields and bool(_peer_codes(raw.get("首开潜在竞争对手事实清单"))))
+        )
+        changed_trade_inputs = core_changed or peers_changed
         if replace_dynamic:
             raw = {"底稿记录键": record_key}
         for key, value in updates.items():
@@ -1571,11 +1579,12 @@ class ResearchStore:
                     ),
                 )
             if changed_trade_inputs:
-                # Only changed trade inputs invalidate its dependent decision.
-                trade_ids = "SELECT id FROM dynamic_research WHERE legacy_record_key=?"
+                # Only changed trade inputs invalidate its dependent decision; preserve user_confirmed fixed samples unless core static eligibility changed.
+                extra_guard = "" if core_changed else " AND confirmation_status<>'user_confirmed'"
+                trade_ids = f"SELECT id FROM dynamic_research WHERE legacy_record_key=?{extra_guard}"
                 connection.execute(f"DELETE FROM research_checks WHERE dynamic_research_id IN ({trade_ids})", (record_key,))
                 connection.execute(f"DELETE FROM trade_outcomes WHERE dynamic_research_id IN ({trade_ids})", (record_key,))
-                connection.execute("DELETE FROM dynamic_research WHERE legacy_record_key=?", (record_key,))
+                connection.execute(f"DELETE FROM dynamic_research WHERE legacy_record_key=?{extra_guard}", (record_key,))
             self.discard_obsolete_research(connection)
             connection.execute("DELETE FROM write_requests WHERE object_type=? AND object_key=?", (kind, record_key))
             result = {

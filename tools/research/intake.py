@@ -10,7 +10,7 @@ import time
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from .system import SHANGHAI, json_text, sha256_file, valid_code
+from .system import SHANGHAI, canonical_hash, json_text, sha256_file, valid_code
 
 
 def _kind(path: str) -> str:
@@ -203,4 +203,211 @@ def fetch_attributes(store, codes: list[str], refresh: bool = False) -> dict:
     intake = ingest_paths(store, saved) if saved else None
     return {"saved": [path.relative_to(store.root).as_posix() for path in sorted(saved)], "errors": errors,
             "intake": intake, "elapsed_seconds": round(time.perf_counter() - started, 3)}
+
+
+def sync_candidates(store, start: str, end: str) -> dict:
+    """Register or advance strict one-word (>=2 boards) candidate events from ingested limit pools."""
+    datetime.strptime(start, "%Y-%m-%d")
+    datetime.strptime(end, "%Y-%m-%d")
+    connection = store.connect()
+    created, advanced, opened = [], [], []
+    try:
+        dates = [r[0] for r in connection.execute(
+            "SELECT DISTINCT trade_date FROM daily_market WHERE source_type='kaipanla_limit_pool' ORDER BY trade_date"
+        )]
+        next_day = {dates[i]: (dates[i + 1] if i + 1 < len(dates) else None) for i in range(len(dates))}
+        stocks = connection.execute(
+            """SELECT DISTINCT d.stock_id, s.code FROM daily_market d
+               JOIN stocks s ON s.id=d.stock_id
+               WHERE d.source_type='kaipanla_limit_pool' AND d.strict_one_word=1
+                 AND d.board_height>=2 AND d.trade_date BETWEEN ? AND ?
+               ORDER BY s.code""",
+            (start, end),
+        ).fetchall()
+        batch_id = connection.execute("SELECT id FROM import_batches ORDER BY id LIMIT 1").fetchone()[0]
+        rule_id = connection.execute(
+            "SELECT id FROM rule_sets WHERE rule_type='static' AND status='current' ORDER BY id DESC LIMIT 1"
+        ).fetchone()[0]
+        empty_hash = canonical_hash({})
+        with store.immediate(connection):
+            for stock_id, code in stocks:
+                rows = connection.execute(
+                    """SELECT trade_date, board_height, strict_one_word FROM daily_market
+                       WHERE stock_id=? AND source_type='kaipanla_limit_pool' AND board_height IS NOT NULL
+                       ORDER BY trade_date""",
+                    (stock_id,),
+                ).fetchall()
+                rounds: list[list[tuple[str, int, int]]] = []
+                for trade_date, height, strict in rows:
+                    if height == 1 or not rounds or height != rounds[-1][-1][1] + 1:
+                        rounds.append([(trade_date, int(height), int(strict or 0))])
+                    else:
+                        rounds[-1].append((trade_date, int(height), int(strict or 0)))
+                for rnd in rounds:
+                    if rnd[0][1] != 1:
+                        continue
+                    first_board = rnd[0][0]
+                    idx = 0
+                    while idx < len(rnd):
+                        if not rnd[idx][2]:
+                            idx += 1
+                            continue
+                        j = idx
+                        while j + 1 < len(rnd) and rnd[j + 1][2]:
+                            j += 1
+                        run_start = rnd[idx][0]
+                        focus_date, focus_height, _ = rnd[j]
+                        idx = j + 1
+                        if focus_height < 2 or not (start <= focus_date <= end):
+                            continue
+                        event_date = next_day.get(focus_date)
+                        seq_rows = [r for r in rnd if r[0] <= focus_date]
+                        seq_text = "；".join(
+                            f"{d[5:]} {'首板' if h == 1 else f'{h}连板'}" + ("一字" if s else "")
+                            for d, h, s in seq_rows
+                        )
+                        key = f"{code}|{focus_date}"
+                        name_row = connection.execute(
+                            "SELECT name FROM stock_current_names WHERE stock_id=?", (stock_id,)
+                        ).fetchone()
+                        name = name_row[0] if name_row else code
+                        existing = connection.execute(
+                            "SELECT * FROM legacy_key_map WHERE legacy_record_key=?", (key,)
+                        ).fetchone()
+                        if existing:
+                            fo = connection.execute(
+                                "SELECT event_date FROM first_open_events WHERE id=?",
+                                (existing["first_open_event_id"],),
+                            ).fetchone()
+                            if event_date and not fo["event_date"]:
+                                connection.execute(
+                                    "UPDATE first_open_events SET event_date=?, event_status='occurred' WHERE id=?",
+                                    (event_date, existing["first_open_event_id"]),
+                                )
+                                connection.execute(
+                                    "UPDATE one_word_runs SET status='occurred' WHERE launch_round_id=?",
+                                    (existing["launch_round_id"],),
+                                )
+                                cur_sr = connection.execute(
+                                    "SELECT id, raw_json FROM static_research WHERE legacy_record_key=? AND is_current=1",
+                                    (key,),
+                                ).fetchone()
+                                if cur_sr:
+                                    raw = json.loads(cur_sr["raw_json"])
+                                    raw["首开日期"] = event_date
+                                    connection.execute(
+                                        "UPDATE static_research SET raw_json=? WHERE id=?",
+                                        (json_text(raw), cur_sr["id"]),
+                                    )
+                                opened.append(key)
+                            continue
+                        prior = connection.execute(
+                            """SELECT l.legacy_record_key FROM launch_rounds l
+                               WHERE l.stock_id=? AND l.first_board_date=?
+                                 AND l.focus_date>=? AND l.focus_date<?
+                               ORDER BY l.focus_date DESC LIMIT 1""",
+                            (stock_id, first_board, run_start, focus_date),
+                        ).fetchone()
+                        if prior and not connection.execute(
+                            "SELECT 1 FROM dynamic_research WHERE legacy_record_key=?", (prior[0],)
+                        ).fetchone():
+                            old_key = prior[0]
+                            m = connection.execute(
+                                "SELECT * FROM legacy_key_map WHERE legacy_record_key=?", (old_key,)
+                            ).fetchone()
+                            connection.execute("DELETE FROM research_dependencies WHERE record_key=?", (old_key,))
+                            connection.execute(
+                                "UPDATE source_records SET record_key=?, effective_date=? WHERE id=?",
+                                (key, focus_date, m["static_source_record_id"]),
+                            )
+                            connection.execute(
+                                "UPDATE launch_rounds SET legacy_record_key=?, focus_date=?, board_sequence_text=? WHERE id=?",
+                                (key, focus_date, seq_text, m["launch_round_id"]),
+                            )
+                            connection.execute(
+                                "UPDATE one_word_runs SET start_date=?, end_date=?, status=? WHERE launch_round_id=?",
+                                (run_start, focus_date, "occurred" if event_date else "first_open_missing_or_not_occurred", m["launch_round_id"]),
+                            )
+                            connection.execute(
+                                "UPDATE first_open_events SET legacy_record_key=?, event_date=?, event_status=? WHERE id=?",
+                                (key, event_date, "occurred" if event_date else "pending_open", m["first_open_event_id"]),
+                            )
+                            connection.execute(
+                                "UPDATE legacy_key_map SET legacy_record_key=? WHERE legacy_record_key=?",
+                                (key, old_key),
+                            )
+                            connection.execute(
+                                "UPDATE static_research SET legacy_record_key=? WHERE legacy_record_key=?",
+                                (key, old_key),
+                            )
+                            cur_sr = connection.execute(
+                                "SELECT id, raw_json FROM static_research WHERE legacy_record_key=? AND is_current=1",
+                                (key,),
+                            ).fetchone()
+                            if cur_sr:
+                                raw = json.loads(cur_sr["raw_json"])
+                                raw.update({
+                                    "底稿记录键": key,
+                                    "关注日期": focus_date,
+                                    "底稿板序原文": seq_text,
+                                    "进板高度": f"{focus_height}进{focus_height + 1}",
+                                    "首开日期": event_date or "",
+                                })
+                                connection.execute(
+                                    "UPDATE static_research SET raw_json=? WHERE id=?",
+                                    (json_text(raw), cur_sr["id"]),
+                                )
+                            advanced.append({"from": old_key, "to": key, "event_date": event_date})
+                            continue
+                        sr_id = connection.execute(
+                            """INSERT INTO source_records
+                               (batch_id,source_kind,source_path,section,record_key,stock_code,effective_date,raw_sha256,raw_json)
+                               VALUES(?,?,?,?,?,?,?,?,?)""",
+                            (batch_id, "record_anchor", "一字首开研究总表.json", "一字首开股票与数据", key, code, focus_date, empty_hash, "{}"),
+                        ).lastrowid
+                        lr_id = connection.execute(
+                            """INSERT INTO launch_rounds
+                               (stock_id,legacy_record_key,first_board_date,focus_date,board_sequence_text,
+                                confirmed_main_theme,confirmation_status,source_record_id,raw_json)
+                               VALUES(?,?,?,?,?,?,?,?,?)""",
+                            (stock_id, key, first_board, focus_date, seq_text, None, "pending_user_confirmation", sr_id, "{}"),
+                        ).lastrowid
+                        ow_id = connection.execute(
+                            """INSERT INTO one_word_runs(launch_round_id,start_date,end_date,status,raw_json)
+                               VALUES(?,?,?,?,?)""",
+                            (lr_id, run_start, focus_date, "occurred" if event_date else "first_open_missing_or_not_occurred", "{}"),
+                        ).lastrowid
+                        fo_id = connection.execute(
+                            """INSERT INTO first_open_events
+                               (launch_round_id,one_word_run_id,event_date,event_status,legacy_record_key,raw_json)
+                               VALUES(?,?,?,?,?,?)""",
+                            (lr_id, ow_id, event_date, "occurred" if event_date else "pending_open", key, "{}"),
+                        ).lastrowid
+                        connection.execute(
+                            """INSERT INTO legacy_key_map
+                               (legacy_record_key,stock_id,launch_round_id,first_open_event_id,static_source_record_id,dynamic_source_record_id)
+                               VALUES(?,?,?,?,?,NULL)""",
+                            (key, stock_id, lr_id, fo_id, sr_id),
+                        )
+                        seed_raw = {
+                            "底稿记录键": key,
+                            "股票代码": code,
+                            "股票": name,
+                            "关注日期": focus_date,
+                            "底稿首板日期": first_board,
+                            "底稿板序原文": seq_text,
+                            "进板高度": f"{focus_height}进{focus_height + 1}",
+                            "首开日期": event_date or "",
+                        }
+                        connection.execute(
+                            """INSERT INTO static_research
+                               (first_open_event_id,legacy_record_key,version,is_current,research_status,
+                                confirmation_status,source_record_id,rule_set_id,evidence_snapshot_json,raw_json)
+                               VALUES(?,?,1,1,'unresearched','pending_user_confirmation',?,?,?,?)""",
+                            (fo_id, key, sr_id, rule_id, "[]", json_text(seed_raw)),
+                        )
+                        created.append({"record_key": key, "first_board_date": first_board, "event_date": event_date})
+    finally:
+        connection.close()
+    return {"start": start, "end": end, "created": created, "advanced": advanced, "opened": opened}
 
