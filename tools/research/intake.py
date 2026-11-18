@@ -206,7 +206,7 @@ def fetch_attributes(store, codes: list[str], refresh: bool = False) -> dict:
 
 
 def sync_candidates(store, start: str, end: str) -> dict:
-    """Register or advance strict one-word (>=2 boards) candidate events from ingested limit pools."""
+    """Register or advance mainboard 10cm non-ST strict one-word (>=2 boards) candidate events."""
     datetime.strptime(start, "%Y-%m-%d")
     datetime.strptime(end, "%Y-%m-%d")
     connection = store.connect()
@@ -221,6 +221,7 @@ def sync_candidates(store, start: str, end: str) -> dict:
                JOIN stocks s ON s.id=d.stock_id
                WHERE d.source_type='kaipanla_limit_pool' AND d.strict_one_word=1
                  AND d.board_height>=2 AND d.trade_date BETWEEN ? AND ?
+                 AND (s.code LIKE '00%' OR s.code LIKE '60%')
                ORDER BY s.code""",
             (start, end),
         ).fetchall()
@@ -267,10 +268,18 @@ def sync_candidates(store, start: str, end: str) -> dict:
                             for d, h, s in seq_rows
                         )
                         key = f"{code}|{focus_date}"
+                        hist_name_row = connection.execute(
+                            """SELECT json_extract(raw_json, '$.name') FROM daily_market
+                               WHERE stock_id=? AND trade_date<=? AND source_type='kaipanla_limit_pool'
+                               ORDER BY trade_date DESC, id DESC LIMIT 1""",
+                            (stock_id, focus_date),
+                        ).fetchone()
                         name_row = connection.execute(
                             "SELECT name FROM stock_current_names WHERE stock_id=?", (stock_id,)
                         ).fetchone()
-                        name = name_row[0] if name_row else code
+                        name = (hist_name_row[0] if hist_name_row and hist_name_row[0] else None) or (name_row[0] if name_row else code)
+                        if "ST" in str(name).upper():
+                            continue
                         existing = connection.execute(
                             "SELECT * FROM legacy_key_map WHERE legacy_record_key=?", (key,)
                         ).fetchone()
@@ -410,4 +419,87 @@ def sync_candidates(store, start: str, end: str) -> dict:
     finally:
         connection.close()
     return {"start": start, "end": end, "created": created, "advanced": advanced, "opened": opened}
+
+
+def purge_non_mainboard_candidates(store) -> dict:
+    """Remove non-mainboard (non-00/60) candidate/trade records while preserving stock & high-theme facts."""
+    from .derive import save_theme_inputs
+    connection = store.connect()
+    try:
+        rows = connection.execute(
+            """SELECT m.legacy_record_key, m.stock_id, m.launch_round_id, m.first_open_event_id,
+                      m.static_source_record_id, m.dynamic_source_record_id,
+                      s.code, l.first_board_date, r.main_theme, r.raw_json, r.evidence_snapshot_json
+               FROM legacy_key_map m
+               JOIN stocks s ON s.id=m.stock_id
+               JOIN launch_rounds l ON l.id=m.launch_round_id
+               LEFT JOIN current_static_research r ON r.legacy_record_key=m.legacy_record_key
+               WHERE NOT (s.code LIKE '00%' OR s.code LIKE '60%')
+               ORDER BY m.legacy_record_key"""
+        ).fetchall()
+        if not rows:
+            return {"purged": 0, "record_keys": []}
+        keys = [r["legacy_record_key"] for r in rows]
+        fo_ids = [r["first_open_event_id"] for r in rows]
+        lr_ids = [r["launch_round_id"] for r in rows]
+        sr_ids = sorted({r["static_source_record_id"] for r in rows if r["static_source_record_id"]}
+                        | {r["dynamic_source_record_id"] for r in rows if r["dynamic_source_record_id"]}
+                        | {x[0] for x in connection.execute(
+                            f"SELECT source_record_id FROM static_research WHERE legacy_record_key IN ({','.join('?'*len(keys))}) "
+                            f"UNION SELECT source_record_id FROM dynamic_research WHERE legacy_record_key IN ({','.join('?'*len(keys))})",
+                            keys * 2)})
+        preserved_themes = {}
+        for r in rows:
+            if r["main_theme"] and r["first_board_date"]:
+                existing = connection.execute(
+                    "SELECT 1 FROM research_theme_inputs WHERE stock_id=? AND first_board_date=?",
+                    (r["stock_id"], r["first_board_date"]),
+                ).fetchone()
+                if not existing:
+                    raw = json.loads(r["raw_json"] or "{}")
+                    preserved_themes[(r["stock_id"], r["first_board_date"])] = {
+                        "main_theme": r["main_theme"],
+                        "basis": raw.get("唯一主炒依据") or "保留原候选轮已确认高标题材供压制与补涨映射引用",
+                        "sources": json.loads(r["evidence_snapshot_json"] or "[]"),
+                        "attributes": {},
+                    }
+        with store.immediate(connection):
+            if preserved_themes:
+                save_theme_inputs(connection, preserved_themes)
+            k_ph = ",".join("?" * len(keys))
+            fo_ph = ",".join("?" * len(fo_ids))
+            lr_ph = ",".join("?" * len(lr_ids))
+            connection.execute(f"DELETE FROM research_dependencies WHERE record_key IN ({k_ph})", keys)
+            connection.execute(f"DELETE FROM issues WHERE object_key IN ({k_ph})", keys)
+            connection.execute(
+                f"DELETE FROM research_checks WHERE dynamic_research_id IN (SELECT id FROM dynamic_research WHERE legacy_record_key IN ({k_ph})) "
+                f"OR static_research_id IN (SELECT id FROM static_research WHERE legacy_record_key IN ({k_ph}))",
+                keys * 2,
+            )
+            connection.execute(
+                f"DELETE FROM trade_outcomes WHERE dynamic_research_id IN (SELECT id FROM dynamic_research WHERE legacy_record_key IN ({k_ph}))",
+                keys,
+            )
+            connection.execute(f"DELETE FROM dynamic_research WHERE legacy_record_key IN ({k_ph})", keys)
+            connection.execute(f"DELETE FROM static_research WHERE legacy_record_key IN ({k_ph})", keys)
+            connection.execute(
+                f"DELETE FROM pool_members WHERE pool_id IN (SELECT id FROM stock_pools WHERE candidate_event_id IN ({fo_ph}))",
+                fo_ids,
+            )
+            connection.execute(f"DELETE FROM stock_pools WHERE candidate_event_id IN ({fo_ph})", fo_ids)
+            connection.execute(f"DELETE FROM legacy_key_map WHERE legacy_record_key IN ({k_ph})", keys)
+            connection.execute(f"UPDATE first_open_events SET one_word_run_id=NULL WHERE id IN ({fo_ph})", fo_ids)
+            connection.execute(f"DELETE FROM first_open_events WHERE id IN ({fo_ph})", fo_ids)
+            connection.execute(f"DELETE FROM one_word_runs WHERE launch_round_id IN ({lr_ph})", lr_ids)
+            connection.execute(f"DELETE FROM launch_rounds WHERE id IN ({lr_ph})", lr_ids)
+            if sr_ids:
+                sr_ph = ",".join("?" * len(sr_ids))
+                connection.execute(f"UPDATE pool_members SET source_record_id=NULL WHERE source_record_id IN ({sr_ph})", sr_ids)
+                connection.execute(f"UPDATE stock_names SET source_record_id=NULL WHERE source_record_id IN ({sr_ph})", sr_ids)
+                connection.execute(f"UPDATE announcements SET source_record_id=NULL WHERE source_record_id IN ({sr_ph})", sr_ids)
+                connection.execute(f"DELETE FROM source_records WHERE id IN ({sr_ph})", sr_ids)
+        store.export_all(publish_root=True)
+        return {"purged": len(keys), "preserved_high_themes": len(preserved_themes), "record_keys": keys}
+    finally:
+        connection.close()
 

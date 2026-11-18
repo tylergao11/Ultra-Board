@@ -188,7 +188,7 @@ def _match_row(member, date, theme, resolver):
             "来源": sorted(set(sources) | _source_values(member.get("source")))}
 
 
-def derive_record(fact, resolver, announcement=None):
+def derive_record(fact, resolver, announcement=None, replenishment_basis=None):
     source_fact = fact
     identity = fact["identity"]
     # Also reject historical days in previously prepared material.
@@ -238,28 +238,36 @@ def derive_record(fact, resolver, announcement=None):
                 competitors.append(match)
     raw = fact["current_static_raw"]
     announcement = announcement or {}
-    pollution = announcement.get("pollution", raw.get("公告污染"))
-    basis = announcement.get("basis", raw.get("公告污染依据"))
-    if not isinstance(pollution, bool) or not basis:
-        raise MissingInput(f"{fact['record_key']} 缺少公告判断或依据")
+    clear_ann = announcement.get("clear") is True
+    pollution = None if clear_ann else announcement.get("pollution", raw.get("公告污染"))
+    basis = None if clear_ann else announcement.get("basis", raw.get("公告污染依据"))
+    if isinstance(pollution, bool) and not basis:
+        raise MissingInput(f"{fact['record_key']} 缺少公告依据")
     if "sources" in announcement:
         fact["announcement_sources"] = announcement["sources"]
-    else:
+    elif not clear_ann:
         fact["announcement_sources"] = sorted(set(fact["announcement_sources"]) | set(raw.get("公告污染来源", [])))
     brief = lambda h: f"{h['股票名称']}({h['股票代码']}) {h['身位']}板"
+    auto_mapping = (f"首板日 {identity['first_board_date']} 高标 {brief(replen_hits[0])} 主炒"
+                    f"{replen_hits[0]['高标主炒']}，候选{'已确认属性' if partial else '完整有效属性'}命中。" if replen_hits else
+                    f"首板日 {identity['first_board_date']} 的 {len(replenishment)} 只合格高标主炒逐项映射，候选完整有效属性均无命中。")
+    replen_note = replenishment_basis if replenishment_basis is not None else raw.get("补涨逻辑说明")
+    if isinstance(replen_note, str):
+        replen_note = replen_note.strip()
+    mapping_text = f"{auto_mapping} 补涨逻辑：{replen_note}" if replen_note else auto_mapping
     return {"record_key": fact["record_key"], "static": {
         "main_theme": theme, "main_theme_basis": own["basis"],
         "replenishment_result": "补涨" if replen_hits else "非补涨",
-        "mapping_basis": (f"首板日 {identity['first_board_date']} 高标 {brief(replen_hits[0])} 主炒"
-                          f"{replen_hits[0]['高标主炒']}，候选{'已确认属性' if partial else '完整有效属性'}命中。" if replen_hits else
-                          f"首板日 {identity['first_board_date']} 的 {len(replenishment)} 只合格高标主炒逐项映射，候选完整有效属性均无命中。"),
+        "mapping_basis": mapping_text,
+        "replenishment_basis": replen_note,
         "replenishment_details": replenishment,
-        "suppression_result": "有一字压制" if suppress_hits else "无一字压制",
+        "suppression_result": "被压制" if suppress_hits else "非压制",
         "suppression_basis": ("；".join(f"{date} {brief(h)} 具备{theme}" for date, h in suppress_hits)
-                              if suppress_hits else f"核对本次首开前一字日 {identity['focus_date']} 的全部更高一字票，有效属性均未命中{theme}；此前日期不延续压制。"),
+                              if suppress_hits else f"核对本次首开前一字日 {identity['focus_date']} 压制范围内的一字票，有效属性均未命中{theme}；此前日期不延续压制。"),
         "suppression_details": suppression, "competitors": competitors,
-        "announcement_pollution": pollution, "announcement_basis": basis,
-        "additional_evidence": sorted(set(own["sources"]) | set(raw.get("公告污染来源", []))),
+        "announcement_pollution": pollution if isinstance(pollution, bool) else None,
+        "announcement_basis": basis if isinstance(pollution, bool) else None,
+        "additional_evidence": sorted(set(own["sources"]) | (set() if clear_ann else set(raw.get("公告污染来源", [])))),
     }}
 
 
@@ -295,7 +303,7 @@ def _affected_keys(connection, changes, minimum=4):
                     (SELECT MAX(trade_date) FROM daily_market WHERE source_type='kaipanla_limit_pool' AND trade_date<?)))
                   OR (h.strict_one_word=1 AND EXISTS (SELECT 1 FROM daily_market d WHERE d.stock_id=?
                     AND d.source_type='kaipanla_limit_pool' AND d.trade_date=h.trade_date
-                    AND d.trade_date BETWEEN ? AND ? AND d.strict_one_word=1 AND d.board_height<h.board_height))
+                    AND d.trade_date BETWEEN ? AND ? AND d.strict_one_word=1 AND d.board_height<=h.board_height))
                   OR (h.trade_date=(SELECT MAX(trade_date) FROM daily_market WHERE source_type='kaipanla_limit_pool' AND trade_date<?)
                     AND h.board_height >= COALESCE((SELECT board_height FROM daily_market d WHERE d.stock_id=?
                         AND d.trade_date=h.trade_date AND d.source_type='kaipanla_limit_pool'),999))) LIMIT 1""",
@@ -383,7 +391,8 @@ def judgement_slots(store, facts, existing):
 
 def commit_judgements(store, facts, decisions, publish=True, receipt=None):
     by_key = {f["record_key"]:f for f in facts["records"]}
-    payload = {"themes":[v for v in decisions.get("high_themes", []) if v.get("main_theme")], "announcements":{}}
+    payload = {"themes":[v for v in decisions.get("high_themes", []) if v.get("main_theme")],
+               "announcements":{}, "replenishment_bases":{}}
     keys, deferred = [], []
     for item in decisions["records"]:
         key = item["record_key"]
@@ -401,7 +410,11 @@ def commit_judgements(store, facts, decisions, publish=True, receipt=None):
             if value.get("main_theme_basis"):
                 edit["basis"] = value["main_theme_basis"]
             payload["themes"].append(edit)
-        if isinstance(value.get("announcement_pollution"),bool) or value.get("announcement_basis"):
+        if value.get("replenishment_basis") is not None:
+            payload["replenishment_bases"][key] = str(value["replenishment_basis"]).strip()
+        if value.get("clear_announcement") is True:
+            payload["announcements"][key] = {"clear": True}
+        elif isinstance(value.get("announcement_pollution"),bool) or value.get("announcement_basis"):
             pollution = value.get("announcement_pollution")
             payload["announcements"][key] = {"pollution":pollution if isinstance(pollution,bool) else fact["current_static_raw"].get("公告污染"),
                 "basis":value.get("announcement_basis") or fact["current_static_raw"].get("公告污染依据"),
@@ -419,16 +432,18 @@ def recompute(store, record_keys=None, inputs=None, preview=False, publish=True,
               publish_root=True, verify_saved=False, receipt=None):
     started = time.perf_counter()
     payload = {} if inputs is None else inputs
-    if not isinstance(payload,dict) or set(payload)-{"themes","announcements","record_keys"}:
-        raise ValueError("输入字段为 themes、announcements、record_keys")
+    if not isinstance(payload,dict) or set(payload)-{"themes","announcements","replenishment_bases","record_keys"}:
+        raise ValueError("输入字段为 themes、announcements、replenishment_bases、record_keys")
     if not isinstance(payload.get("themes",[]),list) or any(not isinstance(v,dict) for v in payload.get("themes",[])):
         raise ValueError("themes 须为题材输入列表")
     if not isinstance(payload.get("announcements",{}),dict):
         raise ValueError("announcements 须按记录键填写")
+    if not isinstance(payload.get("replenishment_bases",{}),dict) or any(not isinstance(v,str) for v in payload.get("replenishment_bases",{}).values()):
+        raise ValueError("replenishment_bases 须按记录键填写补涨逻辑字符串")
     if not isinstance(payload.get("record_keys",[]),list) or any(not isinstance(v,str) for v in payload.get("record_keys",[])):
         raise ValueError("record_keys 须为记录键列表")
-    if inputs is not None and not record_keys and not any(payload.get(k) for k in ("themes","announcements","record_keys")):
-        raise ValueError("输入文件没有待处理的题材、公告或记录键")
+    if inputs is not None and not record_keys and not any(payload.get(k) for k in ("themes","announcements","replenishment_bases","record_keys")):
+        raise ValueError("输入文件没有待处理的题材、补涨逻辑、公告或记录键")
     connection = store.connect()
     try:
         store.apply_migrations(connection)
@@ -440,6 +455,7 @@ def recompute(store, record_keys=None, inputs=None, preview=False, publish=True,
         minimum = min(parameters["前序最低连续板数"],parameters["当日断板前最低连续板数"])
         keys = set(record_keys or payload.get("record_keys", [])) | set(payload.get("record_keys", [])) | _affected_keys(connection, edits, minimum)
         keys.update(payload.get("announcements", {}))
+        keys.update(payload.get("replenishment_bases", {}))
         if not keys and not edits:
             keys = {r[0] for r in connection.execute(
                 "SELECT legacy_record_key FROM current_static_research WHERE json_extract(raw_json, '$.自动推导') = 1"
@@ -453,11 +469,14 @@ def recompute(store, record_keys=None, inputs=None, preview=False, publish=True,
                 pass
         announcements = {}
         for key, value in payload.get("announcements",{}).items():
-            if not isinstance(value,dict) or set(value)-{"pollution","basis","sources"}:
-                raise ValueError(f"{key} 公告字段为 pollution、basis、sources")
+            if not isinstance(value,dict) or set(value)-{"pollution","basis","sources","clear"}:
+                raise ValueError(f"{key} 公告字段为 pollution、basis、sources、clear")
             row = connection.execute("SELECT raw_json FROM current_static_research WHERE legacy_record_key=?",(key,)).fetchone()
             if not row:
                 raise ValueError(f"未知记录键：{key}")
+            if value.get("clear") is True:
+                announcements[key] = {"clear": True}
+                continue
             raw = json.loads(row[0])
             pollution = value.get("pollution",raw.get("公告污染"))
             basis = value.get("basis",raw.get("公告污染依据"))
@@ -467,6 +486,7 @@ def recompute(store, record_keys=None, inputs=None, preview=False, publish=True,
             if not isinstance(sources,list) or any(not isinstance(v,str) for v in sources):
                 raise ValueError(f"{key} 公告 sources 须填写来源列表")
             announcements[key] = {"pollution":pollution,"basis":basis,"sources":sources}
+        replenishment_bases = payload.get("replenishment_bases", {})
         dates = _trading_dates(connection)
         batch_key = connection.execute("SELECT value FROM store_meta WHERE key='current_batch_key'").fetchone()[0]
         shared = {}
@@ -485,15 +505,20 @@ def recompute(store, record_keys=None, inputs=None, preview=False, publish=True,
             resolver.dependencies = set()
             try:
                 announcement = announcements.get(fact["record_key"],{})
-                if announcement:
+                if announcement and not announcement.get("clear"):
                     raw = fact["current_static_raw"]
                     pollution = announcement.get("pollution",raw.get("公告污染"))
                     basis = announcement.get("basis",raw.get("公告污染依据"))
                     sources = announcement.get("sources",raw.get("公告污染来源",[]))
                     pending_inputs[fact["record_key"]] = {"公告污染":pollution,"公告污染依据":basis,"公告污染来源":sources}
                     raw.update(pending_inputs[fact["record_key"]])
+                if fact["record_key"] in replenishment_bases:
+                    note = replenishment_bases[fact["record_key"]].strip()
+                    if note:
+                        pending_inputs.setdefault(fact["record_key"], {})["补涨逻辑说明"] = note
+                        fact["current_static_raw"]["补涨逻辑说明"] = note
                 resolver.register_dependencies(fact)
-                decision = derive_record(fact, resolver, announcement)
+                decision = derive_record(fact, resolver, announcement, replenishment_bases.get(fact["record_key"]))
                 request = static_request(fact,decision["static"])
                 from .birth_themes import birth_fields
                 request["updates"].update(birth_fields(fact["identity"]["first_board_date"],

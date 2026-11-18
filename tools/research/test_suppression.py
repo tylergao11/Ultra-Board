@@ -1,4 +1,5 @@
 import unittest
+from .batch import _in_suppression_scope
 from .suppression import current_day
 
 
@@ -23,3 +24,12 @@ class SuppressionDateTests(unittest.TestCase):
     def test_duplicate_current_day_is_rejected(self):
         with self.assertRaises(ValueError):
             current_day([{"日期":"2025-12-25"}]*2,"2025-12-25")
+
+    def test_same_height_20cm_suppresses_mainboard_10cm_without_bse(self):
+        self.assertTrue(_in_suppression_scope("603716", 2, "301293", 2))
+        self.assertTrue(_in_suppression_scope("000892", 2, "300766", 2))
+        self.assertTrue(_in_suppression_scope("002551", 2, "688108", 2))
+        self.assertFalse(_in_suppression_scope("603716", 2, "000516", 2))
+        self.assertFalse(_in_suppression_scope("603716", 2, "832522", 2))
+        self.assertFalse(_in_suppression_scope("603716", 2, "920116", 2))
+        self.assertTrue(_in_suppression_scope("603716", 2, "832522", 3))

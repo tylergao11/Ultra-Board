@@ -1424,9 +1424,18 @@ class ResearchStore:
         def _peer_codes(value):
             return [m.get("股票代码") for m in value if isinstance(m, dict)] if isinstance(value, list) else []
 
+        def _norm_core(field_name, val):
+            if field_name == "压制判断" and isinstance(val, str):
+                if val in ("被压制", "有一字压制") or val.startswith("有"):
+                    return "被压制"
+                if val in ("非压制", "无一字压制") or val.startswith("无"):
+                    return "非压制"
+            return val
+
         core_trade_fields = ("唯一主炒作属性", "补涨判断", "压制判断", "首开日期")
         core_changed = kind == "static" and any(
-            (key in updates and raw.get(key) != updates[key]) or (key in remove_fields and key in raw)
+            (key in updates and _norm_core(key, raw.get(key)) != _norm_core(key, updates[key]))
+            or (key in remove_fields and key in raw)
             for key in core_trade_fields
         )
         peers_changed = kind == "static" and (
@@ -1623,9 +1632,12 @@ class ResearchStore:
         output_dir.mkdir(parents=True, exist_ok=False)
         static_rows = []
         for row in connection.execute(
-            """SELECT r.legacy_record_key,s.code,n.name,l.first_board_date,l.focus_date,e.event_date,
+            """SELECT r.legacy_record_key,s.id AS stock_id,s.code,n.name,l.first_board_date,l.focus_date,e.event_date,
                       r.main_theme,r.replenishment_result,r.suppression_result,r.announcement_pollution,
-                      r.research_status,r.confirmation_status,r.raw_json
+                      r.research_status,r.confirmation_status,r.raw_json,
+                      (SELECT json_extract(dm.raw_json, '$.name') FROM daily_market dm
+                       WHERE dm.stock_id=s.id AND dm.trade_date<=l.focus_date AND dm.source_type='kaipanla_limit_pool'
+                       ORDER BY dm.trade_date DESC, dm.id DESC LIMIT 1) AS hist_name
                FROM current_static_research r
                JOIN first_open_events e ON e.id=r.first_open_event_id
                JOIN launch_rounds l ON l.id=e.launch_round_id
@@ -1637,7 +1649,7 @@ class ResearchStore:
             static_rows.append({
                 "记录键": row["legacy_record_key"],
                 "股票代码": row["code"],
-                "股票名称": row["name"],
+                "股票名称": row["hist_name"] or row["name"],
                 "首板日": row["first_board_date"],
                 "一字段": row["focus_date"],
                 "首开日": row["event_date"],

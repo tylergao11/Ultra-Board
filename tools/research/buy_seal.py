@@ -39,7 +39,7 @@ def fetch_crosscheck(store, day, directory, pool='limit_up'):
 
 
 def passed(raw):
-    return raw.get('补涨判断') == '非补涨' and raw.get('压制判断', '').startswith('无')
+    return raw.get('补涨判断') == '非补涨' and str(raw.get('压制判断', '')).startswith(('非', '无'))
 
 
 def request(key, updates):
@@ -235,7 +235,7 @@ def evaluate(store, keys, directory, commit=False, buy_day_only=False, commit_re
             record['day_sealed']=opening_day_result(fact['first_open_market'])['当天是否封板']
             decision={'record_key':key,'static':static}
             if not passed(raw):
-                record['reason']='、'.join(v for v in ('补涨' if raw['补涨判断']=='补涨' else '', '一字压制' if raw['压制判断'].startswith('有') else '') if v)
+                record['reason']='、'.join(v for v in ('补涨' if raw['补涨判断']=='补涨' else '', '被压制' if str(raw['压制判断']).startswith(('被', '有')) else '') if v)
             else:
                 market=fact['first_open_market'];o=observe(market)
                 review=reviews.get(key,{})

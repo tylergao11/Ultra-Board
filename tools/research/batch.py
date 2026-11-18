@@ -51,7 +51,16 @@ def _write_json(path: Path, value: Any) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _name(connection, stock_id: int) -> str | None:
+def _name(connection, stock_id: int, trade_date: str | None = None) -> str | None:
+    if trade_date:
+        hist = connection.execute(
+            """SELECT json_extract(raw_json, '$.name') FROM daily_market
+               WHERE stock_id=? AND trade_date<=? AND source_type='kaipanla_limit_pool'
+               ORDER BY trade_date DESC, id DESC LIMIT 1""",
+            (stock_id, trade_date),
+        ).fetchone()
+        if hist and hist[0]:
+            return hist[0]
     row = connection.execute(
         """SELECT name FROM stock_names WHERE stock_id=?
            ORDER BY CASE WHEN valid_to IS NULL THEN 0 ELSE 1 END, valid_from DESC, id DESC LIMIT 1""",
@@ -60,9 +69,30 @@ def _name(connection, stock_id: int) -> str | None:
     return row["name"] if row else None
 
 
-def _stock_identity(connection, stock_id: int) -> dict[str, Any]:
+def _stock_identity(connection, stock_id: int, trade_date: str | None = None) -> dict[str, Any]:
     row = connection.execute("SELECT code FROM stocks WHERE id=?", (stock_id,)).fetchone()
-    return {"stock_id": stock_id, "code": row["code"], "name": _name(connection, stock_id)}
+    return {"stock_id": stock_id, "code": row["code"], "name": _name(connection, stock_id, trade_date)}
+
+
+def _is_mainboard_10cm(code: str | None) -> bool:
+    return str(code or "").startswith(("00", "60"))
+
+
+def _is_20cm(code: str | None) -> bool:
+    return str(code or "").startswith(("300", "301", "688"))
+
+
+def _in_suppression_scope(
+    candidate_code: str | None,
+    candidate_height: int | None,
+    member_code: str | None,
+    member_height: int | None,
+) -> bool:
+    ch = candidate_height or 0
+    mh = member_height or 0
+    if mh > ch:
+        return True
+    return bool(mh == ch and _is_mainboard_10cm(candidate_code) and _is_20cm(member_code))
 
 
 def _latest_attributes(connection, stock_id: int) -> dict[str, Any]:
@@ -255,7 +285,7 @@ def _global_pool(connection, pool_type: str, pool_date: str, batch_key: str, min
     ).fetchall()
     result = []
     for row in rows:
-        item = _stock_identity(connection, row["stock_id"])
+        item = _stock_identity(connection, row["stock_id"], pool_date)
         item.update({
             "board_height": row["board_height"],
             "status": f"{row['board_height']}板晋级",
@@ -438,7 +468,7 @@ def _competitor_candidates(connection, dates: list[str], stock_id: int, focus_da
     ).fetchall()
     members = []
     for row in rows:
-        item = _stock_identity(connection, row["stock_id"])
+        item = _stock_identity(connection, row["stock_id"], previous)
         raw = json.loads(row["raw_json"])
         item.update({
             "board_height": row["board_height"],
@@ -492,7 +522,7 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
         dynamic_raw=json.loads(dynamic[0]) if dynamic else None
         following_days=0 if ((dynamic_raw or {}).get('买入后结果') or {}).get('研究范围')=='买点封板率' else 20
         return {'record_key':row['legacy_record_key'],'scope':'dynamic',
-                'identity':{'code':row['code'],'stock_id':row['stock_id'],'name':_name(connection,row['stock_id']),
+                'identity':{'code':row['code'],'stock_id':row['stock_id'],'name':_name(connection,row['stock_id'],row['focus_date']),
                             'focus_date':row['focus_date'],'first_board_date':row['first_board_date'],'first_open_date':row['event_date']},
                 'current_static_raw':raw,'current_dynamic_raw':dynamic_raw,
                 'potential_competitor_candidates':raw.get('首开潜在竞争对手候选全集',{}),
@@ -523,7 +553,10 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
             scope_dates.add(date)
             higher = []
             for member in _global_pool(connection, "strict_one_word", date, batch_key):
-                if (member.get("board_height") or 0) <= (candidate.get("board_height") or 0):
+                if member["stock_id"] == stock_id:
+                    continue
+                if not _in_suppression_scope(code, candidate.get("board_height"),
+                                             member.get("code"), member.get("board_height")):
                     continue
                 member["attributes"] = attributes(member["stock_id"])
                 higher.append(member)
@@ -546,7 +579,7 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
         "identity": {
             "stock_id": stock_id,
             "code": code,
-            "name": _name(connection, stock_id),
+            "name": _name(connection, stock_id, row["focus_date"]),
             "first_board_date": first_board_date,
             "focus_date": row["focus_date"],
             "first_open_date": row["event_date"],
@@ -587,7 +620,7 @@ def _record_facts(store, connection, dates: list[str], batch_key: str, row: Any,
 def _decision_template(fact: dict[str, Any], scope: str = "static") -> dict[str, Any]:
     result = {"record_key":fact["record_key"],"static":{
         "main_theme":None,"main_theme_basis":None,
-        "announcement_pollution":None,"announcement_basis":None,"additional_evidence":[]}}
+        "replenishment_basis":None,"additional_evidence":[]}}
     if scope == "dynamic":
         result.pop("static")
         result["dynamic"] = {"auction":None,"pk_checks":None,"pk_result":None,
@@ -663,7 +696,7 @@ def prepare_batch(
         from .intake import fetch_attributes
         passing = {row["record_key"] for row in decisions["records"]
                    if row["static"].get("replenishment_result") == "非补涨"
-                   and str(row["static"].get("suppression_result") or "").startswith("无")}
+                   and str(row["static"].get("suppression_result") or "").startswith(("非", "无"))}
         missing_codes = sorted({item["code"] for item in _missing_facts(facts_records)
                                 if item["kind"] == "attributes" and
                                 (not item.get("required_when") or item["record_key"] in passing)})
@@ -727,8 +760,6 @@ def _missing_facts(records: list[dict]) -> list[dict]:
         for item in fact["scope_audit"]:
             if item["status"] == "source_missing":
                 missing.append({"record_key": key, "kind": "daily_pool", "date": item["date"]})
-        if not fact["announcement_sources"] or fact.get("announcement_missing_dates"):
-            missing.append({"record_key": key, "kind": "announcements", "code": fact["identity"]["code"]})
     return missing
 
 
@@ -787,24 +818,26 @@ def _brief(facts: dict, decisions: dict | None = None) -> dict:
         raw = fact.get("current_static_raw") or {}
         identity = fact["identity"]
         theme = raw.get("唯一主炒作属性")
-        pollution = raw.get("公告污染")
-        needs = [name for name, done in (("main_theme", bool(theme)), ("announcement", isinstance(pollution, bool))) if not done]
+        replen_note = raw.get("补涨逻辑说明")
+        needs = [name for name, done in (("main_theme", bool(theme)), ("replenishment_basis", bool(replen_note))) if not done]
         if not needs:
             reused.append({"record_key": fact["record_key"], "name": identity.get("name"), "main_theme": theme,
-                           "announcement_pollution": pollution})
+                           "replenishment_basis": _clip(replen_note)})
             continue
+        high_brief = [{"code": m["code"], "name": m.get("name"), "height": m.get("board_height"),
+                       "status": m.get("status"), "confirmed_main_theme": m.get("confirmed_main_theme"),
+                       "theme_hint": m.get("theme_hint")} for m in fact["high_pool"]["members"]]
         records.append({
             "record_key": fact["record_key"], "needs": needs,
             "stock": f"{identity['code']} {identity.get('name') or ''}".strip(),
             "first_board_date": identity["first_board_date"], "focus_date": identity["focus_date"],
             "first_open_date": identity.get("first_open_date"),
             "saved": {"main_theme": theme, "main_theme_basis": _clip(raw.get("唯一主炒依据")),
-                      "announcement_pollution": pollution},
+                      "replenishment_result": raw.get("补涨判断"), "mapping_basis": _clip(raw.get("映射依据")),
+                      "replenishment_basis": _clip(replen_note)},
             "first_two": [_day_view(day) for day in fact.get("first_two") or []],
+            "high_pool_summary": high_brief,
             "attribute_tags": (fact.get("attributes") or {}).get("tags", []),
-            "announcement": {"sources": fact.get("announcement_sources", []),
-                             "missing_dates": fact.get("announcement_missing_dates", []),
-                             "capital_term_hits": _capital_hits(fact)},
         })
     members = {}
     for fact in facts["records"]:
@@ -820,9 +853,9 @@ def _brief(facts: dict, decisions: dict | None = None) -> dict:
                      "status": member.get("status"), "first_two": [_day_view(day) for day in member.get("first_two") or []]})
     missing = [m for m in facts.get("missing", []) if m.get("kind") != "attributes" or not m.get("required_when")]
     return {"batch_id": facts["batch_id"], "scope": facts["scope"],
-            "how_to_fill": ("只填 decisions.json：records[].static 的 main_theme/main_theme_basis（needs 含 main_theme 时）、"
-                            "announcement_pollution/announcement_basis（needs 含 announcement 时）；high_themes[] 的 main_theme/basis。"
-                            "capital_term_hits 只是检索提示，须核对原文后判断。补涨、压制、竞争清单由程序生成。具体疑点再查 facts.json 对应记录。"),
+            "how_to_fill": ("只填 decisions.json：records[].static 的 main_theme/main_theme_basis（逐条写清首二主炒逻辑）"
+                            "与 replenishment_basis（逐条写清构成或不构成补涨的盘面逻辑）；high_themes[] 的 main_theme/basis。"
+                            "补涨命中、压制、竞争清单由程序生成。具体疑点再查 facts.json 对应记录。"),
             "records": records, "high_themes_to_decide": high, "reused": reused, "missing": missing}
 
 
@@ -863,21 +896,21 @@ def _load_pending(store, decisions_path):
 
 def _validate_decision(fact: dict[str, Any], decision: dict[str, Any], scope: str = "dynamic") -> bool:
     static = decision.get("static") or {}
-    required = ["main_theme", "main_theme_basis", "replenishment_result", "mapping_basis", "suppression_result", "suppression_basis", "announcement_basis"]
+    required = ["main_theme", "main_theme_basis", "replenishment_result", "mapping_basis", "suppression_result", "suppression_basis"]
     if scope == "dynamic":
         # Saved legacy static conclusions are read-only inputs to trading.
         # Their old prose layout must not trigger a static rewrite here.
         required = ["main_theme", "replenishment_result", "suppression_result"]
     missing = [key for key in required if not static.get(key)]
-    if missing or not isinstance(static.get("announcement_pollution"), bool):
-        raise ValueError(f"{fact['record_key']} static decision incomplete: {missing or ['announcement_pollution']}")
+    if missing:
+        raise ValueError(f"{fact['record_key']} static decision incomplete: {missing}")
     if static["replenishment_result"] not in {"补涨", "非补涨"}:
         raise ValueError(f"{fact['record_key']} invalid replenishment_result")
-    if not (str(static["suppression_result"]).startswith("有") or str(static["suppression_result"]).startswith("无")):
-        raise ValueError(f"{fact['record_key']} suppression_result must start with 有 or 无")
+    if not str(static["suppression_result"]).startswith(("被", "非", "有", "无")):
+        raise ValueError(f"{fact['record_key']} suppression_result must be 被压制 or 非压制")
     passed = (
         static["replenishment_result"] == "非补涨"
-        and str(static["suppression_result"]).startswith("无")
+        and str(static["suppression_result"]).startswith(("非", "无"))
     )
     if passed and scope == "static" and not isinstance(static.get("competitors"), list):
         raise ValueError(f"{fact['record_key']} passing record requires competitors array")
@@ -910,9 +943,10 @@ def opening_day_result(market):
 
 def _dynamic_updates(passed: bool, static: dict[str, Any], dynamic: dict[str, Any], market: dict[str, Any]) -> dict[str, Any]:
     day_result=opening_day_result(market)
+    pollution = static.get("announcement_pollution")
     if passed:
         updates = {
-            "买入筛选": {"非补涨": True, "无一字压制": True, "公告污染": static["announcement_pollution"], "公告处理": "独立记录", "结果": "淘汰" if "医药" in static["main_theme"] else "通过", "依据": "医药及医药强相关题材" if "医药" in static["main_theme"] else "非补涨、无一字压制；上午买点及同轮去重另核"},
+            "买入筛选": {"非补涨": True, "无一字压制": True, "公告污染": pollution, "公告处理": "独立记录", "结果": "淘汰" if "医药" in static["main_theme"] else "通过", "依据": "医药及医药强相关题材" if "医药" in static["main_theme"] else "非补涨、无一字压制；上午买点及同轮去重另核"},
             "竞价筛选": dynamic["auction"],
             "同题材PK核验明细": dynamic["pk_checks"],
             "同题材PK结果": dynamic["pk_result"],
@@ -925,15 +959,15 @@ def _dynamic_updates(passed: bool, static: dict[str, Any], dynamic: dict[str, An
     reasons = []
     if static["replenishment_result"] != "非补涨":
         reasons.append("补涨")
-    if not str(static["suppression_result"]).startswith("无"):
-        reasons.append("有一字压制")
+    if not str(static["suppression_result"]).startswith(("非", "无")):
+        reasons.append("被压制")
     reason = "、".join(reasons)
     return {
         '首开当日结果':day_result,
         "买入筛选": {
             "非补涨": static["replenishment_result"] == "非补涨",
-            "无一字压制": str(static["suppression_result"]).startswith("无"),
-            "公告污染": static["announcement_pollution"],
+            "无一字压制": str(static["suppression_result"]).startswith(("非", "无")),
+            "公告污染": pollution,
             "公告处理": "独立记录",
             "结果": "淘汰",
             "依据": reason,
@@ -960,6 +994,7 @@ def static_request(fact, static):
         "st_row_count": sum(len(item["st_rows"]) for item in fact["scope_audit"]),
         "status": "checked",
     }
+    has_ann = isinstance(static.get("announcement_pollution"), bool) and bool(static.get("announcement_basis"))
     updates = {
         "开盘啦完整属性集": fact["attributes"]["tags"],
         "开盘啦完整属性来源": fact["attributes"]["sources"],
@@ -974,14 +1009,26 @@ def static_request(fact, static):
         "一字压制核验明细": static.get("suppression_details") or fact["strict_one_word_days"],
         "压制判断": static["suppression_result"],
         "压制依据": static["suppression_basis"],
-        "公告污染": static["announcement_pollution"],
-        "公告污染依据": static["announcement_basis"],
-        "公告污染来源": fact["announcement_sources"],
         "静态筛选结论": "通过" if passed else "不通过",
-        "静态筛选口径": "非补涨 + 无一字压制；公告污染独立记录",
+        "静态筛选口径": "非补涨 + 非压制；公告污染独立记录" if has_ann else "非补涨 + 非压制",
     }
-    if static["announcement_pollution"]:
-        updates["公告真实属性"] = static["main_theme"]
+    remove_fields = []
+    if static.get("replenishment_basis"):
+        updates["补涨逻辑说明"] = static["replenishment_basis"]
+    elif static.get("replenishment_basis") == "":
+        remove_fields.append("补涨逻辑说明")
+    if has_ann:
+        updates["公告污染"] = static["announcement_pollution"]
+        updates["公告污染依据"] = static["announcement_basis"]
+        updates["公告污染来源"] = fact["announcement_sources"]
+        if static["announcement_pollution"]:
+            updates["公告真实属性"] = static["main_theme"]
+        else:
+            remove_fields.append("公告真实属性")
+    else:
+        updates["公告污染"] = None
+        updates["公告污染依据"] = None
+        remove_fields.extend(["公告污染", "公告污染依据", "公告污染来源", "公告真实属性"])
     if fact["attributes"].get("snapshot_status") == "confirmed_partial":
         updates["开盘啦完整属性集"] = []
         updates["开盘啦完整属性来源"] = []
@@ -996,15 +1043,13 @@ def static_request(fact, static):
         {"check_type":"唯一主炒","outcome":static["main_theme"],"basis":static["main_theme_basis"],"sources":sorted(_source_values(fact["first_two"]))},
         {"check_type":"补涨判断","outcome":static["replenishment_result"],"basis":static["mapping_basis"],"sources":fact["attributes"]["sources"]},
         {"check_type":"一字压制核验明细","outcome":static["suppression_result"],"basis":static["suppression_basis"],"sources":sorted(_source_values(fact["strict_one_word_days"])),"raw":updates["一字压制核验明细"]},
-        {"check_type":"公告污染","outcome":str(static["announcement_pollution"]).lower(),"basis":static["announcement_basis"],"sources":fact["announcement_sources"]},
     ]
+    if has_ann:
+        checks.append({"check_type":"公告污染","outcome":str(static["announcement_pollution"]).lower(),"basis":static["announcement_basis"],"sources":fact["announcement_sources"]})
     if passed:
         checks.append({"check_type":"首开潜在竞争对手事实清单","outcome":"完整","basis":"按前日同身位及更高身位全集逐只裁决。","sources":sorted(_source_values(fact["potential_competitor_candidates"])),"raw":static["competitors"]})
-    remove_fields = []
     if not passed:
         remove_fields.extend(["首开潜在竞争对手事实清单", "首开潜在竞争对手候选全集"])
-    if not static["announcement_pollution"]:
-        remove_fields.append("公告真实属性")
     request = {
         "request_id": "derived-static",
         "record_key": fact["record_key"], "kind": "static", "research_status": "formal_source_record",
@@ -1293,7 +1338,7 @@ def verify_batch_current(store, directory):
         competitors = [v.get("股票代码",v.get("code")) for v in raw.get("首开潜在竞争对手事实清单", [])]
         if competitors != row["competitors"]:
             findings.append(row["record_key"] + " 竞争清单与当前输入不一致")
-        if (row["replenishment"] == "补涨" or row["suppression"].startswith("有")) and "首开潜在竞争对手事实清单" in raw:
+        if (row["replenishment"] == "补涨" or row["suppression"].startswith(("被", "有"))) and "首开潜在竞争对手事实清单" in raw:
             findings.append(row["record_key"] + " 旧竞争清单残留")
     if store.db_path == store.root / "data/store/research.sqlite":
         try:
@@ -1303,7 +1348,7 @@ def verify_batch_current(store, directory):
                 raw = json.loads(saved["raw_json"])
                 expected = {"唯一主炒":saved["main_theme"],"补涨判断":saved["replenishment_result"],
                             "补涨题材日期":raw.get("补涨题材日期"),"出生当日补涨题材":raw.get("出生当日补涨题材"),
-                            "压制判断":saved["suppression_result"],"公告污染":bool(saved["announcement_pollution"]),
+                            "压制判断":saved["suppression_result"],"公告污染":None if saved["announcement_pollution"] is None else bool(saved["announcement_pollution"]),
                             "潜在竞争对手":raw.get("首开潜在竞争对手事实清单"),
                             "静态筛选结论":raw.get("静态筛选结论")}
                 if any(display.get(row["record_key"],{}).get(k)!=v for k,v in expected.items()):

@@ -135,8 +135,9 @@ def main() -> None:
     daily.add_argument('--reconcile-missing', action='store_true', help='add only verified omitted provider rows; conflicts still stop')
     daily.add_argument('--audit-only', action='store_true', help='read-only comparison of source files and database coverage')
     cands = sub.add_parser('candidate-sync', help='register or advance strict one-word candidate events from limit pools')
-    cands.add_argument('--from-date', required=True)
-    cands.add_argument('--to-date', required=True)
+    cands.add_argument('--from-date')
+    cands.add_argument('--to-date')
+    cands.add_argument('--purge-non-mainboard', action='store_true', help='remove non-00/60 candidate records while keeping stock/theme facts')
     morning = sub.add_parser('morning-audit', help='audit current entries against morning-only buy rule')
     morning.add_argument('--commit', action='store_true')
     morning.add_argument('--report', required=True)
@@ -304,8 +305,17 @@ def run(args, store, parser) -> None:
         if result['intake']['errors'] or any(r['status']=='error' for r in result['results']):
             raise SystemExit(1)
     elif args.command == 'candidate-sync':
-        from research.intake import sync_candidates
-        emit(sync_candidates(store, args.from_date, args.to_date))
+        from research.intake import purge_non_mainboard_candidates, sync_candidates
+        out = {}
+        if args.purge_non_mainboard:
+            out['purge'] = purge_non_mainboard_candidates(store)
+        if args.from_date or args.to_date:
+            if not (args.from_date and args.to_date):
+                parser.error('--from-date and --to-date must be provided together')
+            out['sync'] = sync_candidates(store, args.from_date, args.to_date)
+        elif not args.purge_non_mainboard:
+            parser.error('specify --from-date/--to-date or --purge-non-mainboard')
+        emit(out['sync'] if set(out) == {'sync'} else out)
     elif args.command == 'morning-audit':
         from research.afternoon import audit
         result = audit(store, args.commit)
