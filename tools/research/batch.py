@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from bisect import bisect_left
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 import hashlib
 import json
 from pathlib import Path
@@ -123,7 +124,125 @@ def _latest_attributes(connection, stock_id: int) -> dict[str, Any]:
     }
 
 
-def _daily_row(connection, stock_id: int, trade_date: str) -> dict[str, Any] | None:
+def _kline_strict_one_word(
+    connection,
+    stock_id: int,
+    trade_date: str,
+    context: list[dict[str, Any]] | None = None,
+    _depth: int = 0,
+) -> dict[str, Any] | None:
+    """Fallback strict one-word detection from saved OHLC when Kaipanla pools omit a limit-up day."""
+    if _depth > 8:
+        return None
+    if connection.execute(
+        "SELECT 1 FROM intraday_events WHERE stock_id=? AND trade_date=? AND event_type='suspended'",
+        (stock_id, trade_date),
+    ).fetchone():
+        return None
+    row = connection.execute(
+        """SELECT d.*, e.path AS evidence_path
+           FROM daily_market d
+           LEFT JOIN evidence_files e ON e.id=d.evidence_file_id
+           WHERE d.stock_id=? AND d.trade_date=?
+             AND d.source_type IN ('kaipanla_snapshot','ths_kline','iwencai_daily','sina_history')
+             AND d.open_milli>0 AND d.open_milli=d.high_milli
+             AND d.high_milli=d.low_milli AND d.low_milli=d.close_milli
+             AND d.previous_close_milli>0 AND d.close_milli>d.previous_close_milli
+           ORDER BY CASE d.source_type
+             WHEN 'kaipanla_snapshot' THEN 0
+             WHEN 'ths_kline' THEN 1
+             WHEN 'iwencai_daily' THEN 2
+             ELSE 3 END, d.id DESC
+           LIMIT 1""",
+        (stock_id, trade_date),
+    ).fetchone()
+    if not row:
+        return None
+    stock = connection.execute("SELECT code FROM stocks WHERE id=?", (stock_id,)).fetchone()
+    if not stock:
+        return None
+    code = stock["code"]
+    name = (_name(connection, stock_id, trade_date) or "").upper()
+    if row["limit_up_milli"] is not None:
+        expected_limit_up = int(row["limit_up_milli"])
+    else:
+        if code.startswith(("30", "68")):
+            rate = Decimal("1.20")
+        elif "ST" in name:
+            rate = Decimal("1.05")
+        elif code.startswith(("00", "60")):
+            rate = Decimal("1.10")
+        else:
+            return None
+        expected_limit_up = int(
+            (Decimal(row["previous_close_milli"]) * rate / Decimal("10")).quantize(
+                Decimal("1"), rounding=ROUND_HALF_UP
+            )
+        ) * 10
+    if int(row["close_milli"]) != expected_limit_up:
+        return None
+    if row["source_type"] == "ths_kline":
+        raw = json.loads(row["raw_json"] or "{}")
+        values = raw.get("values")
+        if isinstance(values, list) and len(values) > 5:
+            try:
+                if float(values[5] or 0) <= 0:
+                    return None
+            except (TypeError, ValueError):
+                return None
+    prev_height = None
+    prev_row = connection.execute(
+        """SELECT MAX(d.trade_date) FROM daily_market d
+           WHERE d.source_type='kaipanla_limit_pool' AND d.trade_date<?
+             AND NOT EXISTS (
+               SELECT 1 FROM intraday_events i
+               WHERE i.stock_id=? AND i.trade_date=d.trade_date AND i.event_type='suspended'
+             )""",
+        (trade_date, stock_id),
+    ).fetchone()
+    prev_date = prev_row[0] if prev_row else None
+    if prev_date:
+        prev_pool = connection.execute(
+            """SELECT board_height FROM daily_market
+               WHERE stock_id=? AND trade_date=? AND source_type='kaipanla_limit_pool'
+                 AND board_height IS NOT NULL
+               ORDER BY id DESC LIMIT 1""",
+            (stock_id, prev_date),
+        ).fetchone()
+        if prev_pool:
+            prev_height = int(prev_pool[0])
+        else:
+            prev_msg = connection.execute(
+                """SELECT board_height FROM market_source_facts
+                   WHERE stock_id=? AND trade_date=?
+                     AND source_kind='kaipanla_historical_messages' AND board_height IS NOT NULL
+                   ORDER BY id LIMIT 1""",
+                (stock_id, prev_date),
+            ).fetchone()
+            if prev_msg:
+                prev_height = int(prev_msg[0])
+            else:
+                prev_kline = _kline_strict_one_word(connection, stock_id, prev_date, [], _depth + 1)
+                if prev_kline and prev_kline.get("board_height") is not None:
+                    prev_height = int(prev_kline["board_height"])
+    board_height = (prev_height + 1) if prev_height is not None else 1
+    return {
+        "date": trade_date,
+        "source_type": row["source_type"],
+        "board_height": board_height,
+        "strict_one_word": True,
+        "first_limit_time": None,
+        "close": row["close_milli"] / 1000,
+        "limit_up": expected_limit_up / 1000,
+        "theme": None,
+        "theme_tags": None,
+        "description": None,
+        "context": context if context is not None else [],
+        "source": row["evidence_path"],
+    }
+
+
+def _daily_row(connection, stock_id: int, trade_date: str, allow_kline_fallback: bool = True) -> dict[str, Any] | None:
     row = connection.execute(
         """SELECT d.*,e.path AS evidence_path FROM daily_market d
            LEFT JOIN evidence_files e ON e.id=d.evidence_file_id
@@ -147,7 +266,7 @@ def _daily_row(connection, stock_id: int, trade_date: str) -> dict[str, Any] | N
             (stock_id, trade_date),
         ).fetchone()
         if not fallback:
-            return None
+            return _kline_strict_one_word(connection, stock_id, trade_date, context) if allow_kline_fallback else None
         event_time = fallback["event_time"]
         return {
             "date": trade_date,
@@ -234,6 +353,21 @@ def _actual_board_sequence(connection, stock_id: int, start: str, end: str) -> l
             continue
         seen.add(row["trade_date"])
         result.append((row["trade_date"], row["board_height"]))
+    if start < end:
+        for d_row in connection.execute(
+            """SELECT DISTINCT trade_date FROM daily_market
+               WHERE source_type='kaipanla_limit_pool' AND trade_date>? AND trade_date<=?
+               ORDER BY trade_date""",
+            (start, end),
+        ):
+            day = d_row[0]
+            if day in seen:
+                continue
+            kline = _kline_strict_one_word(connection, stock_id, day, [])
+            if kline and kline.get("board_height") is not None:
+                seen.add(day)
+                result.append((day, kline["board_height"]))
+        result.sort(key=lambda item: item[0])
     return result
 
 
@@ -383,8 +517,8 @@ def _high_pool(connection, dates: list[str], pool_date: str, batch_key: str, par
     members = active + broken
     for item in members:
         fallback_date = item.get("last_limit_date") or previous
-        daily = _daily_row(connection, item["stock_id"], pool_date) or (
-            _daily_row(connection, item["stock_id"], fallback_date) if fallback_date else None
+        daily = _daily_row(connection, item["stock_id"], pool_date, allow_kline_fallback=False) or (
+            _daily_row(connection, item["stock_id"], fallback_date, allow_kline_fallback=False) if fallback_date else None
         )
         item["theme_hint"] = daily.get("theme") if daily else None
         item["theme_tags_hint"] = daily.get("theme_tags") if daily else None
