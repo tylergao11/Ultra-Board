@@ -314,7 +314,6 @@ def _high_pool(connection, dates: list[str], pool_date: str, batch_key: str, par
     if previous and dates:
         idx = bisect_left(dates, pool_date)
         lookback_start = dates[max(0, idx - 25)]
-        lookahead_end = dates[min(len(dates) - 1, idx + 25)]
         prior_rows = connection.execute(
             """SELECT d.stock_id,d.trade_date,d.board_height,e.path AS evidence_path
                FROM daily_market d LEFT JOIN evidence_files e ON e.id=d.evidence_file_id
@@ -335,9 +334,9 @@ def _high_pool(connection, dates: list[str], pool_date: str, batch_key: str, par
             sid, d0, h0, ev = row["stock_id"], row["trade_date"], row["board_height"], row["evidence_path"]
             nxt_lim = connection.execute(
                 """SELECT trade_date,board_height FROM daily_market
-                   WHERE stock_id=? AND source_type='kaipanla_limit_pool' AND trade_date>? AND trade_date<=?
+                   WHERE stock_id=? AND source_type='kaipanla_limit_pool' AND trade_date>?
                    ORDER BY trade_date ASC LIMIT 1""",
-                (sid, pool_date, lookahead_end),
+                (sid, pool_date),
             ).fetchone()
             status = None
             if nxt_lim and nxt_lim["board_height"] == h0 + 1:
@@ -354,8 +353,8 @@ def _high_pool(connection, dates: list[str], pool_date: str, batch_key: str, par
                         continue
                     nxt_kl = connection.execute(
                         """SELECT MIN(trade_date) FROM daily_market
-                           WHERE stock_id=? AND source_type=? AND trade_date>? AND trade_date<=?""",
-                        (sid, src, d0, lookahead_end),
+                           WHERE stock_id=? AND source_type=? AND trade_date>?""",
+                        (sid, src, d0),
                     ).fetchone()
                     d_resume = nxt_kl[0] if nxt_kl else None
                     if d_resume:
@@ -978,8 +977,8 @@ def _validate_decision(fact: dict[str, Any], decision: dict[str, Any], scope: st
         raise ValueError(f"{fact['record_key']} static decision incomplete: {missing}")
     if static["replenishment_result"] not in {"补涨", "非补涨"}:
         raise ValueError(f"{fact['record_key']} invalid replenishment_result")
-    if not str(static["suppression_result"]).startswith(("被", "非", "有", "无")):
-        raise ValueError(f"{fact['record_key']} suppression_result must be 被压制 or 非压制")
+    if not str(static["suppression_result"]).startswith(("压", "被", "非", "有", "无")):
+        raise ValueError(f"{fact['record_key']} suppression_result must be 压制 or 非压制")
     passed = (
         static["replenishment_result"] == "非补涨"
         and str(static["suppression_result"]).startswith(("非", "无"))
@@ -1032,7 +1031,7 @@ def _dynamic_updates(passed: bool, static: dict[str, Any], dynamic: dict[str, An
     if static["replenishment_result"] != "非补涨":
         reasons.append("补涨")
     if not str(static["suppression_result"]).startswith(("非", "无")):
-        reasons.append("被压制")
+        reasons.append("压制")
     reason = "、".join(reasons)
     return {
         '首开当日结果':day_result,

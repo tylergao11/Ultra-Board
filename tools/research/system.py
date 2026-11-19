@@ -1426,8 +1426,8 @@ class ResearchStore:
 
         def _norm_core(field_name, val):
             if field_name == "压制判断" and isinstance(val, str):
-                if val in ("被压制", "有一字压制") or val.startswith("有"):
-                    return "被压制"
+                if val in ("压制", "被压制", "有一字压制") or val.startswith("有"):
+                    return "压制"
                 if val in ("非压制", "无一字压制") or val.startswith("无"):
                     return "非压制"
             return val

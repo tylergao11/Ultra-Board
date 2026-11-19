@@ -59,7 +59,7 @@ def repair(store, from_date, to_date, preview=False):
                 days = [{"日期":date,"候选身位":candidate["board_height"],"更高一字票":members}]
             checked += 1
             hits = [h for d in days for h in d["更高一字票"] if h.get("命中")]
-            result = "被压制" if hits else "非压制"
+            result = "压制" if hits else "非压制"
             basis = "；".join(f"{date} {h['股票名称']}({h['股票代码']}) {h['身位']}板 具备{raw['唯一主炒作属性']}" for h in hits)
             basis = basis or f"本次首开前一字日{date}无更高一字票命中{raw['唯一主炒作属性']}；更早日期不延续压制。"
             updates = {"一字压制核验明细":days,"压制判断":result,"压制依据":basis,
@@ -76,7 +76,7 @@ def repair(store, from_date, to_date, preview=False):
                        "checks":checks,"confirmation_status":row["confirmation_status"]}
             request["request_id"] = "suppression-date-" + hashlib.sha256(json.dumps(request,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
             requests.append((request, raw))
-            if str(raw.get("压制判断") or "").startswith(("被", "有")) != bool(hits):
+            if str(raw.get("压制判断") or "").startswith(("压", "被", "有")) != bool(hits):
                 changed.append({"record_key":row["legacy_record_key"],"股票":raw.get("股票"),
                                 "出生日期":raw.get("补涨题材日期"),"首开日期":raw.get("首开日期"),
                                 "补涨判断":raw.get("补涨判断"),"公告污染":raw.get("公告污染"),

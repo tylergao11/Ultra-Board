@@ -261,7 +261,7 @@ def derive_record(fact, resolver, announcement=None, replenishment_basis=None):
         "mapping_basis": mapping_text,
         "replenishment_basis": replen_note,
         "replenishment_details": replenishment,
-        "suppression_result": "被压制" if suppress_hits else "非压制",
+        "suppression_result": "压制" if suppress_hits else "非压制",
         "suppression_basis": ("；".join(f"{date} {brief(h)} 具备{theme}" for date, h in suppress_hits)
                               if suppress_hits else f"核对本次首开前一字日 {identity['focus_date']} 压制范围内的一字票，有效属性均未命中{theme}；此前日期不延续压制。"),
         "suppression_details": suppression, "competitors": competitors,
