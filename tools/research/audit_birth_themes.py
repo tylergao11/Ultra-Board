@@ -19,13 +19,13 @@ def audit_birth_themes(store, start, end):
                 seen.add(theme)
                 theme = aliases[theme]
             return theme
-        days = [r[0] for r in c.execute("SELECT DISTINCT trade_date FROM daily_market WHERE source_type='kaipanla_limit_pool' ORDER BY trade_date")]
-        cache = {}
-        def pool(day):
-            if day not in cache:
-                raw = json.loads((store.root / 'data/kaipanla/raw' / day / 'zt_pool.json').read_text(encoding='utf-8'))
-                cache[day] = {r['code']: r for r in raw['stocks']}
-            return cache[day]
+        from .batch import _high_pool, _trading_dates
+        days = _trading_dates(c)
+        pool_cache = {}
+        def expected_codes(day):
+            if day not in pool_cache:
+                pool_cache[day] = {m['code'] for m in _high_pool(c, days, day, None, rules['补涨时间参数'])['members']}
+            return pool_cache[day]
         pointer = json.loads((store.root / 'data/store/exports/current.json').read_text(encoding='utf-8'))
         manifest_path = store.root / pointer['manifest']
         manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
@@ -50,11 +50,7 @@ def audit_birth_themes(store, start, end):
                 continue
             if day != row['first_board_date']:
                 issues.append({'record_key':key,'kind':'首板日期不一致'})
-            current = pool(day)
-            index = bisect.bisect_left(days,day)
-            previous = pool(days[index-1]) if index else {}
-            expected = {code for code,r in current.items() if r['boards'] >= rules['补涨时间参数']['前序最低连续板数']}
-            expected |= {code for code,r in previous.items() if code not in current and r['boards'] >= rules['补涨时间参数']['当日断板前最低连续板数']}
+            expected = expected_codes(day)
             actual = {h['股票代码'] for h in highs}
             if actual != expected or len(actual) != len(highs):
                 issues.append({'record_key':key,'kind':'高标范围错误','missing':sorted(expected-actual),'extra':sorted(actual-expected)})

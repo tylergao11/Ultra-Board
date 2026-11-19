@@ -298,22 +298,94 @@ def _global_pool(connection, pool_type: str, pool_date: str, batch_key: str, min
 
 def _high_pool(connection, dates: list[str], pool_date: str, batch_key: str, parameters=None) -> dict[str, Any]:
     parameters = parameters or {}
-    advanced = _global_pool(connection, "high_standard", pool_date, batch_key, parameters.get("前序最低连续板数",4))
+    min_adv = parameters.get("前序最低连续板数", 4)
+    min_brk = parameters.get("当日断板前最低连续板数", 4)
+    min_any = min(min_adv, min_brk)
+    advanced = _global_pool(connection, "high_standard", pool_date, batch_key, min_adv)
     previous = _previous_date(dates, pool_date)
-    previous_high = _global_pool(connection, "high_standard", previous, batch_key, parameters.get("当日断板前最低连续板数",4)) if previous else []
-    current_ids = {r[0] for r in connection.execute("SELECT stock_id FROM daily_market WHERE trade_date=? AND source_type='kaipanla_limit_pool'", (pool_date,))}
-    broken = []
-    for item in previous_high:
-        if item["stock_id"] in current_ids:
-            continue
-        broken_item = dict(item)
-        broken_item["status"] = f"{item['board_height']}板断板"
-        broken_item["source"] = [item.get("source"), f"data/kaipanla/raw/{pool_date}/zt_pool.json"]
-        broken.append(broken_item)
-    members = advanced + broken
+    current_ids = {
+        r[0]
+        for r in connection.execute(
+            "SELECT stock_id FROM daily_market WHERE trade_date=? AND source_type='kaipanla_limit_pool'",
+            (pool_date,),
+        )
+    }
+    suspended, broken = [], []
+    if previous and dates:
+        idx = bisect_left(dates, pool_date)
+        lookback_start = dates[max(0, idx - 25)]
+        lookahead_end = dates[min(len(dates) - 1, idx + 25)]
+        prior_rows = connection.execute(
+            """SELECT d.stock_id,d.trade_date,d.board_height,e.path AS evidence_path
+               FROM daily_market d LEFT JOIN evidence_files e ON e.id=d.evidence_file_id
+               WHERE d.source_type='kaipanla_limit_pool' AND d.trade_date>=? AND d.trade_date<?
+               ORDER BY d.trade_date DESC,d.board_height DESC,d.stock_id""",
+            (lookback_start, pool_date),
+        ).fetchall()
+        latest_prior = {}
+        for row in prior_rows:
+            if row["stock_id"] not in latest_prior:
+                latest_prior[row["stock_id"]] = row
+        candidates = [
+            row for sid, row in latest_prior.items()
+            if sid not in current_ids and (row["board_height"] or 0) >= min_any
+        ]
+        candidates.sort(key=lambda row: (-row["board_height"], row["stock_id"]))
+        for row in candidates:
+            sid, d0, h0, ev = row["stock_id"], row["trade_date"], row["board_height"], row["evidence_path"]
+            nxt_lim = connection.execute(
+                """SELECT trade_date,board_height FROM daily_market
+                   WHERE stock_id=? AND source_type='kaipanla_limit_pool' AND trade_date>? AND trade_date<=?
+                   ORDER BY trade_date ASC LIMIT 1""",
+                (sid, pool_date, lookahead_end),
+            ).fetchone()
+            status = None
+            if nxt_lim and nxt_lim["board_height"] == h0 + 1:
+                if h0 >= min_adv:
+                    status = f"{h0}板停牌"
+            else:
+                resolved_by_kline = False
+                for src in ("ths_kline", "sina_history"):
+                    has_d0 = connection.execute(
+                        "SELECT 1 FROM daily_market WHERE stock_id=? AND trade_date=? AND source_type=?",
+                        (sid, d0, src),
+                    ).fetchone()
+                    if not has_d0:
+                        continue
+                    nxt_kl = connection.execute(
+                        """SELECT MIN(trade_date) FROM daily_market
+                           WHERE stock_id=? AND source_type=? AND trade_date>? AND trade_date<=?""",
+                        (sid, src, d0, lookahead_end),
+                    ).fetchone()
+                    d_resume = nxt_kl[0] if nxt_kl else None
+                    if d_resume:
+                        resolved_by_kline = True
+                        if d_resume > pool_date and h0 >= min_adv:
+                            status = f"{h0}板停牌"
+                        elif d_resume == pool_date and h0 >= min_brk:
+                            status = f"{h0}板断板"
+                        break
+                if not resolved_by_kline and d0 == previous and h0 >= min_brk:
+                    status = f"{h0}板断板"
+            if status:
+                item = _stock_identity(connection, sid, pool_date)
+                item.update({
+                    "board_height": h0,
+                    "status": status,
+                    "last_limit_date": d0,
+                    "query_direction": "高标主炒向候选完整属性",
+                    "source": [ev, f"data/kaipanla/raw/{pool_date}/zt_pool.json"],
+                })
+                if status.endswith("停牌"):
+                    suspended.append(item)
+                else:
+                    broken.append(item)
+    active = sorted(advanced + suspended, key=lambda x: (-x["board_height"], x["stock_id"]))
+    members = active + broken
     for item in members:
+        fallback_date = item.get("last_limit_date") or previous
         daily = _daily_row(connection, item["stock_id"], pool_date) or (
-            _daily_row(connection, item["stock_id"], previous) if previous else None
+            _daily_row(connection, item["stock_id"], fallback_date) if fallback_date else None
         )
         item["theme_hint"] = daily.get("theme") if daily else None
         item["theme_tags_hint"] = daily.get("theme_tags") if daily else None

@@ -299,15 +299,14 @@ def _affected_keys(connection, changes, minimum=4):
             last = row["event_date"] or row["focus_date"]
             high = connection.execute("""SELECT 1 FROM daily_market h WHERE h.stock_id=?
                 AND h.source_type='kaipanla_limit_pool' AND h.trade_date>=? AND h.trade_date<?
-                AND ((h.board_height>=? AND h.trade_date IN (?,
-                    (SELECT MAX(trade_date) FROM daily_market WHERE source_type='kaipanla_limit_pool' AND trade_date<?)))
+                AND ((h.board_height>=? AND h.trade_date<=?)
                   OR (h.strict_one_word=1 AND EXISTS (SELECT 1 FROM daily_market d WHERE d.stock_id=?
                     AND d.source_type='kaipanla_limit_pool' AND d.trade_date=h.trade_date
                     AND d.trade_date BETWEEN ? AND ? AND d.strict_one_word=1 AND d.board_height<=h.board_height))
                   OR (h.trade_date=(SELECT MAX(trade_date) FROM daily_market WHERE source_type='kaipanla_limit_pool' AND trade_date<?)
                     AND h.board_height >= COALESCE((SELECT board_height FROM daily_market d WHERE d.stock_id=?
                         AND d.trade_date=h.trade_date AND d.source_type='kaipanla_limit_pool'),999))) LIMIT 1""",
-                (stock_id,start,end,minimum,row["first_board_date"],row["first_board_date"],row["stock_id"],
+                (stock_id,start,end,minimum,row["first_board_date"],row["stock_id"],
                  row["first_board_date"],last,last,row["stock_id"])).fetchone()
             if high:
                 keys.add(row["legacy_record_key"])
