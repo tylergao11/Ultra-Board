@@ -44,6 +44,11 @@ class Resolver:
                        or any(not isinstance(i, str) or not i.strip() for i in v)
                        for k, v in self.implied.items())):
             raise ValueError("属性附带应填写标签名称到附带属性列表的映射")
+        time_bound_list = rules["自动匹配"].get("时效属性", [])
+        if (not isinstance(time_bound_list, list)
+                or any(not isinstance(i, str) or not i.strip() for i in time_bound_list)):
+            raise ValueError("时效属性应填写标签名称列表")
+        self.time_bound = set(time_bound_list)
         self.inputs = {}
         self.rounds = {}
         self.dependencies = set()
@@ -127,7 +132,7 @@ class Resolver:
             attributes = dict(attributes, tags=[], snapshot_status="confirmed_partial",
                               confirmation_basis=override["basis"])
             member["attributes"] = attributes
-        raw_tags = set(attributes["tags"])
+        raw_tags = set(attributes["tags"]) - self.time_bound
         tags = {self.canonical(t) for t in raw_tags}
         for t in list(raw_tags) + list(tags):
             for extra in self.implied.get(t, []):

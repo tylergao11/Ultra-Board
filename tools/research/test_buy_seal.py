@@ -51,6 +51,8 @@ class BuySealTests(unittest.TestCase):
         self.assertEqual(_dynamic_updates(True,s,d,{})['买入筛选']['结果'],'通过')
         s['main_theme']='医药'
         self.assertEqual(_dynamic_updates(True,s,d,{})['买入筛选']['结果'],'淘汰')
+        s['main_theme']='并购重组'
+        self.assertEqual(_dynamic_updates(True,s,d,{})['买入筛选']['结果'],'淘汰')
 
     def test_sealed_close_proves_buy_without_board_count(self):
         m=market(opening=9)

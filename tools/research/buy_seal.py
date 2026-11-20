@@ -208,7 +208,7 @@ def scan(store, keys, directory):
             prev=(fact['first_open_market'].get('previous') or {}).get('close')
             op=(fact['first_open_market'].get('event') or {}).get('open')
             auction=op is not None and prev is not None and op>=prev
-            if '医药' not in raw['唯一主炒作属性'] and o['buy'] is not False:
+            if '医药' not in raw['唯一主炒作属性'] and raw['唯一主炒作属性'] != '并购重组' and o['buy'] is not False:
                 pairs.add((row['code'],row['event_date']))
                 for peer in raw.get('首开潜在竞争对手事实清单',[]):
                     pairs.add((peer['股票代码'],row['event_date']))
@@ -254,6 +254,7 @@ def evaluate(store, keys, directory, commit=False, buy_day_only=False, commit_re
                 eligible, timing_reason = morning_buy(o)
                 round_key=(row['code'],fact['identity']['first_board_date'])
                 if '医药' in raw['唯一主炒作属性']:record['reason']='医药及医药强相关题材，不买'
+                elif raw['唯一主炒作属性']=='并购重组':record['reason']='纯并购重组（无新赛道重估价值）题材，不买'
                 elif round_key in bought_rounds:record['reason']='同一启动轮已存在买入机会，不重复买入'
                 elif eligible is False:record['reason']=timing_reason
                 elif eligible is None:record.update(bought=None,reason=timing_reason)

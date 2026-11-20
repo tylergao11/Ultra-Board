@@ -23,8 +23,17 @@ if ($LASTEXITCODE -ne 0) { throw "创建启用临时目录失败。" }
 $tempDir = $temporary.path
 
 try {
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
     $manifestPath = Join-Path $tempDir "database_release_manifest.json"
-    Invoke-WebRequest -Uri "$baseUrl/database_release_manifest.json" -OutFile $manifestPath -UseBasicParsing
+    if ($curl) {
+        & $curl.Source -fsSL --connect-timeout 20 --retry 3 --retry-all-errors -o $manifestPath "$baseUrl/database_release_manifest.json"
+        if ($LASTEXITCODE -ne 0) {
+            throw "下载数据库清单失败（curl exit $LASTEXITCODE）。"
+        }
+    }
+    else {
+        Invoke-WebRequest -Uri "$baseUrl/database_release_manifest.json" -OutFile $manifestPath -UseBasicParsing
+    }
     $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $expectedHash = ([string]$manifest.sha256).ToLowerInvariant()
     $expectedSize = [int64]$manifest.size_bytes
@@ -44,7 +53,41 @@ try {
     if ($needsDownload) {
         $downloadPath = Join-Path $tempDir "research.sqlite.download"
         Write-Host "正在从 GitHub 下载研究库（$expectedSize 字节）..."
-        Invoke-WebRequest -Uri "$baseUrl/research.sqlite" -OutFile $downloadPath -UseBasicParsing
+        if ($curl) {
+            $maxAttempts = 6
+            for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+                $existingBytes = if (Test-Path -LiteralPath $downloadPath) { (Get-Item -LiteralPath $downloadPath).Length } else { 0 }
+                if ($existingBytes -gt $expectedSize) {
+                    [System.IO.File]::Delete($downloadPath)
+                    $existingBytes = 0
+                }
+                if ($existingBytes -eq $expectedSize) {
+                    break
+                }
+                if ($attempt -gt 1) {
+                    Write-Host "断点续传第 $attempt/$maxAttempts 次（已下载 $existingBytes / $expectedSize 字节）..."
+                    Start-Sleep -Seconds 2
+                }
+                $ErrorActionPreference = "Continue"
+                if ($existingBytes -gt 0) {
+                    & $curl.Source -fsSL --connect-timeout 20 --speed-time 30 --speed-limit 10240 -C - -o $downloadPath "$baseUrl/research.sqlite"
+                }
+                else {
+                    & $curl.Source -fsSL --connect-timeout 20 --speed-time 30 --speed-limit 10240 -o $downloadPath "$baseUrl/research.sqlite"
+                }
+                $curlExit = $LASTEXITCODE
+                $ErrorActionPreference = "Stop"
+                if ($curlExit -eq 0 -and (Test-Path -LiteralPath $downloadPath) -and (Get-Item -LiteralPath $downloadPath).Length -eq $expectedSize) {
+                    break
+                }
+                if ($attempt -eq $maxAttempts) {
+                    throw "研究库下载在 $maxAttempts 次尝试后仍未完成（curl exit $curlExit）。"
+                }
+            }
+        }
+        else {
+            Invoke-WebRequest -Uri "$baseUrl/research.sqlite" -OutFile $downloadPath -UseBasicParsing
+        }
         $actualSize = (Get-Item -LiteralPath $downloadPath).Length
         $actualHash = (Get-FileHash -LiteralPath $downloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actualSize -ne $expectedSize -or $actualHash -ne $expectedHash) {

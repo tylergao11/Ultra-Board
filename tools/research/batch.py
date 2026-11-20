@@ -1150,8 +1150,14 @@ def _dynamic_updates(passed: bool, static: dict[str, Any], dynamic: dict[str, An
     day_result=opening_day_result(market)
     pollution = static.get("announcement_pollution")
     if passed:
+        theme_blocked = "医药" in static["main_theme"] or static["main_theme"] == "并购重组"
+        theme_reason = (
+            "医药及医药强相关题材" if "医药" in static["main_theme"]
+            else "纯并购重组（无新赛道重估价值）题材" if static["main_theme"] == "并购重组"
+            else "非补涨、无一字压制；上午买点及同轮去重另核"
+        )
         updates = {
-            "买入筛选": {"非补涨": True, "无一字压制": True, "公告污染": pollution, "公告处理": "独立记录", "结果": "淘汰" if "医药" in static["main_theme"] else "通过", "依据": "医药及医药强相关题材" if "医药" in static["main_theme"] else "非补涨、无一字压制；上午买点及同轮去重另核"},
+            "买入筛选": {"非补涨": True, "无一字压制": True, "公告污染": pollution, "公告处理": "独立记录", "结果": "淘汰" if theme_blocked else "通过", "依据": theme_reason},
             "竞价筛选": dynamic["auction"],
             "同题材PK核验明细": dynamic["pk_checks"],
             "同题材PK结果": dynamic["pk_result"],

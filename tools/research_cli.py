@@ -240,6 +240,10 @@ def main() -> None:
     batch_verify = sub.add_parser("batch-verify", help="run the fast per-batch database gate")
     batch_verify.add_argument("--batch", required=True)
 
+    write_req = sub.add_parser("write-research", help="write a verified research request through ResearchStore")
+    write_req.add_argument("--input", required=True, help="JSON request file path")
+    write_req.add_argument("--publish", action="store_true", help="re-export and publish display tables after write")
+
     export = sub.add_parser("export", help="generate compact tables, CSV and statistics")
     export.add_argument("--output-root")
     export.add_argument("--publish-root", action="store_true")
@@ -490,6 +494,13 @@ def run(args, store, parser) -> None:
         emit(result)
         if not result["passed"]:
             raise SystemExit(1)
+    elif args.command == "write-research":
+        req_path = Path(args.input) if Path(args.input).is_absolute() else (ROOT / args.input)
+        payload = json.loads(req_path.read_text(encoding="utf-8"))
+        result = store.write_research(payload)
+        if args.publish:
+            result["export"] = store.export_all(publish_root=True)
+        emit(result)
     elif args.command == "export":
         emit(store.export_all(ROOT / args.output_root if args.output_root else None, args.publish_root))
     elif args.command == "verify":
