@@ -66,14 +66,31 @@ try {
     )
 
     if (-not $env:GH_TOKEN) {
-        $credentialRequest = @("protocol=https", "host=github.com", "") -join "`n"
-        $credentialResult = $credentialRequest | git credential fill 2>$null
-        $passwordLine = $credentialResult | Where-Object { $_ -like "password=*" } | Select-Object -First 1
-        if (-not $passwordLine) {
-            throw "GitHub CLI 尚未登录，Git Credential Manager 中也没有可复用凭据。请先运行 gh auth login。"
+        $savedAuthPref = $ErrorActionPreference
+        $ErrorActionPreference = "SilentlyContinue"
+        & gh auth status *> $null
+        $ghLoggedIn = ($LASTEXITCODE -eq 0)
+        $ErrorActionPreference = $savedAuthPref
+        if (-not $ghLoggedIn) {
+            $savedOutEnc = $OutputEncoding
+            $savedCredPref = $ErrorActionPreference
+            try {
+                $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+                $ErrorActionPreference = "SilentlyContinue"
+                $credentialRequest = @("protocol=https", "host=github.com", "") -join "`n"
+                $credentialResult = $credentialRequest | git credential fill 2>$null
+            }
+            finally {
+                $OutputEncoding = $savedOutEnc
+                $ErrorActionPreference = $savedCredPref
+            }
+            $passwordLine = $credentialResult | Where-Object { $_ -like "password=*" } | Select-Object -First 1
+            if (-not $passwordLine) {
+                throw "GitHub CLI 尚未登录，Git Credential Manager 中也没有可复用凭据。请先运行 gh auth login。"
+            }
+            $env:GH_TOKEN = $passwordLine.Substring(9)
+            $addedToken = $true
         }
-        $env:GH_TOKEN = $passwordLine.Substring(9)
-        $addedToken = $true
     }
 
     $releaseExists = $true
