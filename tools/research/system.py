@@ -946,7 +946,85 @@ class ResearchStore:
         connection.execute("UPDATE stock_names SET source_record_id=NULL WHERE source_record_id IN (SELECT id FROM source_records WHERE source_kind='legacy_dynamic')")
         connection.execute("DELETE FROM source_records WHERE source_kind='legacy_dynamic' AND id NOT IN (SELECT source_record_id FROM dynamic_research WHERE source_record_id IS NOT NULL)")
 
-    def sync_rules(self) -> dict[str, Any]:
+    def sync_health(self, connection: sqlite3.Connection | None = None) -> dict[str, Any]:
+        """Fast local check detecting stale SQLite vs Git export pointer or unsynced dynamic_rules.json."""
+        owned = connection is None
+        conn = self.connect() if owned else connection
+        try:
+            self.apply_migrations(conn)
+            is_primary = self.db_path == self.root / "data/store/research.sqlite"
+            pointer_path = self.root / "data/store/exports/current.json"
+            git_key = None
+            if pointer_path.exists():
+                try:
+                    git_key = json.loads(pointer_path.read_text(encoding="utf-8")).get("generation_key")
+                except (OSError, ValueError):
+                    git_key = None
+            latest_row = conn.execute(
+                "SELECT generation_key FROM generation_batches ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            db_latest_key = latest_row[0] if latest_row else None
+            has_git_key = True
+            if is_primary and git_key:
+                has_git_key = conn.execute(
+                    "SELECT 1 FROM generation_batches WHERE generation_key=?", (git_key,)
+                ).fetchone() is not None
+
+            saved = {
+                r["rule_type"]: r["source_sha256"]
+                for r in conn.execute("SELECT rule_type,source_sha256 FROM rule_sets WHERE status='current'")
+            }
+            dynamic_path = self.root / "data/store/rules/dynamic_rules.json"
+            dynamic_sha = sha256_file(dynamic_path) if dynamic_path.exists() else None
+            dynamic_synced = saved.get("dynamic") in (None, dynamic_sha)
+            dynamic_count = conn.execute(
+                """SELECT COUNT(*) FROM dynamic_research d
+                   JOIN rule_sets r ON r.id=d.rule_set_id
+                   WHERE d.is_current=1 AND r.rule_type='dynamic' AND r.status='current'"""
+            ).fetchone()[0]
+
+            warnings: list[str] = []
+            if not has_git_key:
+                warnings.append(
+                    f"本机研究库缺少 Git 当前导出批次 {git_key}（库内最新为 {db_latest_key}），疑似换电脑后仅拉取了代码未同步数据库"
+                )
+            if not dynamic_synced:
+                warnings.append(
+                    f"dynamic_rules.json 哈希与本机数据库不一致（库内现有 {dynamic_count} 条动态记录，直接同步将会清空）"
+                )
+            return {
+                "ok": has_git_key and dynamic_synced,
+                "db_matches_git_export": has_git_key,
+                "git_generation_key": git_key,
+                "db_latest_generation_key": db_latest_key,
+                "dynamic_rule_synced": dynamic_synced,
+                "dynamic_research_count": dynamic_count,
+                "warnings": warnings,
+            }
+        finally:
+            if owned:
+                conn.close()
+
+    def ensure_write_safe(self, allow_dynamic_rule_mismatch: bool = False) -> dict[str, Any]:
+        health = self.sync_health()
+        if not health["db_matches_git_export"]:
+            raise RuntimeError(
+                f"已拒绝写入：本机研究库落后于当前 Git 导出批次 {health['git_generation_key']} "
+                f"（库内最新为 {health['db_latest_generation_key']}），疑似换电脑仅拉取了代码未拉最新数据库。"
+                "请先运行 powershell -NoProfile -ExecutionPolicy Bypass -File tools/start_work.ps1 -Sync "
+                "或 tools/setup_home.ps1 -Force。"
+            )
+        if (not allow_dynamic_rule_mismatch) and (not health["dynamic_rule_synced"]) and health["dynamic_research_count"] > 0:
+            raise RuntimeError(
+                f"已拒绝写入：检测到 data/store/rules/dynamic_rules.json 哈希与本机数据库不一致，"
+                f"继续执行将清空全部 {health['dynamic_research_count']} 条动态交易研究记录！"
+                "若因换电脑未同步库，请先运行 tools/setup_home.ps1 -Force；"
+                "若确系用户明确修改交易口径并接受清空全部动态记录，请显式运行："
+                "python -B tools/research_cli.py sync-rules --confirm-dynamic-rule-change"
+            )
+        return health
+
+    def sync_rules(self, confirm_dynamic_rule_change: bool = False) -> dict[str, Any]:
         static_path = self.root / "data/store/rules/static_rules.json"
         dynamic_path = self.root / "data/store/rules/dynamic_rules.json"
         static_data = json.loads(static_path.read_text(encoding="utf-8"))
@@ -956,6 +1034,19 @@ class ResearchStore:
         try:
             saved = {r["rule_type"]:r["source_sha256"] for r in connection.execute("SELECT rule_type,source_sha256 FROM rule_sets WHERE status='current'")}
             digests = {"static":sha256_file(static_path),"dynamic":sha256_file(dynamic_path),"workflow":sha256_file(self.root / "AGENTS.md")}
+            if saved.get("dynamic") and saved["dynamic"] != digests["dynamic"] and not confirm_dynamic_rule_change:
+                active_dynamic = connection.execute(
+                    """SELECT COUNT(*) FROM dynamic_research d
+                       JOIN rule_sets r ON r.id=d.rule_set_id
+                       WHERE d.is_current=1 AND r.rule_type='dynamic' AND r.status='current'"""
+                ).fetchone()[0]
+                if active_dynamic > 0:
+                    raise RuntimeError(
+                        f"已拦截规则同步：dynamic_rules.json 哈希与本机数据库不一致，继续执行将清空全部 {active_dynamic} 条动态交易研究记录！"
+                        "若因换电脑未拉最新数据库，请先运行 tools/setup_home.ps1 -Force；"
+                        "若确系用户明确修改交易口径并接受清空全部动态记录，请显式运行："
+                        "python -B tools/research_cli.py sync-rules --confirm-dynamic-rule-change"
+                    )
             reused = saved==digests
             if not reused:
                 self.import_rules(connection, static_path, dynamic_path, static_data, dynamic_data)

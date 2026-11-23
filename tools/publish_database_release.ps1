@@ -18,7 +18,7 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     throw "需要安装 GitHub CLI：https://cli.github.com/"
 }
 
-$python = Get-Command python -ErrorAction Stop
+$python = Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1
 $logicalSnapshot = $null
 $generationKey = $null
 if (Test-Path -LiteralPath $currentPointerPath) {

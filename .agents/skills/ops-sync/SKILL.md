@@ -6,7 +6,12 @@ description: >-
 
 # 跨机同步、数据采集入库与系统维护工作流
 
-> **同步边界**：日常复盘全在本机完成；仅当用户明确要求拉库、同步、备份或换电脑时才执行 GitHub 相关命令，且严禁重置、覆盖或丢弃工作区未提交改动。
+> **同步边界与双机铁律（家 ↔ 公司来回更新必守）**：
+> - **同机连续作业**：全部在本地完成，不联网碰 GitHub。
+> - **换电脑开工唯一入口**：一律执行 `start_work.ps1 -Sync`（自动 `git pull --ff-only` + 下载校验 Release 正式库，并默认保留 1 份换库前旧库于 `data/store/local-backups/`）；**严禁只做 `git pull` 不拉数据库**。
+> - **换电脑收工唯一出口**：一律执行 `finish_work.ps1 -Sync -Message "本次摘要"`（自动刷新导出、远端防撞检查、`git push` 并更新滚动 Release）；**严禁只推 Git 不发库，或两边同时改再硬推**。
+> - **程序硬闸门保护**：`status` 输出 `sync_health`；所有写入命令在检测到本机库落后于 Git `current.json` 或 `dynamic_rules.json` 哈希不一致（且存在动态记录）时会自动报错停手，绝不静默清空动态库。
+> - **用户说“拉最新数据 / 更新到最新”时**：先查 `status` 的 `sync_health`（若已换机或告警，先做跨机同步），再跑开盘啦每日行情回补与候选入库。
 
 ## 一、跨电脑同步与数据库交接
 
@@ -14,18 +19,18 @@ description: >-
 
 1. **接收端（开工拉取最新代码与正式库）**：
    ```powershell
-   powershell -ExecutionPolicy Bypass -File tools/start_work.ps1 -Sync
+   powershell -NoProfile -ExecutionPolicy Bypass -File tools/start_work.ps1 -Sync
    ```
-   - 若 Git 已是最新、仅需强制拉取并校验替换 Release 数据库快照（内置 `curl.exe` 自动断点续传与 SHA-256 严格校验）：
+   - 若 Git 已是最新、仅需强制拉取并校验替换 Release 数据库快照（内置 `curl.exe` 自动断点续传、SHA-256 严格校验，默认保留 1 份换库前旧库备份）：
      ```powershell
-     powershell -ExecutionPolicy Bypass -File tools/setup_home.ps1 -Force
+     powershell -NoProfile -ExecutionPolicy Bypass -File tools/setup_home.ps1 -Force
      ```
-2. **交出端（收工核验、提交推送并更新滚动数据库 Release）**：
+2. **交出端（收工核验、远端防撞检查、提交推送并更新滚动数据库 Release）**：
    ```powershell
-   powershell -ExecutionPolicy Bypass -File tools/finish_work.ps1 -Sync -Message "本次工作摘要"
+   powershell -NoProfile -ExecutionPolicy Bypass -File tools/finish_work.ps1 -Sync -Message "本次工作摘要"
    ```
    - 仅在本地执行结束检查与导出刷新（不联网）：省略 `-Sync`。
-   - 单独发布数据库快照：`powershell -ExecutionPolicy Bypass -File tools/publish_database_release.ps1`。
+   - 单独发布数据库快照：`powershell -NoProfile -ExecutionPolicy Bypass -File tools/publish_database_release.ps1`。
 
 ## 二、开盘啦每日行情回补与新候选登记
 

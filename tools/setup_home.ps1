@@ -4,7 +4,7 @@ param(
     [string]$Tag = "research-store-current",
     [switch]$Force,
     [ValidateRange(0, 10)]
-    [int]$KeepLocalBackups = 0
+    [int]$KeepLocalBackups = 1
 )
 
 Set-StrictMode -Version Latest
@@ -17,13 +17,13 @@ $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $storeDir = Join-Path $root "data/store"
 $databasePath = Join-Path $storeDir "research.sqlite"
 $baseUrl = "https://github.com/$Repository/releases/download/$Tag"
-$python = Get-Command python -ErrorAction Stop
+$python = Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1
 $temporary = & $python.Source -B (Join-Path $root "tools/research_cli.py") temp-new --purpose setup --owner-pid $PID --file database_release_manifest.json --file research.sqlite.download | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) { throw "创建启用临时目录失败。" }
 $tempDir = $temporary.path
 
 try {
-    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+    $curl = Get-Command curl.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     $manifestPath = Join-Path $tempDir "database_release_manifest.json"
     if ($curl) {
         & $curl.Source -fsSL --connect-timeout 20 --retry 3 --retry-all-errors -o $manifestPath "$baseUrl/database_release_manifest.json"

@@ -16,7 +16,7 @@ description: >-
 python -B tools/research_cli.py status; python -B tools/research_cli.py rules --scope all
 ```
 
-核心判定准绳以 `data/store/rules/dynamic_rules.json` 为唯一依据（非补涨 + 无一字压制 + 非医药 + 上午实际触发首次上板或上午首开且上午首次回封 + 同实际首板启动轮仅买一次 + 用户逐笔卡位审核优先）。
+核心判定准绳以 `data/store/rules/dynamic_rules.json` 为唯一依据（5板新版初代龙或同细分≤0.70真补涨 + 无一字压制 + 非医药/非纯并购重组 + 禁止低开 + 09:25全身位竞价未被卡位 + 中午前实际触发首次上板或上午首开且上午首次回封 + 同轮仅买一次 + 断板日尾盘卖出）。
 
 ## 二、常规动态批次流程（完整买卖与卡位研究）
 

@@ -170,10 +170,23 @@ def acquire_day(store, day, reconcile=False):
 
 
 def acquire_range(store, start, end, report, reconcile=False):
+    from datetime import date, timedelta
     from pathlib import Path
     from .intake import ingest_paths
     with store.connect() as c:
         days = [r[0] for r in c.execute('SELECT trade_date FROM trading_days WHERE is_trading_day=1 AND trade_date BETWEEN ? AND ? ORDER BY trade_date', (start, end))]
+        max_known = c.execute('SELECT MAX(trade_date) FROM trading_days').fetchone()[0]
+        non_trading = {r[0] for r in c.execute('SELECT trade_date FROM trading_days WHERE is_trading_day=0 AND trade_date BETWEEN ? AND ?', (start, end))}
+    start_d = date.fromisoformat(start)
+    end_d = min(date.fromisoformat(end), datetime.now(SHANGHAI).date())
+    probe_from = max(start_d, date.fromisoformat(max_known) + timedelta(days=1)) if max_known else start_d
+    cur = probe_from
+    while cur <= end_d:
+        iso = cur.isoformat()
+        if cur.weekday() < 5 and iso not in non_trading and iso not in days:
+            days.append(iso)
+        cur += timedelta(days=1)
+    days.sort()
     results = []
     def one(day):
         try:

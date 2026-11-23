@@ -2,7 +2,7 @@
 param(
     [switch]$Sync,
     [ValidateRange(0, 10)]
-    [int]$KeepLocalBackups = 0
+    [int]$KeepLocalBackups = 1
 )
 
 Set-StrictMode -Version Latest

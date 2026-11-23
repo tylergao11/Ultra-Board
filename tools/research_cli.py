@@ -99,6 +99,7 @@ def status_report(store: ResearchStore) -> dict:
         dynamic = connection.execute("SELECT COUNT(*),SUM(confirmation_status='user_confirmed') FROM current_dynamic_research").fetchone()
         latest_pool = connection.execute(
             "SELECT MAX(trade_date) FROM daily_market WHERE source_type='kaipanla_limit_pool'").fetchone()[0]
+        sync_health = store.sync_health(connection)
     finally:
         connection.close()
     raw_days = sorted(p.name for p in (ROOT / "data/kaipanla/raw").glob("20??-??-??") if p.is_dir())
@@ -107,6 +108,7 @@ def status_report(store: ResearchStore) -> dict:
     return {"static_research": counts, "next_unresearched": todo,
             "dynamic_research": {"current": dynamic[0], "user_confirmed": dynamic[1] or 0},
             "latest_raw_day": raw_days[-1] if raw_days else None, "latest_ingested_pool_day": latest_pool,
+            "sync_health": sync_health,
             "export_pending": pending, "write_lock": _lock_holder(), "temp_leftovers": leftovers}
 
 
@@ -150,7 +152,12 @@ def main() -> None:
     suppression.add_argument("--preview", action="store_true")
     suppression.add_argument("--report")
 
-    sub.add_parser("sync-rules", help="synchronize the current rule files without reimporting data")
+    sync_rules_cmd = sub.add_parser("sync-rules", help="synchronize the current rule files without reimporting data")
+    sync_rules_cmd.add_argument(
+        "--confirm-dynamic-rule-change",
+        action="store_true",
+        help="explicitly confirm dynamic_rules.json changes that invalidate and delete current dynamic research",
+    )
     sub.add_parser("summary", help="show current database counts")
     sub.add_parser("status", help="one-shot work status: todo, locks, leftovers, pending publish")
     sub.add_parser("selfcheck", help="read-only full static recompute compared with saved results")
@@ -283,7 +290,14 @@ def main() -> None:
 
     args = parser.parse_args()
     store = store_for(args)
-    with (nullcontext() if args.command in READ_ONLY_COMMANDS else write_lock(args.command)):
+    is_read_only = args.command in READ_ONLY_COMMANDS or (args.command == "daily-backfill" and getattr(args, "audit_only", False))
+    with (nullcontext() if is_read_only else write_lock(args.command)):
+        if (not is_read_only) and args.command not in {"restore", "backup", "verify"}:
+            store.ensure_write_safe(
+                allow_dynamic_rule_mismatch=(
+                    args.command == "sync-rules" and bool(getattr(args, "confirm_dynamic_rule_change", False))
+                )
+            )
         run(args, store, parser)
 
 
@@ -374,7 +388,7 @@ def run(args, store, parser) -> None:
     elif args.command == "db-snapshot":
         emit(store.database_snapshot(ROOT / args.output))
     elif args.command == "sync-rules":
-        emit(store.sync_rules())
+        emit(store.sync_rules(confirm_dynamic_rule_change=bool(getattr(args, "confirm_dynamic_rule_change", False))))
     elif args.command == 'market-fetch':
         from research.events import acquire_market_facts
         result=acquire_market_facts(store,[(code,day) for code in args.codes for day in args.dates],

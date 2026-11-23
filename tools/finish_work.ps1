@@ -8,7 +8,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$python = Get-Command python -ErrorAction Stop
+$python = Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1
 
 Push-Location $root
 try {

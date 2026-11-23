@@ -4,13 +4,13 @@ from research.birth_themes import birth_fields
 
 
 class BirthThemesTests(unittest.TestCase):
-    def high(self, code, theme, status="4板晋级"):
-        return {"code": code, "name": code, "board_height": 4, "status": status,
+    def high(self, code, theme, status="5板晋级"):
+        return {"code": code, "name": code, "board_height": 5, "status": status,
                 "confirmed_main_theme": theme, "source": "data/day/zt_pool.json"}
 
     def test_all_directions_without_candidate_intersection(self):
         result = birth_fields("2025-01-02", [self.high("1", "金融概念"),
-            self.high("2", "机器人"), self.high("3", "算力", "4板断板")], lambda s: s)
+            self.high("2", "机器人"), self.high("3", "算力", "5板断板")], lambda s: s)
         self.assertEqual(set(result["出生当日补涨题材"]), {"金融概念", "机器人", "算力"})
         self.assertEqual(len(result["出生当日补涨高标"]), 3)
 

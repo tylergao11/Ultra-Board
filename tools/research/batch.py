@@ -432,8 +432,8 @@ def _global_pool(connection, pool_type: str, pool_date: str, batch_key: str, min
 
 def _high_pool(connection, dates: list[str], pool_date: str, batch_key: str, parameters=None) -> dict[str, Any]:
     parameters = parameters or {}
-    min_adv = parameters.get("前序最低连续板数", 4)
-    min_brk = parameters.get("当日断板前最低连续板数", 4)
+    min_adv = parameters.get("前序最低连续板数", 5)
+    min_brk = parameters.get("当日断板前最低连续板数", 5)
     min_any = min(min_adv, min_brk)
     advanced = _global_pool(connection, "high_standard", pool_date, batch_key, min_adv)
     previous = _previous_date(dates, pool_date)
