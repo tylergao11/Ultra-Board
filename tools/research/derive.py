@@ -228,10 +228,15 @@ def derive_record(fact, resolver, announcement=None, replenishment_basis=None):
         suppression.append({"日期": day["date"], "候选身位": day["candidate_height"],
                             "更高一字票": [_match_row(h, day["date"], theme, resolver) for h in day["higher_members"]]})
     replen_hits = [h for h in replenishment if h["命中"]]
+    canon_own = resolver.canonical(theme)
+    cross_hits = [h for h in replen_hits if resolver.canonical(h["高标主炒"]) != canon_own]
     if partial and not replen_hits:
-        raise MissingInput(f"{fact['record_key']} 已确认属性尚未命中高标，不能据部分属性判定非补涨")
+        unknown_any = [h for h in replenishment if h["命中"] is None]
+        if unknown_any:
+            raise MissingInput(f"{fact['record_key']} 已确认属性无法排除命中高标，不能据部分属性判定为先锋")
+    rep_result = "蹭股" if cross_hits else ("补涨" if replen_hits else "先锋")
     suppress_hits = [(d["日期"], h) for d in suppression for h in d["更高一字票"] if h["命中"]]
-    passed = not replen_hits and not suppress_hits
+    passed = rep_result == "先锋" and not suppress_hits
     competitors = []
     pool = fact["potential_competitor_candidates"]
     # Retain dependencies even for a currently rejected candidate.
@@ -253,16 +258,21 @@ def derive_record(fact, resolver, announcement=None, replenishment_basis=None):
     elif not clear_ann:
         fact["announcement_sources"] = sorted(set(fact["announcement_sources"]) | set(raw.get("公告污染来源", [])))
     brief = lambda h: f"{h['股票名称']}({h['股票代码']}) {h['身位']}板"
-    auto_mapping = (f"首板日 {identity['first_board_date']} 高标 {brief(replen_hits[0])} 主炒"
-                    f"{replen_hits[0]['高标主炒']}，候选{'已确认属性' if partial else '完整有效属性'}命中。" if replen_hits else
-                    f"首板日 {identity['first_board_date']} 的 {len(replenishment)} 只合格高标主炒逐项映射，候选完整有效属性均无命中。")
+    if cross_hits:
+        auto_mapping = (f"首板日 {identity['first_board_date']} 高标 {brief(cross_hits[0])} 主炒"
+                        f"{cross_hits[0]['高标主炒']}（与候选唯一主炒{theme}不同），候选{'已确认属性' if partial else '完整有效属性'}命中，触发跨主炒一票否决，判定为蹭股。")
+    elif replen_hits:
+        auto_mapping = (f"首板日 {identity['first_board_date']} 命中高标 {'、'.join(brief(h) for h in replen_hits)}，"
+                        f"全部命中高标主炒均与候选唯一主炒{theme}一致，判定为补涨。")
+    else:
+        auto_mapping = f"首板日 {identity['first_board_date']} 的 {len(replenishment)} 只合格高标主炒逐项映射，候选完整有效属性均无命中，判定为先锋。"
     replen_note = replenishment_basis if replenishment_basis is not None else raw.get("补涨逻辑说明")
     if isinstance(replen_note, str):
         replen_note = replen_note.strip()
     mapping_text = f"{auto_mapping} 补涨逻辑：{replen_note}" if replen_note else auto_mapping
     return {"record_key": fact["record_key"], "static": {
         "main_theme": theme, "main_theme_basis": own["basis"],
-        "replenishment_result": "补涨" if replen_hits else "非补涨",
+        "replenishment_result": rep_result,
         "mapping_basis": mapping_text,
         "replenishment_basis": replen_note,
         "replenishment_details": replenishment,
@@ -276,7 +286,7 @@ def derive_record(fact, resolver, announcement=None, replenishment_basis=None):
     }}
 
 
-def _affected_keys(connection, changes, minimum=4):
+def _affected_keys(connection, changes, minimum=5):
     keys = set()
     for stock_id, start in changes:
         keys.update(r[0] for r in connection.execute(

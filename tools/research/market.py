@@ -189,7 +189,22 @@ def ensure_research_prices(store, record_keys=None, from_date=None, to_date=None
                         if re.match(r'^20\d{6},',r)]
             bars = parse(text)
             fetched = False
-            if not {d.replace('-','') for d in needed[(code,year)]} <= {r[0] for r in bars}:
+            wanted_ymd = {d.replace('-','') for d in needed[(code,year)]}
+            def fetch_sina_fallback():
+                market = 'sh' if code.startswith(('5','6','9')) else 'sz'
+                alternate = f'https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData?symbol={market}{code}&scale=240&ma=no&datalen=1023'
+                def request_sina():
+                    with urlopen(Request(alternate,headers={'User-Agent':'Mozilla/5.0'}),timeout=20) as response:
+                        records=json.loads(response.read())
+                    if not isinstance(records,list) or not records:raise ValueError('daily response empty')
+                    document={'code':code,'provider':'sina','action':'CN_MarketDataService.getKLineData, scale=240, unadjusted','records':records}
+                    parse_daily_text(json_text(document),'sina_history')
+                    return document
+                document,_=retry_call(request_sina)
+                sina_bars=[[r['day'].replace('-',''),r['open'],r['high'],r['low'],r['close']] for r in document['records'] if r['day'].startswith(year)]
+                if not sina_bars:raise ValueError('requested year absent from daily bar response')
+                return document,sina_bars
+            if not wanted_ymd <= {r[0] for r in bars}:
                 url = f'https://d.10jqka.com.cn/v6/line/hs_{code}/00/{year}.js'
                 request = Request(url,headers={'Referer':f'https://stockpage.10jqka.com.cn/{code}/','User-Agent':'Mozilla/5.0'})
                 def request_ths():
@@ -200,26 +215,23 @@ def ensure_research_prices(store, record_keys=None, from_date=None, to_date=None
                 try:
                     text,_=retry_call(request_ths)
                 except Exception:
-                    market = 'sh' if code.startswith(('5','6','9')) else 'sz'
-                    alternate = f'https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData?symbol={market}{code}&scale=240&ma=no&datalen=1023'
-                    def request_sina():
-                        with urlopen(Request(alternate,headers={'User-Agent':'Mozilla/5.0'}),timeout=20) as response:
-                            records=json.loads(response.read())
-                        if not isinstance(records,list) or not records:raise ValueError('daily response empty')
-                        document={'code':code,'provider':'sina','action':'CN_MarketDataService.getKLineData, scale=240, unadjusted','records':records}
-                        parse_daily_text(json_text(document),'sina_history')
-                        return document
-                    document,_=retry_call(request_sina)
+                    document,sina_bars=fetch_sina_fallback()
                     replace_daily_source(sina,json_text(document),'sina_history')
-                    bars=[[r['day'].replace('-',''),r['open'],r['high'],r['low'],r['close']] for r in document['records'] if r['day'].startswith(year)]
-                    if not bars:raise ValueError('requested year absent from daily bar response')
-                    return code,year,sina,bars,True,'sina_history'
+                    return code,year,sina,sina_bars,True,'sina_history'
                 bars = parse(text)
                 if not bars:
                     raise ValueError('daily bar response has no data')
                 replace_daily_source(path,text,'ths_kline')
                 cached = path
                 fetched = True
+                if not wanted_ymd <= {r[0] for r in bars}:
+                    try:
+                        document,sina_bars=fetch_sina_fallback()
+                        if wanted_ymd <= {r[0] for r in sina_bars} or sina_bars[-1][0] > bars[-1][0]:
+                            replace_daily_source(sina,json_text(document),'sina_history')
+                            return code,year,sina,sina_bars,True,'sina_history'
+                    except Exception:
+                        pass
             return code,year,cached,bars,fetched,'ths_kline'
         with ThreadPoolExecutor(max_workers=6) as executor:
             futures = {executor.submit(download,item):item for item in pending}

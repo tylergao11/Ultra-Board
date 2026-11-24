@@ -57,3 +57,25 @@ class SuppressionDateTests(unittest.TestCase):
         self.assertFalse(_in_suppression_scope("603716", 2, "832522", 2))
         self.assertFalse(_in_suppression_scope("603716", 2, "920116", 2))
         self.assertTrue(_in_suppression_scope("603716", 2, "832522", 3))
+
+    def test_competitor_candidates_only_include_mainboard_10cm(self):
+        from .batch import _competitor_candidates
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("CREATE TABLE stocks (id INTEGER PRIMARY KEY, code TEXT)")
+        conn.execute("CREATE TABLE stock_names (id INTEGER PRIMARY KEY, stock_id INT, name TEXT, valid_from TEXT, valid_to TEXT)")
+        conn.execute("CREATE TABLE evidence_files (id INTEGER PRIMARY KEY, path TEXT, parse_status TEXT, modified_at TEXT)")
+        conn.execute("CREATE TABLE daily_market (id INTEGER PRIMARY KEY, stock_id INT, trade_date TEXT, source_type TEXT, board_height INT, strict_one_word INT, first_limit_time TEXT, close_milli INT, limit_up_milli INT, evidence_file_id INT, raw_json TEXT)")
+        conn.execute("CREATE TABLE market_source_facts (id INTEGER PRIMARY KEY, stock_id INT, trade_date TEXT, source_kind TEXT, topic TEXT, topic_tags TEXT, description TEXT, event_time TEXT, board_height INT, evidence_file_id INT)")
+        conn.execute("CREATE TABLE stock_concepts (stock_id INT, concept_id INT, observed_date TEXT, evidence_file_id INT, historical_status TEXT, captured_date TEXT)")
+        conn.execute("CREATE TABLE concepts (id INTEGER PRIMARY KEY, unified_name TEXT, source_name TEXT)")
+        conn.executemany("INSERT INTO stocks VALUES (?, ?)", [(1, "000001"), (2, "600001"), (3, "300001"), (4, "688001"), (5, "920001")])
+        conn.executemany("INSERT INTO stock_names VALUES (?, ?, ?, '2020-01-01', NULL)", [(1, 1, "主板甲"), (2, 2, "主板乙"), (3, 3, "创业甲"), (4, 4, "科创甲"), (5, 5, "北交甲")])
+        conn.execute("INSERT INTO evidence_files VALUES (1, 'data/test.json', 'indexed', '2026-01-01')")
+        conn.executemany(
+            "INSERT INTO daily_market VALUES (?, ?, '2026-01-05', 'kaipanla_limit_pool', ?, 1, '09:25:00', 10000, 10000, 1, '{}')",
+            [(1, 1, 2), (2, 2, 2), (3, 3, 2), (4, 4, 3), (5, 5, 3)],
+        )
+        pool = _competitor_candidates(conn, ["2026-01-05", "2026-01-06"], 1, "2026-01-05", "2026-01-06")
+        self.assertEqual([m["code"] for m in pool["members"]], ["600001"])
+        conn.close()

@@ -39,7 +39,7 @@ def fetch_crosscheck(store, day, directory, pool='limit_up'):
 
 
 def passed(raw):
-    return raw.get('补涨判断') == '非补涨' and str(raw.get('压制判断', '')).startswith(('非', '无'))
+    return raw.get('补涨判断') == '先锋' and str(raw.get('压制判断', '')).startswith(('非', '无'))
 
 
 def request(key, updates):
@@ -208,7 +208,8 @@ def scan(store, keys, directory):
             prev=(fact['first_open_market'].get('previous') or {}).get('close')
             op=(fact['first_open_market'].get('event') or {}).get('open')
             auction=op is not None and prev is not None and op>=prev
-            if '医药' not in raw['唯一主炒作属性'] and raw['唯一主炒作属性'] != '并购重组' and o['buy'] is not False:
+            _pharma_bucket = ('医药', '医疗器械', '脑机接口', '生育', '三胎', '养老', '银发')
+            if not any(k in raw['唯一主炒作属性'] for k in _pharma_bucket) and raw['唯一主炒作属性'] != '并购重组' and o['buy'] is not False:
                 pairs.add((row['code'],row['event_date']))
                 for peer in raw.get('首开潜在竞争对手事实清单',[]):
                     pairs.add((peer['股票代码'],row['event_date']))
@@ -235,7 +236,7 @@ def evaluate(store, keys, directory, commit=False, buy_day_only=False, commit_re
             record['day_sealed']=opening_day_result(fact['first_open_market'])['当天是否封板']
             decision={'record_key':key,'static':static}
             if not passed(raw):
-                record['reason']='、'.join(v for v in ('补涨' if raw['补涨判断']=='补涨' else '', '压制' if str(raw['压制判断']).startswith(('压', '被', '有')) else '') if v)
+                record['reason']='、'.join(v for v in ('蹭股' if raw.get('补涨判断')=='蹭股' else '', '压制' if str(raw['压制判断']).startswith(('压', '被', '有')) else '') if v)
             else:
                 market=fact['first_open_market'];o=observe(market)
                 review=reviews.get(key,{})
@@ -253,8 +254,8 @@ def evaluate(store, keys, directory, commit=False, buy_day_only=False, commit_re
                 checks=[]
                 eligible, timing_reason = morning_buy(o)
                 round_key=(row['code'],fact['identity']['first_board_date'])
-                if '医药' in raw['唯一主炒作属性']:record['reason']='医药及医药强相关题材，不买'
-                elif raw['唯一主炒作属性']=='并购重组':record['reason']='纯并购重组（无新赛道重估价值）题材，不买'
+                if any(k in raw['唯一主炒作属性'] for k in ('医药', '医疗器械', '脑机接口', '生育', '三胎', '养老', '银发')):record['reason']='医药大桶禁忌主炒，不买'
+                elif raw['唯一主炒作属性']=='并购重组':record['reason']='并购重组禁忌主炒（纯并购重组及夕阳+夕阳），不买'
                 elif round_key in bought_rounds:record['reason']='同一启动轮已存在买入机会，不重复买入'
                 elif eligible is False:record['reason']=timing_reason
                 elif eligible is None:record.update(bought=None,reason=timing_reason)

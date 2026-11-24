@@ -46,9 +46,15 @@ class BuySealTests(unittest.TestCase):
 
     def test_current_rule_keeps_capital_events_separate(self):
         from .batch import _dynamic_updates
+        from .buy_seal import passed
         d=dict(auction={},pk_checks=[],pk_result='不参与筛选',buy_point={},outcome={})
-        s=dict(announcement_pollution=True,main_theme='芯片')
+        s=dict(announcement_pollution=True,main_theme='芯片',replenishment_result='先锋',suppression_result='非压制')
         self.assertEqual(_dynamic_updates(True,s,d,{})['买入筛选']['结果'],'通过')
+        s['replenishment_result']='补涨'
+        self.assertEqual(_dynamic_updates(False,s,d,{})['买入筛选']['结果'],'淘汰')
+        self.assertTrue(passed({'补涨判断':'先锋','压制判断':'非压制'}))
+        self.assertFalse(passed({'补涨判断':'补涨','压制判断':'非压制'}))
+        self.assertFalse(passed({'补涨判断':'蹭股','压制判断':'非压制'}))
         s['main_theme']='医药'
         self.assertEqual(_dynamic_updates(True,s,d,{})['买入筛选']['结果'],'淘汰')
         s['main_theme']='并购重组'

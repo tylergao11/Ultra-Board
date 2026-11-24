@@ -63,7 +63,7 @@ def repair(store, from_date, to_date, preview=False):
             basis = "；".join(f"{date} {h['股票名称']}({h['股票代码']}) {h['身位']}板 具备{raw['唯一主炒作属性']}" for h in hits)
             basis = basis or f"本次首开前一字日{date}无更高一字票命中{raw['唯一主炒作属性']}；更早日期不延续压制。"
             updates = {"一字压制核验明细":days,"压制判断":result,"压制依据":basis,
-                       "静态筛选结论":"通过" if result == "非压制" and str(raw.get("补涨判断") or "").startswith("非补涨") else "不通过"}
+                       "静态筛选结论":"通过" if result == "非压制" and raw.get("补涨判断") == "先锋" else "不通过"}
             checks = []
             for check in c.execute("SELECT * FROM research_checks WHERE static_research_id=?", (row["id"],)):
                 item = {"check_type":check["check_type"],"subject_stock_id":check["subject_stock_id"],

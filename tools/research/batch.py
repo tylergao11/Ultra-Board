@@ -444,7 +444,7 @@ def _high_pool(connection, dates: list[str], pool_date: str, batch_key: str, par
             (pool_date,),
         )
     }
-    suspended, broken = [], []
+    broken = []
     if previous and dates:
         idx = bisect_left(dates, pool_date)
         lookback_start = dates[max(0, idx - 25)]
@@ -461,7 +461,7 @@ def _high_pool(connection, dates: list[str], pool_date: str, batch_key: str, par
                 latest_prior[row["stock_id"]] = row
         candidates = [
             row for sid, row in latest_prior.items()
-            if sid not in current_ids and (row["board_height"] or 0) >= min_any
+            if sid not in current_ids and (row["board_height"] or 0) >= min_brk
         ]
         candidates.sort(key=lambda row: (-row["board_height"], row["stock_id"]))
         for row in candidates:
@@ -474,8 +474,7 @@ def _high_pool(connection, dates: list[str], pool_date: str, batch_key: str, par
             ).fetchone()
             status = None
             if nxt_lim and nxt_lim["board_height"] == h0 + 1:
-                if h0 >= min_adv:
-                    status = f"{h0}板停牌"
+                pass  # Suspended on pool_date and later resumed to advance; do not keep in pool while suspended.
             else:
                 resolved_by_kline = False
                 for src in ("ths_kline", "sina_history"):
@@ -493,9 +492,7 @@ def _high_pool(connection, dates: list[str], pool_date: str, batch_key: str, par
                     d_resume = nxt_kl[0] if nxt_kl else None
                     if d_resume:
                         resolved_by_kline = True
-                        if d_resume > pool_date and h0 >= min_adv:
-                            status = f"{h0}板停牌"
-                        elif d_resume == pool_date and h0 >= min_brk:
+                        if d_resume == pool_date and h0 >= min_brk:
                             status = f"{h0}板断板"
                         break
                 if not resolved_by_kline and d0 == previous and h0 >= min_brk:
@@ -509,11 +506,8 @@ def _high_pool(connection, dates: list[str], pool_date: str, batch_key: str, par
                     "query_direction": "高标主炒向候选完整属性",
                     "source": [ev, f"data/kaipanla/raw/{pool_date}/zt_pool.json"],
                 })
-                if status.endswith("停牌"):
-                    suspended.append(item)
-                else:
-                    broken.append(item)
-    active = sorted(advanced + suspended, key=lambda x: (-x["board_height"], x["stock_id"]))
+                broken.append(item)
+    active = sorted(advanced, key=lambda x: (-x["board_height"], x["stock_id"]))
     members = active + broken
     for item in members:
         fallback_date = item.get("last_limit_date") or previous
@@ -674,6 +668,8 @@ def _competitor_candidates(connection, dates: list[str], stock_id: int, focus_da
     members = []
     for row in rows:
         item = _stock_identity(connection, row["stock_id"], previous)
+        if not _is_mainboard_10cm(item["code"]):
+            continue
         raw = json.loads(row["raw_json"])
         item.update({
             "board_height": row["board_height"],
@@ -900,7 +896,7 @@ def prepare_batch(
     if fetch_missing and scope == "static":
         from .intake import fetch_attributes
         passing = {row["record_key"] for row in decisions["records"]
-                   if row["static"].get("replenishment_result") == "非补涨"
+                   if row["static"].get("replenishment_result") == "先锋"
                    and str(row["static"].get("suppression_result") or "").startswith(("非", "无"))}
         missing_codes = sorted({item["code"] for item in _missing_facts(facts_records)
                                 if item["kind"] == "attributes" and
@@ -1109,12 +1105,12 @@ def _validate_decision(fact: dict[str, Any], decision: dict[str, Any], scope: st
     missing = [key for key in required if not static.get(key)]
     if missing:
         raise ValueError(f"{fact['record_key']} static decision incomplete: {missing}")
-    if static["replenishment_result"] not in {"补涨", "非补涨"}:
+    if static["replenishment_result"] not in {"先锋", "补涨", "蹭股"}:
         raise ValueError(f"{fact['record_key']} invalid replenishment_result")
     if not str(static["suppression_result"]).startswith(("压", "被", "非", "有", "无")):
         raise ValueError(f"{fact['record_key']} suppression_result must be 压制 or 非压制")
     passed = (
-        static["replenishment_result"] == "非补涨"
+        static["replenishment_result"] == "先锋"
         and str(static["suppression_result"]).startswith(("非", "无"))
     )
     if passed and scope == "static" and not isinstance(static.get("competitors"), list):
@@ -1150,14 +1146,17 @@ def _dynamic_updates(passed: bool, static: dict[str, Any], dynamic: dict[str, An
     day_result=opening_day_result(market)
     pollution = static.get("announcement_pollution")
     if passed:
-        theme_blocked = "医药" in static["main_theme"] or static["main_theme"] == "并购重组"
+        _pharma_bucket = ("医药", "医疗器械", "脑机接口", "生育", "三胎", "养老", "银发")
+        is_pharma_bucket = any(k in static["main_theme"] for k in _pharma_bucket)
+        theme_blocked = is_pharma_bucket or static["main_theme"] == "并购重组"
+        rep_val = static.get("replenishment_result") or "先锋"
         theme_reason = (
-            "医药及医药强相关题材" if "医药" in static["main_theme"]
-            else "纯并购重组（无新赛道重估价值）题材" if static["main_theme"] == "并购重组"
-            else "非补涨、无一字压制；上午买点及同轮去重另核"
+            "医药大桶禁忌主炒（医药/医疗器械/脑机接口/生育三胎/养老银发）" if is_pharma_bucket
+            else "并购重组禁忌主炒（纯并购重组及夕阳+夕阳）" if static["main_theme"] == "并购重组"
+            else f"{rep_val}、无一字压制；上午买点及同轮去重另核"
         )
         updates = {
-            "买入筛选": {"非补涨": True, "无一字压制": True, "公告污染": pollution, "公告处理": "独立记录", "结果": "淘汰" if theme_blocked else "通过", "依据": theme_reason},
+            "买入筛选": {"补涨判断": rep_val, "先锋": rep_val == "先锋", "补涨": rep_val == "补涨", "无一字压制": True, "公告污染": pollution, "公告处理": "独立记录", "结果": "淘汰" if theme_blocked else "通过", "依据": theme_reason},
             "竞价筛选": dynamic["auction"],
             "同题材PK核验明细": dynamic["pk_checks"],
             "同题材PK结果": dynamic["pk_result"],
@@ -1168,15 +1167,17 @@ def _dynamic_updates(passed: bool, static: dict[str, Any], dynamic: dict[str, An
         updates['首开当日结果']=day_result
         return updates
     reasons = []
-    if static["replenishment_result"] != "非补涨":
-        reasons.append("补涨")
+    if static["replenishment_result"] != "先锋":
+        reasons.append(static["replenishment_result"])
     if not str(static["suppression_result"]).startswith(("非", "无")):
         reasons.append("压制")
     reason = "、".join(reasons)
     return {
         '首开当日结果':day_result,
         "买入筛选": {
-            "非补涨": static["replenishment_result"] == "非补涨",
+            "补涨判断": static["replenishment_result"],
+            "先锋": static["replenishment_result"] == "先锋",
+            "补涨": static["replenishment_result"] == "补涨",
             "无一字压制": str(static["suppression_result"]).startswith(("非", "无")),
             "公告污染": pollution,
             "公告处理": "独立记录",
@@ -1221,7 +1222,7 @@ def static_request(fact, static):
         "压制判断": static["suppression_result"],
         "压制依据": static["suppression_basis"],
         "静态筛选结论": "通过" if passed else "不通过",
-        "静态筛选口径": "非补涨 + 非压制；公告污染独立记录" if has_ann else "非补涨 + 非压制",
+        "静态筛选口径": "纯5板先锋 + 非压制；公告污染独立记录" if has_ann else "纯5板先锋 + 非压制",
     }
     remove_fields = []
     if static.get("replenishment_basis"):
@@ -1549,7 +1550,7 @@ def verify_batch_current(store, directory):
         competitors = [v.get("股票代码",v.get("code")) for v in raw.get("首开潜在竞争对手事实清单", [])]
         if competitors != row["competitors"]:
             findings.append(row["record_key"] + " 竞争清单与当前输入不一致")
-        if (row["replenishment"] == "补涨" or row["suppression"].startswith(("被", "有"))) and "首开潜在竞争对手事实清单" in raw:
+        if (row["replenishment"] != "先锋" or row["suppression"].startswith(("被", "有"))) and "首开潜在竞争对手事实清单" in raw:
             findings.append(row["record_key"] + " 旧竞争清单残留")
     if store.db_path == store.root / "data/store/research.sqlite":
         try:
