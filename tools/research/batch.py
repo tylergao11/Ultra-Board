@@ -1153,7 +1153,7 @@ def _dynamic_updates(passed: bool, static: dict[str, Any], dynamic: dict[str, An
         theme_reason = (
             "医药大桶禁忌主炒（医药/医疗器械/脑机接口/生育三胎/养老银发）" if is_pharma_bucket
             else "并购重组禁忌主炒（纯并购重组及夕阳+夕阳）" if static["main_theme"] == "并购重组"
-            else f"{rep_val}、无一字压制；上午买点及同轮去重另核"
+            else f"{rep_val}、无一字压制；10分钟内买点及同轮去重另核"
         )
         updates = {
             "买入筛选": {"补涨判断": rep_val, "先锋": rep_val == "先锋", "补涨": rep_val == "补涨", "无一字压制": True, "公告污染": pollution, "公告处理": "独立记录", "结果": "淘汰" if theme_blocked else "通过", "依据": theme_reason},

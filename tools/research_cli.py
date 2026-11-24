@@ -17,7 +17,7 @@ from research.system import ResearchStore, json_text, now_text, sha256_bytes, sh
 from research.batch import commit_batch, verify_batch_current, prepare_batch, submission_key, trade_facts
 from research.intake import fetch_attributes, ingest_paths
 from research.market import ensure_research_prices
-from research.derive import recompute, set_theme
+from research.derive import recompute, reset_static, set_theme
 from research.scratch import Workspace, clean as clean_temporary
 
 
@@ -229,6 +229,22 @@ def main() -> None:
     theme.add_argument("--preview", action="store_true")
     theme.add_argument("--report")
 
+    reset_cmd = sub.add_parser(
+        "reset-static",
+        help="reset static research conclusions in a year/date range back to clean unresearched skeletons",
+    )
+    reset_cmd.add_argument("--year", type=int, help="shorthand for --from-date YYYY-01-01 --to-date YYYY-12-31")
+    reset_cmd.add_argument("--from-date")
+    reset_cmd.add_argument("--to-date")
+    reset_cmd.add_argument(
+        "--include-prior-themes",
+        action="store_true",
+        help="also remove unprotected research_theme_inputs earlier than from-date",
+    )
+    reset_cmd.add_argument("--keep-issues", action="store_true", help="keep source_update/facts_changed issues for reset records")
+    reset_cmd.add_argument("--preview", action="store_true")
+    reset_cmd.add_argument("--no-publish", action="store_true")
+
     batch_prepare = sub.add_parser("batch-prepare", help="prepare one lightweight research batch and decision template")
     batch_prepare.add_argument("--output", required=True, help="output directory for facts.json and decisions.json")
     batch_prepare.add_argument("--limit", type=int)
@@ -290,7 +306,11 @@ def main() -> None:
 
     args = parser.parse_args()
     store = store_for(args)
-    is_read_only = args.command in READ_ONLY_COMMANDS or (args.command == "daily-backfill" and getattr(args, "audit_only", False))
+    is_read_only = (
+        args.command in READ_ONLY_COMMANDS
+        or (args.command == "daily-backfill" and getattr(args, "audit_only", False))
+        or (args.command == "reset-static" and getattr(args, "preview", False))
+    )
     with (nullcontext() if is_read_only else write_lock(args.command)):
         if (not is_read_only) and args.command not in {"restore", "backup", "verify"}:
             store.ensure_write_safe(
@@ -484,6 +504,25 @@ def run(args, store, parser) -> None:
                 connection.commit()
                 connection.close()
         emit(result)
+    elif args.command == "reset-static":
+        from_date = args.from_date
+        to_date = args.to_date
+        if args.year is not None:
+            if from_date or to_date:
+                parser.error("--year cannot be combined with --from-date/--to-date")
+            from_date = f"{args.year:04d}-01-01"
+            to_date = f"{args.year:04d}-12-31"
+        elif not (from_date and to_date):
+            parser.error("specify --year or both --from-date and --to-date")
+        emit(reset_static(
+            store,
+            from_date=from_date,
+            to_date=to_date,
+            preview=args.preview,
+            include_prior_themes=args.include_prior_themes,
+            clear_issues=not args.keep_issues,
+            publish=not args.no_publish,
+        ))
     elif args.command == "batch-prepare":
         emit(prepare_batch(
             store,

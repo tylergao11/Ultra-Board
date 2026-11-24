@@ -1,7 +1,7 @@
 """Decision-boundary tests for buy-day-only research."""
 import unittest
 from datetime import datetime
-from .buy_seal import observe, morning_buy
+from .buy_seal import observe, morning_buy, within_reseal_window, trading_gap_seconds, has_prior_one_word_break
 from .system import SHANGHAI
 
 
@@ -17,32 +17,51 @@ def market(opening=10, low=9, close=10, starts=('09:30:00',), breaks=(None,)):
 
 
 class BuySealTests(unittest.TestCase):
-    def test_current_rule_accepts_morning_failed_close(self):
-        o=observe(market(opening=9,close=9,starts=('11:00:00',),breaks=('11:01:00',)))
-        self.assertTrue(morning_buy(o)[0])
+    def test_current_rule_accepts_non_yizi_within_10m_even_if_failed_close(self):
+        o=observe(market(opening=9,close=9,starts=('09:39:30',),breaks=('09:41:00',)))
+        self.assertTrue(within_reseal_window(o)[0])
+        o_late=observe(market(opening=9,close=9,starts=('09:40:01',),breaks=('09:45:00',)))
+        self.assertFalse(within_reseal_window(o_late)[0])
 
-    def test_current_rule_rejects_afternoon_reseal(self):
-        o=observe(market(starts=('09:30:00','13:01:00'),breaks=('10:00:00',None)))
-        self.assertFalse(morning_buy(o)[0])
+    def test_current_rule_accepts_afternoon_and_cross_lunch_within_10m(self):
+        # Afternoon break & reseal within 10 trading minutes
+        o_pm=observe(market(starts=('09:30:00','14:23:09'),breaks=('14:22:34',None)))
+        self.assertTrue(within_reseal_window(o_pm)[0])
+        # Afternoon break & reseal over 10 trading minutes
+        o_pm_late=observe(market(starts=('09:30:00','14:15:00'),breaks=('14:00:00',None)))
+        self.assertFalse(within_reseal_window(o_pm_late)[0])
+        # Cross-lunch 11:25 -> 13:04 = 9 trading minutes (accepted)
+        o_lunch_ok=observe(market(starts=('09:30:00','13:04:00'),breaks=('11:25:00',None)))
+        self.assertEqual(trading_gap_seconds(o_lunch_ok['broken'], o_lunch_ok['time']), 540.0)
+        self.assertTrue(within_reseal_window(o_lunch_ok)[0])
+        # Cross-lunch 11:25 -> 13:06 = 11 trading minutes (rejected)
+        o_lunch_late=observe(market(starts=('09:30:00','13:06:00'),breaks=('11:25:00',None)))
+        self.assertEqual(trading_gap_seconds(o_lunch_late['broken'], o_lunch_late['time']), 660.0)
+        self.assertFalse(within_reseal_window(o_lunch_late)[0])
+        # Morning break 10:00 -> afternoon reseal 13:01 = 91 trading minutes (rejected)
+        o_long=observe(market(starts=('09:30:00','13:01:00'),breaks=('10:00:00',None)))
+        self.assertFalse(within_reseal_window(o_long)[0])
 
     def test_current_rule_does_not_guess_missing_time(self):
         o=observe(market(opening=9));o['time']=None
         self.assertIsNone(morning_buy(o)[0])
 
-    def test_afternoon_first_break_rejects_even_without_reseal_time(self):
-        self.assertFalse(morning_buy(dict(buy=True,one=True,time=None,broken=46800,reason=None))[0])
+    def test_missing_reseal_time_stays_unknown_even_after_noon(self):
+        self.assertIsNone(within_reseal_window(dict(buy=True,one=True,time=None,broken=46800,reason=None))[0])
 
-    def test_verified_morning_window_does_not_invent_timestamp(self):
-        o=dict(buy=True,one=True,time=None,broken=34203,time_window=[34203,41400],reason=None)
-        self.assertTrue(morning_buy(o)[0])
+    def test_verified_window_does_not_invent_timestamp(self):
+        o=dict(buy=True,one=True,time=None,broken=34203,time_window=[34203,34700],reason=None)
+        self.assertTrue(within_reseal_window(o)[0])
         self.assertIsNone(o['time'])
-        o['time_window']=[34203,46800]
-        self.assertIsNone(morning_buy(o)[0])
+        o['time_window']=[34203,35400]
+        self.assertIsNone(within_reseal_window(o)[0])
+        o['time_window']=[35000,35400]
+        self.assertFalse(within_reseal_window(o)[0])
 
     def test_actual_seal_interval_overrides_earlier_touch(self):
         m=market(opening=9,starts=('13:01:00',))
-        m['event']['events'].append({'event_type':'first_touch','event_time':'10:00:00'})
-        self.assertFalse(morning_buy(observe(m))[0])
+        m['event']['events'].append({'event_type':'first_touch','event_time':'09:35:00'})
+        self.assertFalse(within_reseal_window(observe(m))[0])
 
     def test_current_rule_keeps_capital_events_separate(self):
         from .batch import _dynamic_updates
@@ -91,6 +110,17 @@ class BuySealTests(unittest.TestCase):
 
     def test_observation_retains_afternoon_reseal_as_fact(self):
         self.assertTrue(observe(market(starts=('09:30:00','13:01:00'),breaks=('13:00:00',None)))['buy'])
+
+    def test_first_one_word_open_sequence_filter(self):
+        # Continuous one-word run (一字-一字-一字 -> 首开): allowed
+        self.assertFalse(has_prior_one_word_break([1, 1, 1]))
+        # Turnover then first one-word run (换手-换手-一字-一字 -> 首开): allowed
+        self.assertFalse(has_prior_one_word_break([0, 0, 1, 1]))
+        # Turnover -> one-word -> turnover -> second one-word (换手-一字-换手-一字): rejected
+        self.assertTrue(has_prior_one_word_break([0, 1, 0, 1]))
+        # First-board one-word -> turnover -> second one-word (首板一字-换手-一字): rejected
+        self.assertTrue(has_prior_one_word_break([1, 0, 1]))
+        self.assertTrue(has_prior_one_word_break([1, 0, 0, 1, 1]))
 
 
 

@@ -59,11 +59,11 @@ def audit(store, commit=False):
                     key=item['记录键'];updates={'买点时段核验':item}
                     if not item['保留']:
                         updates.update({'当前统一交易清单':False,'固定样本版本':None,'本轮逐笔审核统计':None,'卖出核验':None,
-                            '用户逐笔审核':{'结论':'不买','依据':item['依据'],'来源':'用户确认下午买点及下午首开全部剔除'},
+                            '用户逐笔审核':{'结论':'不买','依据':item['依据'],'来源':'用户确认开板超10分钟买点全部剔除'},
                             '首开买点':{'是否买入':False,'结果':'不买','依据':item['依据']},'买入后结果':{'是否买入':False}})
                         old=json.loads(c.execute('SELECT raw_json FROM current_dynamic_research WHERE legacy_record_key=?',(key,)).fetchone()[0])
                         if old.get('公告扩展核验'):
-                            f=dict(old['公告扩展核验']);f.update(excluded=True,exclude_reason=item['依据'],review_status='按现行上午买点规则排除');updates['公告扩展核验']=f
+                            f=dict(old['公告扩展核验']);f.update(excluded=True,exclude_reason=item['依据'],review_status='按现行10分钟交易时间回封规则排除');updates['公告扩展核验']=f
                     digest=hashlib.sha256(json.dumps(updates,sort_keys=True).encode()).hexdigest()
                     store.write_research({'request_id':'morning-audit-'+digest,'record_key':key,'kind':'dynamic','confirmation_status':'user_confirmed','updates':updates},c)
         return {'检查笔数':len(records),'剔除笔数':sum(not r['保留'] for r in records),'保留笔数':sum(r['保留'] for r in records),'记录':records}

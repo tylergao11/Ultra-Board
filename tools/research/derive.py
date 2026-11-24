@@ -132,25 +132,42 @@ class Resolver:
             attributes = dict(attributes, tags=[], snapshot_status="confirmed_partial",
                               confirmation_basis=override["basis"])
             member["attributes"] = attributes
-        raw_tags = set(attributes["tags"]) - self.time_bound
+        override = value["attributes"] if value else {}
+        active_override = (
+            override
+            if override and override.get("from_date", "0000") <= date <= override.get("to_date", "9999")
+            else None
+        )
+        removed_raw = set(active_override.get("remove", [])) if active_override else set()
+        removed_canonical = {self.canonical(t) for t in removed_raw}
+        raw_tags = {
+            t for t in (set(attributes["tags"]) - self.time_bound)
+            if t not in removed_raw and self.canonical(t) not in removed_canonical
+        }
         tags = {self.canonical(t) for t in raw_tags}
         for t in list(raw_tags) + list(tags):
             for extra in self.implied.get(t, []):
                 tags.add(self.canonical(extra))
         sources = set(attributes.get("sources", []))
         if value:
-            tags.add(self.canonical(value["main_theme"]))
-            for extra in self.implied.get(value["main_theme"], []):
-                tags.add(self.canonical(extra))
+            main_theme = value["main_theme"]
+            main_canonical = self.canonical(main_theme)
+            if main_theme not in removed_raw and main_canonical not in removed_canonical:
+                tags.add(main_canonical)
+                for extra in self.implied.get(main_theme, []):
+                    tags.add(self.canonical(extra))
+                for extra in self.implied.get(main_canonical, []):
+                    tags.add(self.canonical(extra))
             sources.update(value["sources"])
-            override = value["attributes"]
-            if override and override.get("from_date", "0000") <= date <= override.get("to_date", "9999"):
-                for t in override.get("add", []):
+            if active_override:
+                for t in active_override.get("add", []):
                     tags.add(self.canonical(t))
                     for extra in self.implied.get(t, []):
                         tags.add(self.canonical(extra))
-                tags.difference_update(self.canonical(t) for t in override.get("remove", []))
-                sources.update(override.get("sources", []))
+                    for extra in self.implied.get(self.canonical(t), []):
+                        tags.add(self.canonical(extra))
+                tags.difference_update(removed_canonical)
+                sources.update(active_override.get("sources", []))
         if attributes.get("snapshot_status") == "confirmed_partial":
             attributes.update(tags=sorted(tags), sources=sorted(sources))
         return tags, sorted(sources)
@@ -664,4 +681,219 @@ def set_theme(store, record_key, theme, basis=None, preview=False):
     finally:
         connection.close()
     return recompute(store, [record_key], {"themes":[edit]}, preview=preview)
+
+
+SKELETON_RAW_FIELDS = (
+    "底稿记录键",
+    "股票代码",
+    "股票",
+    "关注日期",
+    "底稿首板日期",
+    "底稿板序原文",
+    "进板高度",
+    "首开日期",
+)
+
+
+def reset_static(
+    store,
+    from_date: str,
+    to_date: str,
+    preview: bool = False,
+    include_prior_themes: bool = False,
+    clear_issues: bool = True,
+    publish: bool = True,
+) -> dict:
+    """Reset static research conclusions in a date range back to clean unresearched skeletons.
+
+    Preserves all objective market/pool/attribute facts, candidate event skeletons, any records
+    linked to dynamic research or opening past to_date, and any theme inputs still depended on
+    by retained static records (e.g. cross-year high-standard launches).
+    """
+    calendar_date.fromisoformat(from_date)
+    calendar_date.fromisoformat(to_date)
+    if from_date > to_date:
+        raise ValueError("起始日期不能晚于结束日期")
+    connection = store.connect()
+    try:
+        store.apply_migrations(connection)
+        connection.execute("BEGIN" if preview else "BEGIN IMMEDIATE")
+        rows = connection.execute(
+            """SELECT r.id AS static_id, r.legacy_record_key, r.research_status, r.raw_json,
+                      l.id AS launch_round_id, l.stock_id, l.first_board_date, l.focus_date,
+                      l.board_sequence_text, e.event_date, s.code,
+                      EXISTS(
+                        SELECT 1 FROM current_dynamic_research d
+                        WHERE d.legacy_record_key = r.legacy_record_key
+                      ) AS has_dynamic
+               FROM current_static_research r
+               JOIN first_open_events e ON e.id = r.first_open_event_id
+               JOIN launch_rounds l ON l.id = e.launch_round_id
+               JOIN stocks s ON s.id = l.stock_id
+               WHERE l.focus_date BETWEEN ? AND ?
+               ORDER BY l.focus_date, r.legacy_record_key""",
+            (from_date, to_date),
+        ).fetchall()
+        to_reset = []
+        protected_records = []
+        for row in rows:
+            reasons = []
+            if row["has_dynamic"]:
+                reasons.append("linked_dynamic_research")
+            if row["event_date"] and row["event_date"] > to_date:
+                reasons.append(f"cross_range_first_open:{row['event_date']}")
+            if reasons:
+                protected_records.append({
+                    "record_key": row["legacy_record_key"],
+                    "focus_date": row["focus_date"],
+                    "event_date": row["event_date"],
+                    "reasons": reasons,
+                })
+            else:
+                to_reset.append(row)
+        reset_keys = [r["legacy_record_key"] for r in to_reset]
+        reset_key_set = set(reset_keys)
+
+        # Protect any theme input still referenced by retained static records or belonging to
+        # retained already-researched records (e.g. cross-year 2024-12 launches needed by 2025-01).
+        protected_theme_keys = set()
+        for dep in connection.execute("SELECT record_key, stock_id, first_board_date FROM research_dependencies"):
+            if dep["record_key"] not in reset_key_set:
+                protected_theme_keys.add((int(dep["stock_id"]), dep["first_board_date"]))
+        for retained in connection.execute(
+            """SELECT r.legacy_record_key, l.stock_id, l.first_board_date
+               FROM current_static_research r
+               JOIN first_open_events e ON e.id = r.first_open_event_id
+               JOIN launch_rounds l ON l.id = e.launch_round_id
+               WHERE r.research_status <> 'unresearched' AND l.first_board_date IS NOT NULL"""
+        ):
+            if retained["legacy_record_key"] not in reset_key_set:
+                protected_theme_keys.add((int(retained["stock_id"]), retained["first_board_date"]))
+
+        if include_prior_themes:
+            theme_rows = connection.execute(
+                """SELECT t.stock_id, s.code, t.first_board_date, t.main_theme
+                   FROM research_theme_inputs t JOIN stocks s ON s.id = t.stock_id
+                   WHERE t.first_board_date <= ?
+                   ORDER BY t.first_board_date, s.code""",
+                (to_date,),
+            ).fetchall()
+        else:
+            theme_rows = connection.execute(
+                """SELECT t.stock_id, s.code, t.first_board_date, t.main_theme
+                   FROM research_theme_inputs t JOIN stocks s ON s.id = t.stock_id
+                   WHERE t.first_board_date BETWEEN ? AND ?
+                   ORDER BY t.first_board_date, s.code""",
+                (from_date, to_date),
+            ).fetchall()
+        themes_to_delete = []
+        protected_themes = []
+        for trow in theme_rows:
+            tkey = (int(trow["stock_id"]), trow["first_board_date"])
+            if tkey in protected_theme_keys:
+                protected_themes.append({
+                    "code": trow["code"],
+                    "first_board_date": trow["first_board_date"],
+                    "main_theme": trow["main_theme"],
+                })
+            else:
+                themes_to_delete.append(tkey)
+
+        checks_deleted = 0
+        deps_deleted = 0
+        issues_deleted = 0
+        already_unresearched = 0
+        for row in to_reset:
+            if row["research_status"] == "unresearched":
+                already_unresearched += 1
+            old_raw = json.loads(row["raw_json"] or "{}")
+            skeleton = {field: old_raw.get(field) for field in SKELETON_RAW_FIELDS}
+            skeleton["底稿记录键"] = skeleton["底稿记录键"] or row["legacy_record_key"]
+            skeleton["股票代码"] = skeleton["股票代码"] or row["code"]
+            skeleton["关注日期"] = skeleton["关注日期"] or row["focus_date"]
+            if skeleton["首开日期"] is None:
+                skeleton["首开日期"] = row["event_date"]
+            if not skeleton["股票"]:
+                name_row = connection.execute(
+                    """SELECT name FROM stock_names WHERE stock_id=?
+                       ORDER BY CASE WHEN valid_to IS NULL THEN 0 ELSE 1 END, valid_from DESC, id DESC LIMIT 1""",
+                    (row["stock_id"],),
+                ).fetchone()
+                skeleton["股票"] = name_row["name"] if name_row else None
+            checks_deleted += connection.execute(
+                "DELETE FROM research_checks WHERE static_research_id IN (SELECT id FROM static_research WHERE legacy_record_key=?)",
+                (row["legacy_record_key"],),
+            ).rowcount
+            deps_deleted += connection.execute(
+                "DELETE FROM research_dependencies WHERE record_key=?",
+                (row["legacy_record_key"],),
+            ).rowcount
+            connection.execute(
+                "DELETE FROM write_requests WHERE object_type='static' AND object_key=?",
+                (row["legacy_record_key"],),
+            )
+            connection.execute(
+                "DELETE FROM static_research WHERE legacy_record_key=? AND is_current=0",
+                (row["legacy_record_key"],),
+            )
+            connection.execute(
+                """UPDATE static_research
+                   SET research_status='unresearched',
+                       confirmation_status='pending_user_confirmation',
+                       main_theme=NULL,
+                       replenishment_result=NULL,
+                       suppression_result=NULL,
+                       announcement_pollution=NULL,
+                       mapping_basis=NULL,
+                       suppression_basis=NULL,
+                       announcement_basis=NULL,
+                       evidence_snapshot_json='[]',
+                       raw_json=?
+                   WHERE id=?""",
+                (_json(skeleton), row["static_id"]),
+            )
+            connection.execute(
+                "UPDATE launch_rounds SET confirmed_main_theme=NULL, confirmation_status='pending_user_confirmation' WHERE id=?",
+                (row["launch_round_id"],),
+            )
+            if clear_issues:
+                issues_deleted += connection.execute(
+                    "DELETE FROM issues WHERE scope='source_update' AND issue_kind='facts_changed' AND object_key=?",
+                    (row["legacy_record_key"],),
+                ).rowcount
+
+        for stock_id, first_board_date in themes_to_delete:
+            connection.execute(
+                "DELETE FROM research_theme_inputs WHERE stock_id=? AND first_board_date=?",
+                (stock_id, first_board_date),
+            )
+
+        if not preview:
+            if to_reset or themes_to_delete:
+                connection.execute(
+                    "INSERT OR REPLACE INTO store_meta(key,value) VALUES('static_export_pending','1')"
+                )
+            connection.commit()
+        else:
+            connection.rollback()
+
+        export = store.publish_pending(publish_root=True) if publish and not preview else None
+        return {
+            "preview": preview,
+            "from_date": from_date,
+            "to_date": to_date,
+            "include_prior_themes": include_prior_themes,
+            "reset_records": len(to_reset),
+            "already_unresearched": already_unresearched,
+            "protected_records": protected_records,
+            "deleted_theme_inputs": len(themes_to_delete),
+            "protected_theme_inputs": protected_themes,
+            "deleted_checks": checks_deleted,
+            "deleted_dependencies": deps_deleted,
+            "deleted_issues": issues_deleted,
+            "export": {"output_dir": export["output_dir"], "published": export["published"]} if export else None,
+        }
+    finally:
+        connection.close()
+
 

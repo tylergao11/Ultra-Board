@@ -28,6 +28,45 @@ class SuppressionDateTests(unittest.TestCase):
         self.assertNotIn("并购重组", resolver.attributes(stale_member, "2025-11-10")[0])
         self.assertIn("并购重组", resolver.attributes(active_member, "2025-11-10")[0])
         conn.close()
+
+    def test_override_remove_blocks_implied_attributes_before_expansion(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("CREATE TABLE stocks (id INTEGER PRIMARY KEY, code TEXT)")
+        conn.execute("CREATE TABLE daily_market (stock_id INT, trade_date TEXT, source_type TEXT, board_height INT)")
+        conn.execute("CREATE TABLE current_static_research (main_theme TEXT, raw_json TEXT, evidence_snapshot_json TEXT, first_open_event_id INT, research_status TEXT)")
+        conn.execute("CREATE TABLE first_open_events (id INT, launch_round_id INT)")
+        conn.execute("CREATE TABLE launch_rounds (id INT, stock_id INT, first_board_date TEXT, focus_date TEXT)")
+        conn.execute("CREATE TABLE research_theme_inputs (stock_id INT, first_board_date TEXT, main_theme TEXT, basis TEXT, sources_json TEXT, attribute_overrides_json TEXT)")
+        conn.execute("INSERT INTO stocks VALUES (1, '000001'), (2, '000002')")
+        conn.execute("INSERT INTO daily_market VALUES (1, '2025-11-10', 'kaipanla_limit_pool', 1), (2, '2025-11-10', 'kaipanla_limit_pool', 1)")
+        conn.execute(
+            "INSERT INTO research_theme_inputs VALUES (1, '2025-11-10', '算力', '纯算力', '[]', ?)",
+            ('{"from_date":"2025-11-10","to_date":"2025-11-12","add":[],"remove":["影视院线"]}',),
+        )
+        conn.execute(
+            "INSERT INTO research_theme_inputs VALUES (2, '2025-11-10', '算力', '含零售', '[]', ?)",
+            ('{"from_date":"2025-11-10","to_date":"2025-11-12","add":[],"remove":["影视院线"]}',),
+        )
+        rules = {
+            "自动匹配": {
+                "属性归并": {"影视院线": "文化传媒", "零售": "消费"},
+                "属性附带": {"影视院线": ["消费"]},
+                "时效属性": [],
+            }
+        }
+        resolver = Resolver(conn, rules, {})
+        resolver.rounds[(1, "2025-11-10")] = (1, "2025-11-10")
+        resolver.rounds[(2, "2025-11-10")] = (2, "2025-11-10")
+        stripped_only = {"stock_id": 1, "code": "000001", "attributes": {"tags": ["算力", "影视院线"], "sources": []}}
+        keeps_other_consumer = {"stock_id": 2, "code": "000002", "attributes": {"tags": ["算力", "影视院线", "零售"], "sources": []}}
+        tags1, _ = resolver.attributes(stripped_only, "2025-11-10")
+        tags2, _ = resolver.attributes(keeps_other_consumer, "2025-11-10")
+        self.assertNotIn("文化传媒", tags1)
+        self.assertNotIn("消费", tags1)
+        self.assertNotIn("文化传媒", tags2)
+        self.assertIn("消费", tags2)
+        conn.close()
     def test_old_hit_does_not_survive_current_day(self):
         days = [{"日期":"2025-12-12","更高一字票":[{"命中":True}]},
                 {"日期":"2025-12-25","更高一字票":[]}]

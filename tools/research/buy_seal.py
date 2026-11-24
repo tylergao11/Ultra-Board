@@ -119,22 +119,104 @@ def clock(value):
     return f'{h:02d}:{m:02d}:{s:06.3f}'
 
 
-def morning_buy(observation):
-    """Apply the current session rule to observed, not inferred final, times."""
+LUNCH_START = 41400.0  # 11:30:00
+LUNCH_END = 46800.0    # 13:00:00
+MARKET_OPEN = 34200.0  # 09:30:00
+RESEAL_WINDOW_SECONDS = 600.0  # 10 minutes of continuous trading time
+
+
+def trading_gap_seconds(start_sec, end_sec):
+    """Trading seconds between two timestamps, excluding the 11:30-13:00 lunch break."""
+    if start_sec is None or end_sec is None:
+        return None
+    def to_trading(sec):
+        if sec <= LUNCH_START:
+            return sec
+        if sec < LUNCH_END:
+            return LUNCH_START
+        return sec - (LUNCH_END - LUNCH_START)
+    return to_trading(end_sec) - to_trading(start_sec)
+
+
+def within_reseal_window(observation, max_seconds=RESEAL_WINDOW_SECONDS):
+    """Apply the all-day 10-minute trading-time reseal/seal rule (excluding lunch)."""
     o = observation
     if o['buy'] is not True:
         return o['buy'], o['reason']
-    if o['one'] and o.get('broken') is not None and not 34200 <= o['broken'] <= 41400:
-        return False, '非上午首次开板'
-    if o.get('time') is None:
+    if o['one']:
+        broken = o.get('broken')
+        time_val = o.get('time')
+        if time_val is not None:
+            start = broken if broken is not None else (MARKET_OPEN if o.get('open_break') else None)
+            if start is not None:
+                gap = trading_gap_seconds(start, time_val)
+                if 0 <= gap <= max_seconds:
+                    return True, '开板10分钟内首次回封'
+                return False, '开板超10分钟首次回封'
+            # Even if exact break timestamp is unknown, any reseal at/before 09:40:00
+            # must be within 10 trading minutes of an opening-or-later break.
+            if MARKET_OPEN <= time_val <= MARKET_OPEN + max_seconds:
+                return True, '开板10分钟内首次回封'
+            return None, '首次实际开板时间待核'
         window = o.get('time_window')
-        if window and len(window) == 2 and 34200 <= window[0] <= window[1] <= 41400:
-            return True, '上午首次回封（时间区间核验）' if o['one'] else '上午首次上板（时间区间核验）'
+        if window and len(window) == 2:
+            start = broken if broken is not None else (MARKET_OPEN if o.get('open_break') else None)
+            if start is not None:
+                lo_gap = trading_gap_seconds(start, window[0])
+                hi_gap = trading_gap_seconds(start, window[1])
+                if 0 <= hi_gap <= max_seconds:
+                    return True, '开板10分钟内首次回封（时间区间核验）'
+                if lo_gap > max_seconds:
+                    return False, '开板超10分钟首次回封（时间区间核验）'
+            elif MARKET_OPEN <= window[0] <= window[1] <= MARKET_OPEN + max_seconds:
+                return True, '开板10分钟内首次回封（时间区间核验）'
         return None, '首次实际买点时间待核'
-    if not 34200 <= o['time'] <= 41400:
-        return False, '非上午首次回封' if o['one'] else '非上午首次上板'
-    # A verified morning reseal necessarily follows a morning opening break.
-    return True, '上午首次回封' if o['one'] else '上午首次上板'
+    time_val = o.get('time')
+    if time_val is None:
+        window = o.get('time_window')
+        if window and len(window) == 2:
+            if MARKET_OPEN <= window[0] <= window[1] <= MARKET_OPEN + max_seconds:
+                return True, '开盘10分钟内首次上板（时间区间核验）'
+            if window[0] > MARKET_OPEN + max_seconds:
+                return False, '开盘超10分钟首次上板（时间区间核验）'
+        return None, '首次实际买点时间待核'
+    gap = trading_gap_seconds(MARKET_OPEN, time_val)
+    if 0 <= gap <= max_seconds:
+        return True, '开盘10分钟内首次上板'
+    return False, '开盘超10分钟首次上板'
+
+
+# Backward-compatible alias kept for existing callers and tests.
+morning_buy = within_reseal_window
+
+
+def has_prior_one_word_break(strict_flags):
+    """Return True if a launch round already had a strict one-word -> open/turnover break before a later one-word run."""
+    seen_one = False
+    broke_after_one = False
+    for flag in strict_flags:
+        if flag:
+            if broke_after_one:
+                return True
+            seen_one = True
+        elif seen_one:
+            broke_after_one = True
+    return False
+
+
+def is_first_one_word_open(connection, stock_id, first_board_date, event_date):
+    """Check whether event_date is the first one-word open in this launch round (including first-board one-word)."""
+    if not first_board_date or not event_date:
+        return True
+    rows = connection.execute(
+        """SELECT trade_date, MAX(COALESCE(strict_one_word, 0)) AS strict_one_word
+             FROM daily_market
+            WHERE stock_id=? AND trade_date>=? AND trade_date<? AND source_type='kaipanla_limit_pool'
+            GROUP BY trade_date
+            ORDER BY trade_date""",
+        (stock_id, first_board_date, event_date),
+    ).fetchall()
+    return not has_prior_one_word_break([int(r[1]) for r in rows])
 
 
 def observe(market):
@@ -165,6 +247,7 @@ def observe(market):
     if result['one'] and starts and starts[0] > 34200:
         result['reseal'] = starts[0]
         result['broken'] = None  # opening break is not in this interval list
+        result['open_break'] = True
     elif result['broken'] is not None:
         result['reseal'] = min((v for v in starts if v > result['broken']), default=None)
     if result['touch'] is None:
@@ -254,8 +337,10 @@ def evaluate(store, keys, directory, commit=False, buy_day_only=False, commit_re
                 checks=[]
                 eligible, timing_reason = morning_buy(o)
                 round_key=(row['code'],fact['identity']['first_board_date'])
+                first_open_ok = is_first_one_word_open(c, row['stock_id'], fact['identity']['first_board_date'], row['event_date'])
                 if any(k in raw['唯一主炒作属性'] for k in ('医药', '医疗器械', '脑机接口', '生育', '三胎', '养老', '银发')):record['reason']='医药大桶禁忌主炒，不买'
                 elif raw['唯一主炒作属性']=='并购重组':record['reason']='并购重组禁忌主炒（纯并购重组及夕阳+夕阳），不买'
+                elif not first_open_ok:record['reason']='非本轮连板首次一字首开（此前已出现严格一字并开板换手），不买'
                 elif round_key in bought_rounds:record['reason']='同一启动轮已存在买入机会，不重复买入'
                 elif eligible is False:record['reason']=timing_reason
                 elif eligible is None:record.update(bought=None,reason=timing_reason)
@@ -403,7 +488,7 @@ def report(store, keys, directory):
         path=directory/'2024年一字首开逐笔表.html';path.write_text(html,encoding='utf-8')
         assert html.count('<tbody>')==1 and body.count('<tr>')==len(keys) and '首板日' not in html
         lines=[f'本轮共 {len(rows)} 笔，已写回 {len(rows)-pending} 笔；有买点 {bought} 笔，另有 {pending} 笔买点尚未核实。',
-               '', '“是否有买点”按现行入选、上午买点与同轮一次规则判断；当天封板只认当日收盘涨停。所有日期为一字首开日。','']
+               '', '“是否有买点”按现行入选、全天10分钟交易时间内回封与同轮一次规则判断；当天封板只认当日收盘涨停。所有日期为一字首开日。','']
         month=None
         for r in rows:
             current=(r['一字首开日'] or '')[:7]
